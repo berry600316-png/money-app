@@ -11,6 +11,7 @@ import { fromYmd, sameYm, ymOf, type YearMonth } from './lib/dates'
 import { useToday } from './lib/useToday'
 import { initPwa } from './pwa/pwa'
 import { Icon } from './ui/Icon'
+import { OverlayContext } from './ui/overlay'
 import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 
@@ -64,6 +65,8 @@ function Shell() {
   const [manage, setManage] = useState<ManageKind | null>(null)
   const [manageShown, setManageShown] = useState<ManageKind>('category')
   const [editor, setEditor] = useState<EditorTarget | null>(null)
+  const [backupRequest, setBackupRequest] = useState(0)
+  const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null)
 
   useKeyboardInset(deviceRef)
 
@@ -119,6 +122,7 @@ function Shell() {
 
   return (
     <div ref={deviceRef} className={'device' + (pushed ? ' pushed' : '')}>
+      <OverlayContext.Provider value={overlayEl}>
       <ToastProvider>
         <div className="top-mask" aria-hidden="true" />
         <div className="main" inert={pushed}>
@@ -133,6 +137,10 @@ function Shell() {
               setTab('list')
             }}
             onSettings={() => setSettingsOpen(true)}
+            onBackup={() => {
+              setSettingsOpen(true)
+              setBackupRequest((n) => n + 1)
+            }}
           />
           <ListScreen
             active={tab === 'list'}
@@ -183,12 +191,15 @@ function Shell() {
           onBack={() => setSettingsOpen(false)}
           onCategories={() => openManage('category')}
           onPayments={() => openManage('payment')}
+          backupRequest={backupRequest}
         />
         <ManagePage kind={manageShown} open={manage !== null} onBack={() => setManage(null)} onEdit={setEditor} />
 
         <EntrySheet open={entry.open} editId={entry.id} onClose={closeEntry} />
         <EditorSheet target={editor} onClose={() => setEditor(null)} />
+        <div className="overlay-root" ref={setOverlayEl} />
       </ToastProvider>
+      </OverlayContext.Provider>
     </div>
   )
 }

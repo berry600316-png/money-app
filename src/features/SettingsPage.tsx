@@ -2,6 +2,7 @@ import { useTxCount } from '../db/hooks'
 import { usePwaState } from '../pwa/pwa'
 import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
+import { BackupSection } from './BackupSection'
 
 export function SettingsPage({
   open,
@@ -9,9 +10,11 @@ export function SettingsPage({
   onBack,
   onCategories,
   onPayments,
+  backupRequest,
 }: {
   open: boolean
   covered: boolean
+  backupRequest: number
   onBack: () => void
   onCategories: () => void
   onPayments: () => void
@@ -67,28 +70,7 @@ export function SettingsPage({
         </p>
       </div>
 
-      <div className="set-sec">
-        <h2>
-          備份與匯出<span className="tag">下一階段</span>
-        </h2>
-        <div className="set-card">
-          <button type="button" className="srow off" disabled>
-            <span className="s-main">
-              匯出完整備份<span className="s-sub">JSON 檔，可用來還原</span>
-            </span>
-          </button>
-          <button type="button" className="srow off" disabled>
-            <span className="s-main">
-              從備份還原<span className="s-sub">會取代目前的資料</span>
-            </span>
-          </button>
-          <button type="button" className="srow off" disabled>
-            <span className="s-main">
-              匯出交易 CSV<span className="s-sub">可用 Numbers 或 Excel 開啟</span>
-            </span>
-          </button>
-        </div>
-      </div>
+      <BackupSection backupRequest={backupRequest} />
 
       <div className="set-sec">
         <h2>分類與付款方式</h2>

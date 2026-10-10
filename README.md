@@ -44,3 +44,5 @@ npm run preview    # 在本機預覽正式版，http://localhost:4173/money-app/
 3. 從主畫面的 Money 圖示開啟一次，等設定頁顯示「離線使用：已就緒」，之後沒有網路也能使用。
 
 資料只在這支 iPhone。iOS 仍可能在清除網站資料時刪除它，請定期在設定頁匯出備份。
+
+部署後的實機驗收項目：[`docs/iphone-acceptance.md`](docs/iphone-acceptance.md)。

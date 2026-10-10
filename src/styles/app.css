@@ -115,6 +115,7 @@ svg { display: block; }
 .banner svg { width: 18px; height: 18px; flex: none; }
 .banner span { flex: 1; min-width: 0; }
 .banner button { border: 0; background: none; color: var(--brand); min-width: 40px; min-height: 40px; border-radius: 12px; display: grid; place-items: center; }
+.banner button.banner-act { padding: 0 12px; font-weight: 600; font-size: 0.875rem; background: rgba(40, 78, 67, 0.08); min-height: 34px; }
 .banner button svg { width: 16px; height: 16px; }
 
 .daily { padding: 22px 0 6px; }
@@ -348,6 +349,21 @@ button.srow:disabled:active { background: transparent; }
 .switch input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 2px; }
 .form-err { color: var(--danger); font-size: 0.8125rem; margin: -6px 4px 0; min-height: 1.2em; }
 .select { width: 100%; height: 44px; border: 0; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; padding: 0 14px; font-size: 16px; -webkit-appearance: none; appearance: none; }
+
+/* ---------- action sheet ---------- */
+.overlay-root { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
+.as-wrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: clip; }
+.as { position: absolute; left: 10px; right: 10px; bottom: calc(var(--sab) + 10px); display: flex; flex-direction: column; gap: 10px; transform: translateY(120%); transition: transform 0.45s var(--ease); pointer-events: auto; outline: none; }
+.as-wrap.open .as { transform: none; }
+.as-card { background: var(--card); border-radius: 22px; overflow: hidden; text-align: center; }
+.as-card h3 { font-size: 1rem; margin: 20px 20px 6px; }
+.as-msg { font-size: 0.8125rem; line-height: 1.6; color: var(--ink-2); margin: 0 22px 16px; }
+.as-msg b { color: var(--ink); font-weight: 600; }
+.as-card button, .as-cancel { display: block; width: 100%; min-height: 54px; border: 0; border-top: 1px solid var(--line); background: none; font-size: 1.0625rem; color: var(--brand); }
+.as-card button:active, .as-cancel:active { background: var(--row-press); }
+.as-card button.danger { color: var(--danger); }
+.as-card button:disabled { color: var(--muted-ink); }
+.as-cancel { border: 0; border-radius: 18px; background: var(--card); font-weight: 600; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

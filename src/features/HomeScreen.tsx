@@ -5,6 +5,7 @@ import { fmt } from '../lib/money'
 import { dailyExpense, summarize } from '../lib/stats'
 import { Icon } from '../ui/Icon'
 import { TxGroups } from '../ui/TxRows'
+import { BackupBanner } from './BackupBanner'
 
 export function HomeScreen({
   active,
@@ -13,7 +14,9 @@ export function HomeScreen({
   onAdd,
   onSeeAll,
   onSettings,
+  onBackup,
 }: {
+  onBackup: () => void
   active: boolean
   scrollRef: RefObject<HTMLElement | null>
   onOpenTx: (id: string) => void
@@ -51,6 +54,7 @@ export function HomeScreen({
           <Icon name="gear" />
         </button>
       </header>
+      <BackupBanner onBackup={onBackup} />
 
       <section className="hero">
         <div className="eyebrow">本月支出</div>

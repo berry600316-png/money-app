@@ -160,13 +160,21 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
     el.classList.add(cls)
   }
 
+  // Pop the number only for keypad input, not when a draft is loaded.
+  const keyed = useRef(false)
+  // Functional update: fast taps can land before React re-renders, so never read `draft` here.
   const press = (k: string) => {
-    if (!draft) return
-    const next = applyKey(draft.amount, k)
-    if (next === undefined || next === draft.amount) return
-    patch({ amount: next })
-    replay(amtRef.current, 'bump')
+    keyed.current = true
+    setDraft((d) => {
+      if (!d) return d
+      const next = applyKey(d.amount, k)
+      return next === undefined || next === d.amount ? d : { ...d, amount: next }
+    })
   }
+  useEffect(() => {
+    if (keyed.current) replay(amtRef.current, 'bump')
+    keyed.current = false
+  }, [draft?.amount])
 
   const save = async () => {
     if (!draft || saving) return
