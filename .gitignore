@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.local
+.vite/
+.DS_Store
+Thumbs.db
+*.bak*
