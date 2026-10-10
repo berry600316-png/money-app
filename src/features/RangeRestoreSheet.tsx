@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BackupError, type BackupFile } from '../backup/format'
 import { backupDateSpan, previewRange, type RangePreview } from '../backup/store'
 import { fromYmd } from '../lib/dates'
@@ -24,12 +24,17 @@ export function RangeRestoreSheet({
 }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [preview, setPreview] = useState<RangePreview | null>(null)
-  const [err, setErr] = useState('')
+  // The preview remembers which range it was computed for, so "下一步" never carries numbers for another range.
+  const [result, setResult] = useState<{ key: string; preview?: RangePreview; err?: string } | null>(null)
+  const key = `${from}|${to}`
+  const preview = result?.key === key ? (result.preview ?? null) : null
+  const err = result?.key === key ? (result.err ?? '') : ''
 
-  // Default to the backup's own span every time a file is chosen.
+  // Default to the backup's own span once per chosen file (not again when returning from the confirmation).
+  const defaultedFor = useRef<BackupFile | null>(null)
   useEffect(() => {
-    if (!open || !backup) return
+    if (!open || !backup || defaultedFor.current === backup) return
+    defaultedFor.current = backup
     const span = backupDateSpan(backup)
     if (span) {
       setFrom(span[0])
@@ -40,11 +45,10 @@ export function RangeRestoreSheet({
   useEffect(() => {
     if (!open || !backup || !from || !to) return
     let stale = false
-    setPreview(null)
-    setErr('')
+    const k = `${from}|${to}`
     previewRange(backup, from, to).then(
-      (p) => !stale && setPreview(p),
-      (e) => !stale && setErr(e instanceof BackupError ? e.message : '無法計算這段期間，請再試一次'),
+      (p) => !stale && setResult({ key: k, preview: p }),
+      (e) => !stale && setResult({ key: k, err: e instanceof BackupError ? e.message : '無法計算這段期間，請再試一次' }),
     )
     return () => {
       stale = true
