@@ -45,7 +45,8 @@ export function StatsScreen({
       inc: byCategory(cur, 'income'),
       trend: trend(all, month, 6),
     }
-  }, [tx, month, ref.categories])
+    // "比上月同期" depends on today's date, so recompute when the day changes.
+  }, [tx, month, ref.categories, new Date().getDate()]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxCat = v.exp[0]?.amount ?? 1
   const maxTrend = Math.max(1, ...v.trend.map((t) => t.expense))
