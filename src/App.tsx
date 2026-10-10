@@ -222,6 +222,7 @@ function Shell() {
               setTab('list')
               listRef.current?.scrollTo({ top: 0 })
             }}
+            onPayslips={() => push({ kind: 'payslips' })}
           />
         </div>
 

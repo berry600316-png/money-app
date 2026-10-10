@@ -1,4 +1,6 @@
 import { useMemo, type RefObject } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { db } from '../db/db'
 import { useMonthsTx } from '../db/hooks'
 import { addMonths, monthLabel, sameYm, type YearMonth } from '../lib/dates'
 import { compact, fmt } from '../lib/money'
@@ -16,7 +18,9 @@ export function StatsScreen({
   month,
   onMonth,
   onCategory,
+  onPayslips,
 }: {
+  onPayslips: () => void
   active: boolean
   scrollRef: RefObject<HTMLElement | null>
   month: YearMonth
@@ -25,6 +29,7 @@ export function StatsScreen({
 }) {
   const ref = useRefData()
   const tx = useMonthsTx(month, 6)
+  const payslipCount = useLiveQuery(() => db.payslips.count(), [])
 
   const v = useMemo(() => {
     const all = tx ?? []
@@ -174,6 +179,24 @@ export function StatsScreen({
             )
           })}
         </div>
+      </section>
+
+      {/* Always reachable, even in a month without salary income yet (D-73). */}
+      <section className="panel">
+        <button type="button" className="crow" onClick={onPayslips}>
+          <span className="ico">
+            <Icon name="receipt" />
+          </span>
+          <span className="crow-main">
+            <span className="crow-top">
+              <span className="crow-name">薪資單與項目歷史</span>
+              <span className="crow-name">
+                <small>{payslipCount ? `${payslipCount} 張` : '尚未建立'}</small>
+              </span>
+            </span>
+          </span>
+          <Icon name="chev" className="chev" />
+        </button>
       </section>
     </section>
   )
