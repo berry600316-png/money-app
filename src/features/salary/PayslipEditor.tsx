@@ -6,8 +6,8 @@ import { COMPANY_MAX, deletePayslip, payslipTotals, restorePayslip, savePayslip 
 import type { SalaryKind } from '../../db/types'
 import { toYmd } from '../../lib/dates'
 import { fmt } from '../../lib/money'
-import { addMonthKey, currentMonthKey, monthKeyLabel } from '../../lib/months'
-import { draftToLines, editPayslipDraft, newPayslipDraft, type PayslipDraft } from '../../lib/salaryHistory'
+import { currentMonthKey, monthKeyLabel } from '../../lib/months'
+import { draftToLines, editPayslipDraft, newPayslipDraft, payDateFor, payMonthOffset, type PayslipDraft } from '../../lib/salaryHistory'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 
@@ -89,13 +89,9 @@ export function PayslipEditor({
       onOpenExisting(existing.id)
       return
     }
-    // Keep typed amounts; move the pay date along with the month (same day, never in the future).
-    const day = Number(draft.payDate.slice(8))
-    const [y, m] = addMonthKey(month, 1).split('-').map(Number)
-    const last = new Date(y, m, 0).getDate()
-    let payDate = `${addMonthKey(month, 1)}-${String(Math.min(day, last)).padStart(2, '0')}`
-    if (payDate > today) payDate = today
-    patch({ month, payDate })
+    // Keep typed amounts; move the pay date with the month, keeping its offset and day (never in the future).
+    const offset = Math.max(0, payMonthOffset(draft.month, draft.payDate))
+    patch({ month, payDate: payDateFor(month, offset, Number(draft.payDate.slice(8))) })
   }
 
   const save = async () => {

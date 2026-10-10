@@ -79,6 +79,10 @@ describe('salary data in backups (D-74)', () => {
     expect(bad({ lines: [{ itemId: 'BASE_SALARY', name: 'x', amount: -1 }] })).toThrow('金額')
     expect(() => parseBackup(JSON.stringify({ ...b, payslips: [p0, { ...p0, id: 'other' }] }))).toThrow('兩張薪資單')
     expect(() => parseBackup(JSON.stringify({ ...b, salaryItems: undefined }))).toThrow('不完整')
+    const t0 = b.transactions.find((t: { id: string }) => t.id === p0.transactionId)
+    const otherMonth = { ...p0, id: 'other', month: '2026-08' }
+    expect(() => parseBackup(JSON.stringify({ ...b, payslips: [p0, otherMonth] }))).toThrow('同一筆收入')
+    expect(() => parseBackup(JSON.stringify({ ...b, transactions: [{ ...t0, source: 'manual' }] }))).toThrow('不一致')
   })
 
   it('range restore moves payslips with their income, judged by pay date', async () => {

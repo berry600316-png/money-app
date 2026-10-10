@@ -169,10 +169,11 @@ function Shell() {
   }, [entry.open, editor, manage, settingsOpen, slipEditor, liveRoutes.length, pop])
 
   const pushed = settingsOpen || liveRoutes.length > 0
+  // Back label = the page underneath, ignoring pages that are already sliding away.
   const backLabelAt = (i: number) => {
-    if (i === 0) return tab === 'home' ? '首頁' : tab === 'list' ? '明細' : '統計'
-    const prev = routes[i - 1].route
-    return prev.kind === 'payslips' ? '薪資單' : prev.kind === 'payslip' ? '薪資單' : '返回'
+    const below = routes.slice(0, i).filter((r) => !r.closing).pop()
+    if (!below) return tab === 'home' ? '首頁' : tab === 'list' ? '明細' : '統計'
+    return below.route.kind === 'history' ? '項目歷史' : '薪資單'
   }
 
   return (

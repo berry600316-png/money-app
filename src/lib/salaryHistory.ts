@@ -120,6 +120,20 @@ function clampDay(month: string, day: number): string {
   return `${month}-${String(Math.min(day, last)).padStart(2, '0')}`
 }
 
+/** How many months after the salary month the money arrives (0 = same month, 1 = next month). */
+export function payMonthOffset(month: string, payDate: string): number {
+  const [y1, m1] = month.split('-').map(Number)
+  const [y2, m2] = payDate.slice(0, 7).split('-').map(Number)
+  return (y2 - y1) * 12 + (m2 - m1)
+}
+
+/** Pay date for `month`, keeping the same month offset and day as a reference payslip; never in the future. */
+export function payDateFor(month: string, offset: number, day: number, now = new Date()): string {
+  const d = clampDay(addMonthKey(month, offset), day)
+  const today = toYmd(now)
+  return d > today ? today : d
+}
+
 /**
  * Draft for a new payslip: fixed items copy the most recent earlier payslip, variable items start
  * empty (saved as 0); pay day, company and account follow that payslip too.
@@ -133,13 +147,12 @@ export function newPayslipDraft(
 ): PayslipDraft {
   const sorted = [...slips].sort((a, b) => (a.month < b.month ? 1 : -1))
   const base = sorted.find((s) => s.month < month) ?? sorted[0]
+  // Same pattern as the reference payslip: e.g. paid on the 25th of the same month, or the 5th of the next.
   const day = base ? Number(base.payDate.slice(8)) : 5
-  let payDate = clampDay(addMonthKey(month, 1), day)
-  const today = toYmd(now)
-  if (payDate > today) payDate = today
+  const offset = base ? payMonthOffset(base.month, base.payDate) : 1
   return {
     month,
-    payDate,
+    payDate: payDateFor(month, offset, day, now),
     company: base?.company ?? '',
     paymentMethodId: base?.paymentMethodId ?? fallbackPaymentId,
     lines: items

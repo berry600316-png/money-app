@@ -96,6 +96,9 @@ describe('savePayslip (D-61..D-66)', () => {
     await expect(savePayslip(null, { ...oct, lines: [{ itemId: 'BASE_SALARY', amount: 1.5 }] }, d, now)).rejects.toThrow('整數')
     await expect(savePayslip(null, { ...oct, lines: [{ itemId: 'NOPE', amount: 1 }] }, d, now)).rejects.toThrow('不存在')
     await expect(savePayslip(null, { ...oct, paymentMethodId: 'nope' }, d, now)).rejects.toThrow('入帳方式')
+    await expect(
+      savePayslip(null, { ...oct, lines: [{ itemId: 'BASE_SALARY', amount: 99_999_999 }, { itemId: 'BONUS_OTHER', amount: 2 }] }, d, now),
+    ).rejects.toThrow('實領金額超過')
     expect(await d.payslips.count()).toBe(0)
     expect(await d.transactions.count()).toBe(0)
   })

@@ -117,6 +117,11 @@ describe('new payslip defaults (D-62, D-63)', () => {
     expect(d.lines.find((l) => l.itemId === 'HEALTH_INSURANCE')?.amount).toBe('') // fixed, but not on the previous slip
     expect(d).toMatchObject({ payDate: '2026-11-05', company: '星和科技', paymentMethodId: 'transfer' })
   })
+  it('keeps the previous payslip\'s pay pattern (same month vs next month)', () => {
+    const sameMonth = { ...prev, month: '2026-08', payDate: '2026-08-25' }
+    expect(newPayslipDraft('2026-09', [sameMonth], items, 'cash', new Date(2026, 9, 10)).payDate).toBe('2026-09-25')
+    expect(newPayslipDraft('2026-10', [prev], items, 'cash', new Date(2026, 10, 20)).payDate).toBe('2026-11-05')
+  })
   it('pay date never defaults to the future and clamps to the month length', () => {
     expect(newPayslipDraft('2026-10', [prev], items, 'cash', new Date(2026, 10, 2)).payDate).toBe('2026-11-02')
     const end31 = { ...prev, payDate: '2026-10-31' }

@@ -73,6 +73,7 @@ export async function savePayslip(id: string | null, input: PayslipInput, d: Mon
     })
     lines.sort((a, b) => order(items.get(a.itemId)!) - order(items.get(b.itemId)!))
     const { net } = payslipTotals(lines, (iid) => items.get(iid)?.kind)
+    if (net > MAX_AMOUNT) throw new MoneyError(`實領金額超過 ${MAX_AMOUNT.toLocaleString('en-US')}，請檢查金額`)
 
     const stamp = now.toISOString()
     const slipId = prev?.id ?? newId()

@@ -230,9 +230,17 @@ export function parseBackup(text: string): BackupFile {
     })
     checkUnique(payslips, '薪資單')
     const seenMonths = new Set<string>()
+    const seenTx = new Set<string>()
+    const txById = new Map(transactions.map((t) => [t.id, t]))
     for (const p of payslips) {
       if (seenMonths.has(p.month)) fail(`備份檔中 ${p.month} 有兩張薪資單`)
       seenMonths.add(p.month)
+      if (p.transactionId) {
+        if (seenTx.has(p.transactionId)) fail(`備份檔中有兩張薪資單指向同一筆收入`)
+        seenTx.add(p.transactionId)
+        const t = txById.get(p.transactionId)!
+        if (t.source !== 'payslip' || t.externalId !== p.id || t.type !== 'income') fail(`${p.month} 薪資單的收入紀錄不一致`)
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePayslips, useSalaryItems } from '../../db/hooks'
 import { fmt } from '../../lib/money'
-import { currentMonthKey, monthKeyLabel, monthShort } from '../../lib/months'
+import { addMonthKey, currentMonthKey, monthKeyLabel, monthShort } from '../../lib/months'
 import { cellFor, deltaOf, indexPayslips, latestValue, periodMonths, periodStats, previousValue, type Cell, type RangeOption } from '../../lib/salaryHistory'
 import { Icon } from '../../ui/Icon'
 import { Seg } from '../../ui/Seg'
@@ -134,8 +134,9 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
             id="hist-from"
             type="month"
             value={customRange.from}
+            min={view.firstMonth}
             max={customRange.to}
-            onChange={(e) => e.target.value && setCustom({ ...customRange, from: e.target.value })}
+            onChange={(e) => e.target.value && setCustom({ ...customRange, from: e.target.value < view.firstMonth ? view.firstMonth : e.target.value })}
           />
           <span>到</span>
           <label className="sr" htmlFor="hist-to">
@@ -146,7 +147,8 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
             type="month"
             value={customRange.to}
             min={customRange.from}
-            onChange={(e) => e.target.value && setCustom({ ...customRange, to: e.target.value })}
+            max={view.end}
+            onChange={(e) => e.target.value && setCustom({ ...customRange, to: e.target.value > view.end ? view.end : e.target.value })}
           />
         </div>
       )}
@@ -222,7 +224,14 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
               <span className="m num">{m}</span>
               <span className="a">{fmt(c.amount)}</span>
               <span className="dl">{d ? signed(d.diff) : '—'}</span>
-              {c.name && item && c.name !== item.name && <span className="was">當時：{c.name}</span>}
+              {/* D-70: name the month compared with when it isn't the month right before. */}
+              {((d && d.prevMonth !== addMonthKey(c.month, -1)) || (c.name && item && c.name !== item.name)) && (
+                <span className="was">
+                  {d && d.prevMonth !== addMonthKey(c.month, -1) && `較 ${monthShort(d.prevMonth)}`}
+                  {d && d.prevMonth !== addMonthKey(c.month, -1) && c.name && item && c.name !== item.name && '・'}
+                  {c.name && item && c.name !== item.name && `當時：${c.name}`}
+                </span>
+              )}
             </div>
           )
         })}
