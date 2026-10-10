@@ -13,7 +13,7 @@ export default defineConfig(({ command, isPreview }) => ({
   plugins: [
     react(),
     VitePWA({
-      // We register manually (src/pwa/register.ts) so updates never reload mid-entry (D-43).
+      // We register manually (src/pwa/pwa.ts) so updates never reload mid-entry (D-43).
       registerType: 'prompt',
       injectRegister: false,
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],

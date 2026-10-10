@@ -1,7 +1,7 @@
 import { db, type MoneyDB } from './db'
 import type { Category, PaymentMethod, PaymentType, Transaction, TxType } from './types'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
-import { occurredAtFor, toYmd } from '../lib/dates'
+import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
 
 /** An error whose message is safe to show to the user as-is. */
 export class MoneyError extends Error {}
@@ -31,7 +31,10 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
     throw new MoneyError(`金額需為 1 到 ${MAX_AMOUNT.toLocaleString('en-US')} 的整數`)
   }
   if (input.type !== 'expense' && input.type !== 'income') throw new MoneyError('類型不正確')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) throw new MoneyError('日期格式不正確')
+  // Round-trip through a real calendar date so values like 2026-02-31 are rejected, not rolled over.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || toYmd(fromYmd(input.date)) !== input.date) {
+    throw new MoneyError('日期不正確')
+  }
   if (input.date > toYmd(now)) throw new MoneyError('不能選未來的日期')
   const [cat, pay] = await Promise.all([d.categories.get(input.categoryId), d.paymentMethods.get(input.paymentMethodId)])
   if (!cat || cat.type !== input.type) throw new MoneyError('請選擇分類')
@@ -72,7 +75,7 @@ export async function addTransaction(input: TxInput, d: MoneyDB = db, now = new 
 
 export async function updateTransaction(id: string, input: TxInput, d: MoneyDB = db, now = new Date()): Promise<Transaction> {
   await validateTx(d, input, now)
-  return d.transaction('rw', d.transactions, d.settings, async () => {
+  return d.transaction('rw', d.transactions, async () => {
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
     const keepTime = toYmd(new Date(prev.occurredAt)) === input.date
@@ -82,8 +85,8 @@ export async function updateTransaction(id: string, input: TxInput, d: MoneyDB =
       occurredAt: keepTime ? prev.occurredAt : occurredAtFor(input.date, now),
       updatedAt: now.toISOString(),
     }
+    // D-20 "last used" follows new entries only; correcting an old record doesn't change the default.
     await d.transactions.put(next)
-    await d.settings.put({ key: 'lastPaymentMethodId', value: next.paymentMethodId })
     return next
   })
 }

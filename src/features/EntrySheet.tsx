@@ -77,6 +77,8 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
     setTyping(false)
     setSuggestions([])
     if (editId) {
+      // Clear first so a quick tap on save can never write the previous draft into this record.
+      setDraft(null)
       db.transactions.get(editId).then((t) => {
         if (cancelled) return
         if (!t) {
@@ -94,6 +96,10 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
           note: t.note,
           showNote: !!t.note,
         })
+      }, () => {
+        if (cancelled) return
+        toast('讀取這筆紀錄失敗，請再試一次', { kind: 'error' })
+        onClose()
       })
     } else {
       setDraft({
@@ -120,10 +126,17 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
       setSuggestions([])
       return
     }
+    let stale = false
     const t = window.setTimeout(() => {
-      recentMerchants(draft.merchant, draft.type).then(setSuggestions, () => setSuggestions([]))
+      recentMerchants(draft.merchant, draft.type).then(
+        (s) => !stale && setSuggestions(s),
+        () => !stale && setSuggestions([]),
+      )
     }, 120)
-    return () => window.clearTimeout(t)
+    return () => {
+      stale = true
+      window.clearTimeout(t)
+    }
   }, [draft?.merchant, draft?.type, merchantFocused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const amount = draft ? parseInt(draft.amount || '0', 10) : 0
@@ -220,6 +233,8 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
         return
       }
       if (inField || e.metaKey || e.ctrlKey || e.altKey) return
+      // Let Enter/Space activate a focused button (e.g. 取消) instead of saving.
+      if (e.key === 'Enter' && tag === 'BUTTON') return
       if (/^[0-9]$/.test(e.key)) {
         press(e.key)
         e.preventDefault()

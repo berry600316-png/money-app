@@ -7,7 +7,8 @@ import { ListScreen, type ListFilters } from './features/ListScreen'
 import { ManagePage, type EditorTarget, type ManageKind } from './features/ManagePage'
 import { SettingsPage } from './features/SettingsPage'
 import { StatsScreen } from './features/StatsScreen'
-import { ymOf, type YearMonth } from './lib/dates'
+import { fromYmd, sameYm, ymOf, type YearMonth } from './lib/dates'
+import { useToday } from './lib/useToday'
 import { initPwa } from './pwa/pwa'
 import { Icon } from './ui/Icon'
 import { RefDataProvider } from './ui/refData'
@@ -65,6 +66,17 @@ function Shell() {
   const [editor, setEditor] = useState<EditorTarget | null>(null)
 
   useKeyboardInset(deviceRef)
+
+  // Re-render every screen when the date changes; if the user was looking at the
+  // month that just ended, move to the new current month.
+  const today = useToday()
+  const shownCurrent = useRef<YearMonth>(ymOf(new Date()))
+  useEffect(() => {
+    const cur = ymOf(fromYmd(today))
+    const prev = shownCurrent.current
+    shownCurrent.current = cur
+    if (!sameYm(prev, cur)) setMonth((m) => (sameYm(m, prev) ? cur : m))
+  }, [today])
 
   // D-43: only let a new version reload the app when nothing is being edited.
   const busy = useRef(false)

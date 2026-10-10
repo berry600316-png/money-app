@@ -50,6 +50,9 @@ describe('transactions', () => {
     await expect(addTransaction({ ...base, amount: 0 }, d, now)).rejects.toBeInstanceOf(MoneyError)
     await expect(addTransaction({ ...base, amount: 12.5 }, d, now)).rejects.toBeInstanceOf(MoneyError)
     await expect(addTransaction({ ...base, date: '2026-10-11' }, d, now)).rejects.toThrow('未來')
+    await expect(addTransaction({ ...base, date: '2026-09-99' }, d, now)).rejects.toThrow('日期不正確')
+    await expect(addTransaction({ ...base, date: '2026-02-31' }, d, now)).rejects.toThrow('日期不正確')
+    await expect(addTransaction({ ...base, date: '2026-13-01' }, d, now)).rejects.toThrow('日期不正確')
     await expect(addTransaction({ ...base, categoryId: 'salary' }, d, now)).rejects.toBeInstanceOf(MoneyError)
     await expect(addTransaction({ ...base, paymentMethodId: 'nope' }, d, now)).rejects.toBeInstanceOf(MoneyError)
     expect(await d.transactions.count()).toBe(0)
@@ -65,6 +68,9 @@ describe('transactions', () => {
     expect(u.updatedAt).toBe(later.toISOString())
     const moved = await updateTransaction(t.id, { ...base, date: '2026-10-05' }, d, later)
     expect(new Date(moved.occurredAt).getDate()).toBe(5)
+    // editing an old record must not change the default payment method for new entries
+    await updateTransaction(t.id, { ...base, date: '2026-10-05', paymentMethodId: 'cash' }, d, later)
+    expect((await d.settings.get('lastPaymentMethodId'))?.value).toBe('card')
   })
 
   it('delete returns the record and undo restores it unchanged', async () => {
