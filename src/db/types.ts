@@ -44,6 +44,44 @@ export interface Setting {
   value: unknown
 }
 
+/* ---------------- salary (D-60..D-75) ---------------- */
+
+export type SalaryKind = 'earning' | 'deduction'
+export type SalaryNature = 'fixed' | 'variable'
+
+export interface SalaryItem {
+  /** Stable id; history is linked by id, never by name (spec §7). */
+  id: string
+  name: string
+  kind: SalaryKind
+  nature: SalaryNature
+  isActive: boolean
+  sortOrder: number
+}
+
+export interface PayslipLine {
+  itemId: string
+  /** Item name at the time this payslip was saved (D-69). */
+  name: string
+  /** Integer NTD, 0 or more; deductions are positive too (D-66). */
+  amount: number
+}
+
+export interface Payslip {
+  id: string
+  /** "YYYY-MM" the salary belongs to; one payslip per month (D-61). */
+  month: string
+  /** "YYYY-MM-DD" local date the money arrived; date of the linked income (D-62). */
+  payDate: string
+  company: string
+  paymentMethodId: string
+  lines: PayslipLine[]
+  /** The income transaction created from this payslip; null when net pay ≤ 0 (D-64). */
+  transactionId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
   cash: '現金',
   credit_card: '信用卡',

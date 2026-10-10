@@ -11,11 +11,21 @@ import { fromYmd, sameYm, ymOf, type YearMonth } from './lib/dates'
 import { useToday } from './lib/useToday'
 import { initPwa } from './pwa/pwa'
 import { Icon } from './ui/Icon'
+import { usePayslips } from './db/hooks'
+import { SALARY_CATEGORY_ID } from './db/defaults'
+import { ItemHistoryPage } from './features/salary/ItemHistoryPage'
+import { PayslipEditor, payslipIdForTransaction, type PayslipEditorTarget } from './features/salary/PayslipEditor'
+import { PayslipListPage } from './features/salary/PayslipListPage'
+import { PayslipPage } from './features/salary/PayslipPage'
+import { currentMonthKey } from './lib/months'
+import { defaultNewMonth } from './lib/salaryHistory'
+import { StackPage } from './ui/StackPage'
 import { OverlayContext } from './ui/overlay'
 import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 
 type Tab = 'home' | 'list' | 'stats'
+type Route = { kind: 'payslips' } | { kind: 'payslip'; id: string } | { kind: 'history'; itemId: string }
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'home', label: '首頁', icon: 'tabHome' },
@@ -67,6 +77,11 @@ function Shell() {
   const [editor, setEditor] = useState<EditorTarget | null>(null)
   const [backupRequest, setBackupRequest] = useState(0)
   const [overlayEl, setOverlayEl] = useState<HTMLElement | null>(null)
+  // Salary pages (D-73) live in their own stack: list → payslip → item history.
+  const [routes, setRoutes] = useState<{ key: number; route: Route; closing: boolean }[]>([])
+  const routeKey = useRef(0)
+  const [slipEditor, setSlipEditor] = useState<PayslipEditorTarget | null>(null)
+  const payslips = usePayslips()
 
   useKeyboardInset(deviceRef)
 
@@ -83,10 +98,34 @@ function Shell() {
 
   // D-43: only let a new version reload the app when nothing is being edited.
   const busy = useRef(false)
-  busy.current = entry.open || editor !== null
+  busy.current = entry.open || editor !== null || slipEditor !== null
   useEffect(() => {
     void initPwa(() => !busy.current)
   }, [])
+
+  const push = useCallback((route: Route) => {
+    routeKey.current += 1
+    const key = routeKey.current
+    setRoutes((rs) => [...rs, { key, route, closing: false }])
+  }, [])
+  const pop = useCallback(() => {
+    setRoutes((rs) => {
+      const i = rs.map((r) => r.closing).lastIndexOf(false)
+      if (i < 0) return rs
+      const key = rs[i].key
+      window.setTimeout(() => setRoutes((now) => now.filter((r) => r.key !== key)), 460)
+      return rs.map((r, j) => (j === i ? { ...r, closing: true } : r))
+    })
+  }, [])
+  const liveRoutes = routes.filter((r) => !r.closing)
+  // New payslips never start in a future month; if that month already has one, open it (D-63).
+  const newPayslip = (month?: string) => {
+    let m = month ?? defaultNewMonth(payslips ?? [])
+    if (m > currentMonthKey()) m = currentMonthKey()
+    const existing = payslips?.find((s) => s.month === m)
+    if (existing) push({ kind: 'payslip', id: existing.id })
+    else setSlipEditor({ month: m })
+  }
 
   const goTab = (t: Tab) => {
     if (t === tab) {
@@ -97,7 +136,16 @@ function Shell() {
     setTab(t)
   }
 
-  const openTx = useCallback((id: string) => setEntry({ open: true, id }), [])
+  // Income created by a payslip opens that payslip instead of the entry sheet (D-64, D-73).
+  const openTx = useCallback(
+    (id: string) => {
+      payslipIdForTransaction(id).then(
+        (slipId) => (slipId ? push({ kind: 'payslip', id: slipId }) : setEntry({ open: true, id })),
+        () => setEntry({ open: true, id }),
+      )
+    },
+    [push],
+  )
   const addTx = useCallback(() => setEntry({ open: true, id: null }), [])
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), [])
 
@@ -110,15 +158,22 @@ function Shell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || entry.open) return
-      if (editor) setEditor(null)
+      if (slipEditor) setSlipEditor(null)
+      else if (editor) setEditor(null)
       else if (manage) setManage(null)
       else if (settingsOpen) setSettingsOpen(false)
+      else if (liveRoutes.length) pop()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [entry.open, editor, manage, settingsOpen])
+  }, [entry.open, editor, manage, settingsOpen, slipEditor, liveRoutes.length, pop])
 
-  const pushed = settingsOpen
+  const pushed = settingsOpen || liveRoutes.length > 0
+  const backLabelAt = (i: number) => {
+    if (i === 0) return tab === 'home' ? '首頁' : tab === 'list' ? '明細' : '統計'
+    const prev = routes[i - 1].route
+    return prev.kind === 'payslips' ? '薪資單' : prev.kind === 'payslip' ? '薪資單' : '返回'
+  }
 
   return (
     <div ref={deviceRef} className={'device' + (pushed ? ' pushed' : '')}>
@@ -158,6 +213,10 @@ function Shell() {
             month={month}
             onMonth={setMonth}
             onCategory={(categoryId) => {
+              if (categoryId === SALARY_CATEGORY_ID) {
+                push({ kind: 'payslips' }) // D-73
+                return
+              }
               setFilters({ q: '', type: 'all', categoryId })
               setTab('list')
               listRef.current?.scrollTo({ top: 0 })
@@ -191,12 +250,66 @@ function Shell() {
           onBack={() => setSettingsOpen(false)}
           onCategories={() => openManage('category')}
           onPayments={() => openManage('payment')}
+          onSalaryItems={() => openManage('salary')}
           backupRequest={backupRequest}
         />
         <ManagePage kind={manageShown} open={manage !== null} onBack={() => setManage(null)} onEdit={setEditor} />
 
-        <EntrySheet open={entry.open} editId={entry.id} onClose={closeEntry} />
+        {routes.map((r, i) => {
+          const covered = routes.slice(i + 1).some((x) => !x.closing)
+          const back = backLabelAt(i)
+          return (
+            <StackPage key={r.key} closing={r.closing} covered={covered} label={r.route.kind === 'history' ? '項目歷史' : '薪資單'}>
+              {r.route.kind === 'payslips' && (
+                <PayslipListPage
+                  backLabel={back}
+                  onBack={pop}
+                  onOpen={(id) => push({ kind: 'payslip', id })}
+                  onNew={(m) => newPayslip(m)}
+                  onSeeIncome={() => {
+                    setFilters({ q: '', type: 'all', categoryId: SALARY_CATEGORY_ID })
+                    setTab('list')
+                    setRoutes([])
+                  }}
+                />
+              )}
+              {r.route.kind === 'payslip' && (
+                <PayslipPage
+                  id={r.route.id}
+                  backLabel={back}
+                  onBack={pop}
+                  onEdit={(id) => setSlipEditor({ payslipId: id })}
+                  onHistory={(itemId) => push({ kind: 'history', itemId })}
+                />
+              )}
+              {r.route.kind === 'history' && <ItemHistoryPage itemId={r.route.itemId} backLabel={back} onBack={pop} />}
+            </StackPage>
+          )
+        })}
+
+        <EntrySheet
+          open={entry.open}
+          editId={entry.id}
+          onClose={closeEntry}
+          onUsePayslip={() => {
+            closeEntry()
+            newPayslip()
+          }}
+        />
         <EditorSheet target={editor} onClose={() => setEditor(null)} />
+        <PayslipEditor
+          target={slipEditor}
+          onClose={() => setSlipEditor(null)}
+          onDeleted={(id) => {
+            // Leave the deleted payslip's page if it is on top.
+            const top = liveRoutes[liveRoutes.length - 1]
+            if (top && top.route.kind === 'payslip' && top.route.id === id) pop()
+          }}
+          onOpenExisting={(id) => {
+            setSlipEditor(null)
+            push({ kind: 'payslip', id })
+          }}
+        />
         <div className="overlay-root" ref={setOverlayEl} />
       </ToastProvider>
       </OverlayContext.Provider>

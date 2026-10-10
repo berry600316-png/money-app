@@ -2,6 +2,7 @@ import { db, type MoneyDB } from './db'
 import type { Category, PaymentMethod, PaymentType, Transaction, TxType } from './types'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
+import { PAYSLIP_SOURCE } from './defaults'
 
 /** An error whose message is safe to show to the user as-is. */
 export class MoneyError extends Error {}
@@ -78,6 +79,7 @@ export async function updateTransaction(id: string, input: TxInput, d: MoneyDB =
   return d.transaction('rw', d.transactions, async () => {
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
+    if (prev.source === PAYSLIP_SOURCE) throw new MoneyError('這筆收入由薪資單產生，請到薪資單修改')
     const keepTime = toYmd(new Date(prev.occurredAt)) === input.date
     const next: Transaction = {
       ...prev,
@@ -96,6 +98,7 @@ export async function deleteTransaction(id: string, d: MoneyDB = db): Promise<Tr
   return d.transaction('rw', d.transactions, async () => {
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
+    if (prev.source === PAYSLIP_SOURCE) throw new MoneyError('這筆收入由薪資單產生，請到薪資單刪除')
     await d.transactions.delete(id)
     return prev
   })

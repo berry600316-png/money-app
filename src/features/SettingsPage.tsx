@@ -1,4 +1,4 @@
-import { useTxCount } from '../db/hooks'
+import { useSalaryItems, useTxCount } from '../db/hooks'
 import { usePwaState } from '../pwa/pwa'
 import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
@@ -10,11 +10,13 @@ export function SettingsPage({
   onBack,
   onCategories,
   onPayments,
+  onSalaryItems,
   backupRequest,
 }: {
   open: boolean
   covered: boolean
   backupRequest: number
+  onSalaryItems: () => void
   onBack: () => void
   onCategories: () => void
   onPayments: () => void
@@ -22,6 +24,7 @@ export function SettingsPage({
   const pwa = usePwaState()
   const ref = useRefData()
   const count = useTxCount()
+  const salaryItems = useSalaryItems()
   const activeCats = ref.categories.filter((c) => c.isActive).length
   const activePays = ref.payments.filter((p) => p.isActive).length
 
@@ -73,7 +76,7 @@ export function SettingsPage({
       <BackupSection backupRequest={backupRequest} />
 
       <div className="set-sec">
-        <h2>分類與付款方式</h2>
+        <h2>分類、付款方式與薪資項目</h2>
         <div className="set-card">
           <button type="button" className="srow" onClick={onCategories}>
             <span className="s-main">分類</span>
@@ -83,6 +86,11 @@ export function SettingsPage({
           <button type="button" className="srow" onClick={onPayments}>
             <span className="s-main">付款方式</span>
             <span className="s-val">{activePays} 個使用中</span>
+            <Icon name="chev" className="chev" />
+          </button>
+          <button type="button" className="srow" onClick={onSalaryItems}>
+            <span className="s-main">薪資項目</span>
+            <span className="s-val">{salaryItems ? `${salaryItems.filter((i) => i.isActive).length} 個使用中` : ''}</span>
             <Icon name="chev" className="chev" />
           </button>
         </div>

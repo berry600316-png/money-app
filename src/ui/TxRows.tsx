@@ -1,3 +1,4 @@
+import { PAYSLIP_SOURCE } from '../db/defaults'
 import type { Transaction } from '../db/types'
 import { dayLabel } from '../lib/dates'
 import { fmt } from '../lib/money'
@@ -16,7 +17,10 @@ export function TxRow({ tx, onOpen }: { tx: Transaction; onOpen: (id: string) =>
         <Icon name={c.icon} />
       </span>
       <span className="row-main">
-        <span className="row-title">{tx.merchant || c.name}</span>
+        <span className="row-title">
+          {tx.merchant || c.name}
+          {tx.source === PAYSLIP_SOURCE && <span className="tag tag-brand">薪資單</span>}
+        </span>
         <span className="row-sub">{sub}</span>
       </span>
       <span className={'row-amt num ' + tx.type}>

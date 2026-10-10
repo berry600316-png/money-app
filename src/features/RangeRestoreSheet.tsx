@@ -117,6 +117,11 @@ export function RangeRestoreSheet({
                   <span className="lbl">筆</span>
                 </div>
               </div>
+              {preview.payslipsFromBackup + preview.payslipsReplaced > 0 && (
+                <span className="lbl">
+                  薪資單：備份 {preview.payslipsFromBackup} 張，會取代目前 {preview.payslipsReplaced} 張
+                </span>
+              )}
               {preview.fromBackup === 0 && <p className="range-note">備份在這段期間沒有紀錄，目前這段期間的紀錄會被移除。</p>}
             </>
           ) : (

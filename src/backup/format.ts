@@ -2,11 +2,13 @@
  * Backup file format (spec 0.9, decisions D-40/D-42). Pure functions only: no database access,
  * so every rule here is covered by unit tests.
  */
-import type { Category, PaymentMethod, PaymentType, Setting, Transaction, TxType } from '../db/types'
+import type { Category, PaymentMethod, PaymentType, Payslip, SalaryItem, SalaryKind, SalaryNature, Setting, Transaction, TxType } from '../db/types'
 import { PAYMENT_TYPE_LABELS } from '../db/types'
 import { SCHEMA_VERSION } from '../db/db'
-import { isValidAmount } from '../lib/money'
-import { timeLabel, toYmd } from '../lib/dates'
+import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
+import { isValidAmount, MAX_AMOUNT } from '../lib/money'
+import { fromYmd, timeLabel, toYmd } from '../lib/dates'
+import { isMonthKey } from '../lib/months'
 
 export const BACKUP_APP = 'money'
 export const BACKUP_FORMAT = 1
@@ -26,6 +28,9 @@ export interface MoneyData {
   categories: Category[]
   paymentMethods: PaymentMethod[]
   settings: Setting[]
+  /** Schema v2 (D-74). Backups from schema v1 have neither; they restore as defaults / none. */
+  salaryItems: SalaryItem[]
+  payslips: Payslip[]
 }
 
 export interface BackupFile extends MoneyData {
@@ -47,6 +52,8 @@ export function buildBackup(data: MoneyData, now = new Date()): BackupFile {
     categories: data.categories,
     paymentMethods: data.paymentMethods,
     settings: data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key)),
+    salaryItems: data.salaryItems,
+    payslips: [...data.payslips].sort((a, b) => (a.month < b.month ? -1 : 1)),
   }
 }
 
@@ -171,6 +178,64 @@ export function parseBackup(text: string): BackupFile {
     return { key: s.key, value: s.value }
   })
 
+  // Salary data arrived with schema v2; older backups restore with the default items and no payslips.
+  let salaryItems: SalaryItem[] = DEFAULT_SALARY_ITEMS.map((i) => ({ ...i }))
+  let payslips: Payslip[] = []
+  if (raw.schemaVersion >= 2) {
+    if (!Array.isArray(raw.salaryItems) || !Array.isArray(raw.payslips)) fail('備份檔內容不完整')
+    salaryItems = (raw.salaryItems as unknown[]).map((s, i): SalaryItem => {
+      const n = i + 1
+      if (!isObj(s) || !isStr(s.id) || !s.id) fail(`第 ${n} 個薪資項目缺少編號`)
+      if (!isStr(s.name) || !s.name.trim()) fail(`第 ${n} 個薪資項目缺少名稱`)
+      if (s.kind !== 'earning' && s.kind !== 'deduction') fail(`薪資項目「${s.name}」的應發／應扣不正確`)
+      if (s.nature !== 'fixed' && s.nature !== 'variable') fail(`薪資項目「${s.name}」的固定／變動不正確`)
+      if (typeof s.isActive !== 'boolean') fail(`薪資項目「${s.name}」缺少啟用狀態`)
+      if (typeof s.sortOrder !== 'number' || !Number.isFinite(s.sortOrder)) fail(`薪資項目「${s.name}」缺少排序`)
+      return { id: s.id, name: s.name, kind: s.kind as SalaryKind, nature: s.nature as SalaryNature, isActive: s.isActive, sortOrder: s.sortOrder }
+    })
+    checkUnique(salaryItems, '薪資項目')
+    const itemIds = new Set(salaryItems.map((s) => s.id))
+    const txIds = new Set(transactions.map((t) => t.id))
+    payslips = (raw.payslips as unknown[]).map((p, i): Payslip => {
+      const n = i + 1
+      if (!isObj(p) || !isStr(p.id) || !p.id) fail(`第 ${n} 張薪資單缺少編號`)
+      if (!isMonthKey(p.month)) fail(`第 ${n} 張薪資單的月份不正確`)
+      if (!isStr(p.payDate) || !/^\d{4}-\d{2}-\d{2}$/.test(p.payDate) || toYmd(fromYmd(p.payDate)) !== p.payDate) fail(`第 ${n} 張薪資單的發薪日不正確`)
+      if (!isStr(p.company)) fail(`第 ${n} 張薪資單的公司名稱不正確`)
+      if (!isStr(p.paymentMethodId) || !payIds.has(p.paymentMethodId)) fail(`第 ${n} 張薪資單的入帳方式不存在`)
+      if (!isIso(p.createdAt) || !isIso(p.updatedAt)) fail(`第 ${n} 張薪資單的時間不正確`)
+      if (p.transactionId !== null && (!isStr(p.transactionId) || !txIds.has(p.transactionId))) fail(`第 ${n} 張薪資單的收入紀錄不存在`)
+      if (!Array.isArray(p.lines)) fail(`第 ${n} 張薪資單缺少明細`)
+      const seenItems = new Set<string>()
+      const lines = (p.lines as unknown[]).map((l) => {
+        if (!isObj(l) || !isStr(l.itemId) || !itemIds.has(l.itemId)) fail(`第 ${n} 張薪資單有不存在的薪資項目`)
+        if (seenItems.has(l.itemId)) fail(`第 ${n} 張薪資單有重複的薪資項目`)
+        seenItems.add(l.itemId)
+        if (!isStr(l.name)) fail(`第 ${n} 張薪資單的項目名稱不正確`)
+        const a = l.amount
+        if (typeof a !== 'number' || !Number.isSafeInteger(a) || a < 0 || a > MAX_AMOUNT) fail(`第 ${n} 張薪資單的金額不正確`)
+        return { itemId: l.itemId, name: l.name, amount: a }
+      })
+      return {
+        id: p.id,
+        month: p.month,
+        payDate: p.payDate,
+        company: p.company,
+        paymentMethodId: p.paymentMethodId,
+        lines,
+        transactionId: p.transactionId as string | null,
+        createdAt: p.createdAt,
+        updatedAt: p.updatedAt,
+      }
+    })
+    checkUnique(payslips, '薪資單')
+    const seenMonths = new Set<string>()
+    for (const p of payslips) {
+      if (seenMonths.has(p.month)) fail(`備份檔中 ${p.month} 有兩張薪資單`)
+      seenMonths.add(p.month)
+    }
+  }
+
   return {
     app: BACKUP_APP,
     format: BACKUP_FORMAT,
@@ -180,6 +245,8 @@ export function parseBackup(text: string): BackupFile {
     categories,
     paymentMethods,
     settings: settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key)),
+    salaryItems,
+    payslips,
   }
 }
 

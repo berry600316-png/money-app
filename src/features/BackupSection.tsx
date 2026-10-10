@@ -284,10 +284,19 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
                     另有 <b>{shownRange.preview.movedIn}</b> 筆後來改到其他日期的紀錄，會改回備份時的內容。
                   </>
                 )}
-                {shownRange.preview.newCategories.length + shownRange.preview.newPayments.length > 0 && (
+                {shownRange.preview.payslipsFromBackup + shownRange.preview.payslipsReplaced > 0 && (
                   <>
                     <br />
-                    會加回：{[...shownRange.preview.newCategories, ...shownRange.preview.newPayments].map((x) => `「${x.name}」`).join('')}
+                    薪資單：備份的 <b>{shownRange.preview.payslipsFromBackup}</b> 張會取代目前的 <b>{shownRange.preview.payslipsReplaced}</b> 張（依發薪日）。
+                  </>
+                )}
+                {shownRange.preview.newCategories.length + shownRange.preview.newPayments.length + shownRange.preview.newSalaryItems.length > 0 && (
+                  <>
+                    <br />
+                    會加回：
+                    {[...shownRange.preview.newCategories, ...shownRange.preview.newPayments, ...shownRange.preview.newSalaryItems]
+                      .map((x) => `「${x.name}」`)
+                      .join('')}
                   </>
                 )}
                 <br />

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { db } from '../db/db'
-import { DEFAULT_CATEGORY_ID, DEFAULT_PAYMENT_METHOD_ID } from '../db/defaults'
+import { DEFAULT_CATEGORY_ID, DEFAULT_PAYMENT_METHOD_ID, SALARY_CATEGORY_ID } from '../db/defaults'
 import { useSetting } from '../db/hooks'
 import {
   addTransaction,
@@ -45,7 +45,17 @@ const KEYS: { k: string; label?: string; cls?: string }[] = [
   { k: '00' }, { k: '0', cls: 'zero' },
 ]
 
-export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: string | null; onClose: () => void }) {
+export function EntrySheet({
+  open,
+  editId,
+  onClose,
+  onUsePayslip,
+}: {
+  open: boolean
+  editId: string | null
+  onClose: () => void
+  onUsePayslip: () => void
+}) {
   const ref = useRefData()
   const toast = useToast()
   const lastPay = useSetting<string>('lastPaymentMethodId', DEFAULT_PAYMENT_METHOD_ID)
@@ -379,6 +389,14 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
               </button>
             ))}
           </div>
+
+          {/* D-65: salary can be recorded with its full payslip instead. */}
+          {!editId && draft.type === 'income' && draft.categoryId === SALARY_CATEGORY_ID && (
+            <button type="button" className="payslip-hint" onClick={onUsePayslip}>
+              <Icon name="receipt" />
+              用薪資單記錄明細 ›
+            </button>
+          )}
 
           <div className="meta">
             <label className={'pill' + (draft.date !== today ? ' on' : '')} htmlFor="f-date">

@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
-import type { Category, PaymentMethod, Transaction } from './types'
+import type { Category, PaymentMethod, Payslip, SalaryItem, Transaction } from './types'
 import { addMonths, monthRangeIso, type YearMonth } from '../lib/dates'
 
 /* Live queries re-run automatically after any write, so every screen updates at once. */
@@ -44,6 +44,19 @@ export function useCategories(): Category[] | undefined {
 
 export function usePaymentMethods(): PaymentMethod[] | undefined {
   return useLiveQuery(async () => (await db.paymentMethods.toArray()).sort(byOrder), [])
+}
+
+/** All payslips, oldest month first. */
+export function usePayslips(): Payslip[] | undefined {
+  return useLiveQuery(() => db.payslips.orderBy('month').toArray(), [])
+}
+
+/** Salary items in display order: earnings first, then deductions. */
+export function useSalaryItems(): SalaryItem[] | undefined {
+  return useLiveQuery(
+    async () => (await db.salaryItems.toArray()).sort((a, b) => (a.kind === b.kind ? a.sortOrder - b.sortOrder : a.kind === 'earning' ? -1 : 1)),
+    [],
+  )
 }
 
 export function useSetting<T>(key: string, fallback: T): T {

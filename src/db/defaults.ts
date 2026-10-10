@@ -1,4 +1,4 @@
-import type { Category, PaymentMethod } from './types'
+import type { Category, PaymentMethod, SalaryItem } from './types'
 
 /** D-10. Ids are stable so backups from any install line up. */
 export const DEFAULT_CATEGORIES: Category[] = [
@@ -23,6 +23,27 @@ export const DEFAULT_PAYMENT_METHODS: PaymentMethod[] = [
   { id: 'mobile', name: '行動支付', type: 'mobile', isActive: true, sortOrder: 3 },
   { id: 'transfer', name: '轉帳', type: 'transfer', isActive: true, sortOrder: 4 },
 ]
+
+/** D-67: default payslip items with stable ids. */
+export const DEFAULT_SALARY_ITEMS: SalaryItem[] = [
+  { id: 'BASE_SALARY', name: '本薪', kind: 'earning', nature: 'fixed', isActive: true, sortOrder: 0 },
+  { id: 'MEAL_ALLOWANCE', name: '伙食津貼', kind: 'earning', nature: 'fixed', isActive: true, sortOrder: 1 },
+  { id: 'POSITION_ALLOWANCE', name: '職務加給', kind: 'earning', nature: 'fixed', isActive: true, sortOrder: 2 },
+  { id: 'ATTENDANCE_BONUS', name: '全勤獎金', kind: 'earning', nature: 'variable', isActive: true, sortOrder: 3 },
+  { id: 'OVERTIME_PAY', name: '加班費', kind: 'earning', nature: 'variable', isActive: true, sortOrder: 4 },
+  { id: 'BONUS_PERFORMANCE', name: '績效獎金', kind: 'earning', nature: 'variable', isActive: true, sortOrder: 5 },
+  { id: 'BONUS_OTHER', name: '其他獎金', kind: 'earning', nature: 'variable', isActive: true, sortOrder: 6 },
+  { id: 'LABOR_INSURANCE', name: '勞保費', kind: 'deduction', nature: 'fixed', isActive: true, sortOrder: 0 },
+  { id: 'HEALTH_INSURANCE', name: '健保費', kind: 'deduction', nature: 'fixed', isActive: true, sortOrder: 1 },
+  { id: 'PENSION_SELF', name: '勞退自提', kind: 'deduction', nature: 'fixed', isActive: true, sortOrder: 2 },
+  { id: 'INCOME_TAX', name: '所得稅扣繳', kind: 'deduction', nature: 'variable', isActive: true, sortOrder: 3 },
+  { id: 'LEAVE_DEDUCTION', name: '請假扣款', kind: 'deduction', nature: 'variable', isActive: true, sortOrder: 4 },
+  { id: 'DEDUCTION_OTHER', name: '其他扣款', kind: 'deduction', nature: 'variable', isActive: true, sortOrder: 5 },
+]
+
+/** Category used for income created from payslips (D-64). */
+export const SALARY_CATEGORY_ID = 'salary'
+export const PAYSLIP_SOURCE = 'payslip'
 
 /** D-20: fixed default category per type. */
 export const DEFAULT_CATEGORY_ID = { expense: 'food', income: 'salary' } as const

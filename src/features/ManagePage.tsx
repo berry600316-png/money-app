@@ -1,13 +1,17 @@
-import type { TxType } from '../db/types'
+import { useSalaryItems } from '../db/hooks'
+import type { SalaryKind, TxType } from '../db/types'
 import { PAYMENT_TYPE_LABELS } from '../db/types'
 import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
 
-export type ManageKind = 'category' | 'payment'
+export type ManageKind = 'category' | 'payment' | 'salary'
 
 export type EditorTarget =
   | { kind: 'category'; id: string | null; type: TxType }
   | { kind: 'payment'; id: string | null }
+  | { kind: 'salary'; id: string | null; salaryKind: SalaryKind }
+
+const TITLES: Record<ManageKind, string> = { category: '分類', payment: '付款方式', salary: '薪資項目' }
 
 export function ManagePage({
   kind,
@@ -21,7 +25,8 @@ export function ManagePage({
   onEdit: (t: EditorTarget) => void
 }) {
   const ref = useRefData()
-  const title = kind === 'category' ? '分類' : '付款方式'
+  const salaryItems = useSalaryItems()
+  const title = TITLES[kind]
 
   return (
     <section className={'page' + (open ? ' open' : '')} aria-label={title} aria-hidden={!open} inert={!open}>
@@ -34,7 +39,7 @@ export function ManagePage({
         <span />
       </div>
 
-      {kind === 'category' ? (
+      {kind === 'category' &&
         (['expense', 'income'] as const).map((type) => (
           <div className="set-sec" key={type}>
             <h2>{type === 'expense' ? '支出' : '收入'}</h2>
@@ -57,8 +62,9 @@ export function ManagePage({
               </button>
             </div>
           </div>
-        ))
-      ) : (
+        ))}
+
+      {kind === 'payment' && (
         <div className="set-sec">
           <div className="set-card">
             {ref.payments.map((p) => (
@@ -78,7 +84,37 @@ export function ManagePage({
           </div>
         </div>
       )}
-      <p className="set-foot">停用後不會出現在新增畫面，但過去的紀錄和統計都會保留。</p>
+
+      {kind === 'salary' &&
+        (['earning', 'deduction'] as const).map((sk) => (
+          <div className="set-sec" key={sk}>
+            <h2>{sk === 'earning' ? '應發' : '應扣'}</h2>
+            <div className="set-card">
+              {(salaryItems ?? [])
+                .filter((i) => i.kind === sk)
+                .map((i) => (
+                  <button type="button" key={i.id} className={'srow' + (i.isActive ? '' : ' off')} onClick={() => onEdit({ kind: 'salary', id: i.id, salaryKind: sk })}>
+                    <span className="s-main">
+                      {i.name}
+                      <span className="s-sub">{i.nature === 'fixed' ? '固定：新薪資單沿用上月金額' : '變動：新薪資單從 0 開始'}</span>
+                    </span>
+                    {!i.isActive && <span className="s-val">已停用</span>}
+                    <Icon name="chev" className="chev" />
+                  </button>
+                ))}
+              <button type="button" className="srow add" onClick={() => onEdit({ kind: 'salary', id: null, salaryKind: sk })}>
+                <span className="s-main">新增{sk === 'earning' ? '應發' : '應扣'}項目</span>
+                <Icon name="plus" className="chev" />
+              </button>
+            </div>
+          </div>
+        ))}
+
+      <p className="set-foot">
+        {kind === 'salary'
+          ? '停用後不會出現在新的薪資單，但過去的薪資單與項目歷史都會保留。應發或應扣在新增時決定，之後不能更改。'
+          : '停用後不會出現在新增畫面，但過去的紀錄和統計都會保留。'}
+      </p>
     </section>
   )
 }
