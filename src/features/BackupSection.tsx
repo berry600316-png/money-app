@@ -12,6 +12,13 @@ import { useToast } from '../ui/Toast'
 
 type Prepared = { kind: 'json' | 'csv'; file: File; count: number }
 
+/** Keeps the last non-null value so a sheet's text doesn't vanish while it slides away. */
+function useLast<T>(v: T | null): T | null {
+  const ref = useRef<T | null>(v)
+  if (v !== null) ref.current = v
+  return ref.current
+}
+
 function dateTimeLabel(iso: string) {
   const d = new Date(iso)
   const p = (n: number) => String(n).padStart(2, '0')
@@ -30,6 +37,9 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
   const [pendingRestore, setPendingRestore] = useState<BackupFile | null>(null)
   const [confirmUndo, setConfirmUndo] = useState(false)
   const fileInput = useRef<HTMLInputElement | null>(null)
+  const shownPrepared = useLast(prepared)
+  const shownRestore = useLast(pendingRestore)
+  const shownSnap = useLast(snapshot)
 
   // Safari only lets navigator.share run inside a tap, so the file is built first and
   // handed over by a second tap in the "備份已準備好" sheet.
@@ -65,16 +75,24 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
   const save = async () => {
     if (!prepared) return
     const p = prepared
+    let result
     try {
-      const result = await saveFile(p.file)
-      if (result === 'cancelled') return
-      setPrepared(null)
-      if (p.kind === 'json') {
-        await markBackedUp()
-        toast('已匯出備份')
-      } else toast('已匯出 CSV')
+      result = await saveFile(p.file)
     } catch {
       toast('沒有存成功，請再試一次', { kind: 'error' })
+      return
+    }
+    if (result === 'cancelled') return
+    setPrepared(null)
+    if (p.kind === 'csv') {
+      toast('已匯出 CSV')
+      return
+    }
+    try {
+      await markBackedUp()
+      toast('已匯出備份')
+    } catch {
+      toast('備份已存出，但無法記錄備份時間', { kind: 'error' })
     }
   }
 
@@ -175,24 +193,24 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
         <ActionSheet
           open={prepared !== null}
           onClose={() => setPrepared(null)}
-          title={prepared?.kind === 'csv' ? 'CSV 已準備好' : '備份已準備好'}
+          title={shownPrepared?.kind === 'csv' ? 'CSV 已準備好' : '備份已準備好'}
           message={
             <>
-              共 <b>{(prepared?.count ?? 0).toLocaleString('en-US')}</b> 筆交易。
+              共 <b>{(shownPrepared?.count ?? 0).toLocaleString('en-US')}</b> 筆交易。
               <br />
               下一步選「儲存到檔案」，建議存在「我的 iPhone」。
             </>
           }
-          actions={[{ label: prepared?.kind === 'csv' ? '儲存 CSV…' : '儲存備份…', onClick: () => void save() }]}
+          actions={[{ label: shownPrepared?.kind === 'csv' ? '儲存 CSV…' : '儲存備份…', onClick: () => void save() }]}
         />
         <ActionSheet
           open={pendingRestore !== null}
           onClose={() => setPendingRestore(null)}
           title="用這個備份取代目前的資料？"
           message={
-            pendingRestore && (
+            shownRestore && (
               <>
-                備份檔：{dateTimeLabel(pendingRestore.exportedAt)} 匯出，共 <b>{pendingRestore.transactions.length.toLocaleString('en-US')}</b> 筆交易。
+                備份檔：{dateTimeLabel(shownRestore.exportedAt)} 匯出，共 <b>{shownRestore.transactions.length.toLocaleString('en-US')}</b> 筆交易。
                 <br />
                 目前的 <b>{count.toLocaleString('en-US')}</b> 筆交易會被取代。還原前的資料會保留一份，之後可以在設定頁退回。
               </>
@@ -205,9 +223,9 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
           onClose={() => setConfirmUndo(false)}
           title="退回到還原之前？"
           message={
-            snapshot && (
+            shownSnap && (
               <>
-                目前的 <b>{count.toLocaleString('en-US')}</b> 筆交易會被 {dateTimeLabel(snapshot.takenAt)} 的 <b>{snapshot.data.transactions.length.toLocaleString('en-US')}</b>{' '}
+                目前的 <b>{count.toLocaleString('en-US')}</b> 筆交易會被 {dateTimeLabel(shownSnap.takenAt)} 的 <b>{shownSnap.data.transactions.length.toLocaleString('en-US')}</b>{' '}
                 筆取代。
               </>
             )

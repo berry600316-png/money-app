@@ -108,6 +108,7 @@ describe('parseBackup rejects bad files before anything is written', () => {
     expect(bad({ ...b, transactions: [{ ...t0, categoryId: 'nope' }] })).toThrow('分類不存在')
     expect(bad({ ...b, transactions: [{ ...t0, categoryId: 'salary' }] })).toThrow('分類不存在')
     expect(bad({ ...b, transactions: [{ ...t0, occurredAt: 'yesterday' }] })).toThrow('時間')
+    expect(bad({ ...b, transactions: [{ ...t0, occurredAt: '2026-02-31T00:00:00.000Z' }] })).toThrow('時間')
     expect(bad({ ...b, transactions: [t0, t0] })).toThrow('重複')
   })
 

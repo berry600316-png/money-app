@@ -73,6 +73,7 @@ export function EntrySheet({ open, editId, onClose }: { open: boolean; editId: s
   useEffect(() => {
     if (!open) return
     let cancelled = false
+    keyed.current = false
     setSaving(false)
     setTyping(false)
     setSuggestions([])

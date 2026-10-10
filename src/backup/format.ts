@@ -67,7 +67,12 @@ export function csvFileName(now = new Date()): string {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isStr = (v: unknown): v is string => typeof v === 'string'
-const isIso = (v: unknown): v is string => isStr(v) && /^\d{4}-\d{2}-\d{2}T/.test(v) && !Number.isNaN(Date.parse(v))
+/** Exactly the form Date#toISOString writes; the round trip rejects impossible dates such as Feb 31. */
+const isIso = (v: unknown): v is string => {
+  if (!isStr(v) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)) return false
+  const t = Date.parse(v)
+  return !Number.isNaN(t) && new Date(t).toISOString() === v
+}
 const TX_TYPES: TxType[] = ['expense', 'income']
 const PAY_TYPES = Object.keys(PAYMENT_TYPE_LABELS) as PaymentType[]
 

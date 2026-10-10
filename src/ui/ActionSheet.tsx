@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 
 export interface SheetAction {
   label: string
@@ -22,6 +22,7 @@ export function ActionSheet({
   actions: SheetAction[]
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
+  const titleId = useId()
   useEffect(() => {
     if (!open) return
     const t = window.setTimeout(() => ref.current?.focus({ preventScroll: true }), 60)
@@ -38,9 +39,9 @@ export function ActionSheet({
   return (
     <div className={'as-wrap' + (open ? ' open' : '')} aria-hidden={!open} inert={!open}>
       <div className="backdrop" onClick={onClose} />
-      <div className="as" role="alertdialog" aria-modal="true" aria-labelledby="as-title" ref={ref} tabIndex={-1}>
+      <div className="as" role="alertdialog" aria-modal="true" aria-labelledby={titleId} ref={ref} tabIndex={-1}>
         <div className="as-card">
-          <h3 id="as-title">{title}</h3>
+          <h3 id={titleId}>{title}</h3>
           {message && <div className="as-msg">{message}</div>}
           {actions.map((a) => (
             <button type="button" key={a.label} className={a.danger ? 'danger' : undefined} disabled={a.disabled} onClick={a.onClick}>
