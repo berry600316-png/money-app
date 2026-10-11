@@ -205,7 +205,7 @@ function Shell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Sheets and dialogs answer Esc themselves (ui/layers); pages only when none is open.
-      if (e.key !== 'Escape' || entry.open || asking || anyLayerOpen()) return
+      if (e.key !== 'Escape' || e.defaultPrevented || entry.open || asking || anyLayerOpen()) return
       if (slipEditor) guardSlip(() => setSlipEditor(null))
       else if (editor) guardEditor(() => setEditor(null))
       else if (manage) setManage(null)

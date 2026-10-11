@@ -1,6 +1,7 @@
 /*
- * Open sheets and dialogs, in opening order. Only the top one answers Esc, and page-level Esc handling
- * (App) stands down while any is open, so Esc never closes a page underneath a sheet (D-101).
+ * Open sheets and dialogs, in opening order. Only the top one answers Esc and marks the event handled
+ * (preventDefault); page-level Esc handling (App) ignores handled events and stands down while any layer
+ * is open, so Esc never closes a page underneath a sheet, whatever order the listeners run in (D-101).
  */
 import { useEffect, useRef } from 'react'
 
@@ -17,9 +18,13 @@ export function useLayer(open: boolean, onEsc: (() => void) | null): void {
   useEffect(() => {
     if (!open) return
     const me = Symbol('layer')
+    // A layer with no Esc handler of its own (the entry sheet handles Esc itself) still blocks page-level Esc.
     stack.push(me)
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || stack[stack.length - 1] !== me || !latest.current) return
+      if (e.key !== 'Escape' || e.defaultPrevented || stack[stack.length - 1] !== me || !latest.current) return
+      // Mark the key as used: a listener that runs after this one (its order depends on when it was
+      // last attached) must not act on it once this layer has already closed.
+      e.preventDefault()
       const a = document.activeElement as HTMLElement | null
       const tag = (a?.tagName ?? '').toUpperCase()
       // First Esc leaves a text field, the next one closes.

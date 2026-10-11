@@ -294,6 +294,8 @@ export function EntrySheet({
       const tag = (document.activeElement?.tagName ?? '').toUpperCase()
       const inField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'
       if (e.key === 'Escape') {
+        if (e.defaultPrevented) return
+        e.preventDefault() // handled here: page-level Esc must not also act on it
         if (inField) (document.activeElement as HTMLElement).blur()
         else requestClose()
         return
