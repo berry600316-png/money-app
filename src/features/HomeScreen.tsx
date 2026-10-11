@@ -58,15 +58,17 @@ export function HomeScreen({
   const [selected, setSelected] = useState(today)
   const calTx = useMonthTx(calYm)
 
-  // Past midnight: a calendar left on "today" follows to the new day (and month).
+  // Past midnight: a calendar left on "today" follows to the new day (and month). Any other choice
+  // stays exactly where it is, month included, so the list below always matches the calendar.
   const shownToday = useRef(today)
   useEffect(() => {
     const prev = shownToday.current
     shownToday.current = today
-    if (prev === today) return
-    setSelected((s) => (s === prev ? today : s))
-    setCalYm((c) => (sameYm(c, ymOf(fromYmd(prev))) ? ymOf(fromYmd(today)) : c))
-  }, [today])
+    if (prev === today || selected !== prev) return
+    setSelected(today)
+    setCalYm(ymOf(fromYmd(today)))
+    // Only when the date changes; `selected` is read as it is at that moment.
+  }, [today]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const changeMonth = (next: YearMonth) => {
     setCalYm(next)
