@@ -86,7 +86,15 @@ describe('restore safety (D-40)', () => {
 })
 
 describe('parseBackup rejects bad files before anything is written', () => {
-  const good = () => JSON.parse(JSON.stringify(buildBackup({ transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [] }, now)))
+  const good = () =>
+    JSON.parse(
+      JSON.stringify(
+        buildBackup(
+          { transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [], importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [] },
+          now,
+        ),
+      ),
+    )
   async function validBackup() {
     await seed(d)
     return JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))

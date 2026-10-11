@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import Dexie from 'dexie'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MoneyDB } from './db'
+import { MoneyDB, SCHEMA_VERSION } from './db'
 import { DEFAULT_SALARY_ITEMS } from './defaults'
 import { deleteTransaction, MoneyError, updateTransaction } from './repo'
 import { addSalaryItem, deletePayslip, restorePayslip, savePayslip, updateSalaryItem, type PayslipInput } from './salary'
@@ -47,7 +47,8 @@ describe('schema v2', () => {
     await up.open()
     expect(await up.transactions.get('t1')).toMatchObject({ amount: 100 })
     expect(await up.salaryItems.count()).toBe(DEFAULT_SALARY_ITEMS.length)
-    expect((await up.settings.get('schemaVersion'))?.value).toBe(2)
+    expect((await up.settings.get('schemaVersion'))?.value).toBe(SCHEMA_VERSION)
+    expect(await up.cardStatements.count()).toBe(0) // v3 tables exist after the upgrade
     up.close()
   })
 })

@@ -2,7 +2,25 @@
  * Backup file format (spec 0.9, decisions D-40/D-42). Pure functions only: no database access,
  * so every rule here is covered by unit tests.
  */
-import type { Category, PaymentMethod, PaymentType, Payslip, SalaryItem, SalaryKind, SalaryNature, Setting, Transaction, TxType } from '../db/types'
+import type {
+  CardStatement,
+  Category,
+  EntryKind,
+  ImportBatch,
+  ImportedNotification,
+  NotificationStatus,
+  PaymentMethod,
+  PaymentType,
+  Payslip,
+  Reconciliation,
+  SalaryItem,
+  SalaryKind,
+  SalaryNature,
+  Setting,
+  StatementEntry,
+  Transaction,
+  TxType,
+} from '../db/types'
 import { PAYMENT_TYPE_LABELS } from '../db/types'
 import { SCHEMA_VERSION } from '../db/db'
 import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
@@ -31,6 +49,12 @@ export interface MoneyData {
   /** Schema v2 (D-74). Backups from schema v1 have neither; they restore as defaults / none. */
   salaryItems: SalaryItem[]
   payslips: Payslip[]
+  /** Schema v3 (D-94). Older backups restore with none. */
+  importedNotifications: ImportedNotification[]
+  importBatches: ImportBatch[]
+  cardStatements: CardStatement[]
+  statementEntries: StatementEntry[]
+  reconciliations: Reconciliation[]
 }
 
 export interface BackupFile extends MoneyData {
@@ -54,6 +78,11 @@ export function buildBackup(data: MoneyData, now = new Date()): BackupFile {
     settings: data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key)),
     salaryItems: data.salaryItems,
     payslips: [...data.payslips].sort((a, b) => (a.month < b.month ? -1 : 1)),
+    importedNotifications: data.importedNotifications,
+    importBatches: data.importBatches,
+    cardStatements: data.cardStatements,
+    statementEntries: data.statementEntries,
+    reconciliations: data.reconciliations,
   }
 }
 
@@ -133,7 +162,17 @@ export function parseBackup(text: string): BackupFile {
     if (!PAY_TYPES.includes(p.type as PaymentType)) fail(`付款方式「${p.name}」的類型不正確`)
     if (typeof p.isActive !== 'boolean') fail(`付款方式「${p.name}」缺少啟用狀態`)
     if (typeof p.sortOrder !== 'number' || !Number.isFinite(p.sortOrder)) fail(`付款方式「${p.name}」缺少排序`)
-    return { id: p.id, name: p.name, type: p.type as PaymentType, isActive: p.isActive, sortOrder: p.sortOrder }
+    if (p.bank !== undefined && !isStr(p.bank)) fail(`付款方式「${p.name}」的銀行不正確`)
+    if (p.cardLast4 !== undefined && (!isStr(p.cardLast4) || !/^\d{4}$/.test(p.cardLast4))) fail(`付款方式「${p.name}」的末四碼不正確`)
+    return {
+      id: p.id,
+      name: p.name,
+      type: p.type as PaymentType,
+      isActive: p.isActive,
+      sortOrder: p.sortOrder,
+      ...(isStr(p.bank) ? { bank: p.bank } : {}),
+      ...(isStr(p.cardLast4) ? { cardLast4: p.cardLast4 } : {}),
+    }
   })
   checkUnique(paymentMethods, '付款方式')
 
@@ -244,6 +283,8 @@ export function parseBackup(text: string): BackupFile {
     }
   }
 
+  const card = raw.schemaVersion >= 3 ? parseCardData(raw, new Set(transactions.map((t) => t.id)), new Set(paymentMethods.map((p) => p.id))) : emptyCard()
+
   return {
     app: BACKUP_APP,
     format: BACKUP_FORMAT,
@@ -255,7 +296,168 @@ export function parseBackup(text: string): BackupFile {
     settings: settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key)),
     salaryItems,
     payslips,
+    ...card,
   }
+}
+
+function emptyCard() {
+  return { importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [] }
+}
+
+const isNullStr = (v: unknown): v is string | null => v === null || isStr(v)
+const ENTRY_KINDS: EntryKind[] = ['purchase', 'refund', 'fee', 'installment', 'payment', 'adjustment', 'other']
+const NOTIF_STATUS: NotificationStatus[] = ['imported', 'duplicate', 'skipped', 'not_spending', 'unparsed']
+const isYmdStr = (v: unknown): v is string => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v) && toYmd(fromYmd(v)) === v
+
+/** D-94: credit card data. Every link must point at something in the same file. */
+function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds: Set<string>) {
+  for (const k of ['importedNotifications', 'importBatches', 'cardStatements', 'statementEntries', 'reconciliations']) {
+    if (!Array.isArray(raw[k])) fail('備份檔內容不完整')
+  }
+  const importBatches = (raw.importBatches as unknown[]).map((b, i): ImportBatch => {
+    if (!isObj(b) || !isStr(b.id) || (b.kind !== 'notifications' && b.kind !== 'statement') || !isIso(b.createdAt)) fail(`第 ${i + 1} 個匯入批次不正確`)
+    const num = (v: unknown) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : fail(`第 ${i + 1} 個匯入批次不正確`))
+    return { id: b.id, kind: b.kind, createdAt: b.createdAt, files: num(b.files), imported: num(b.imported), duplicates: num(b.duplicates), skipped: num(b.skipped), failed: num(b.failed) }
+  })
+  checkUnique(importBatches, '匯入批次')
+
+  const importedNotifications = (raw.importedNotifications as unknown[]).map((o, i): ImportedNotification => {
+    const n = i + 1
+    if (!isObj(o) || !isStr(o.id) || !isStr(o.captureId) || !o.captureId) fail(`第 ${n} 則刷卡通知缺少編號`)
+    if (!isStr(o.sourceApp) || !isStr(o.sourceType) || !isStr(o.batchId) || !isIso(o.importedAt)) fail(`第 ${n} 則刷卡通知不正確`)
+    if (!isNullStr(o.title) || !isNullStr(o.subtitle) || !isNullStr(o.body)) fail(`第 ${n} 則刷卡通知的內容不正確`)
+    if ((o.notificationTime !== null && !isIso(o.notificationTime)) || (o.capturedAt !== null && !isIso(o.capturedAt))) fail(`第 ${n} 則刷卡通知的時間不正確`)
+    if (!NOTIF_STATUS.includes(o.status as NotificationStatus)) fail(`第 ${n} 則刷卡通知的狀態不正確`)
+    if (o.transactionId !== null && !isStr(o.transactionId)) fail(`第 ${n} 則刷卡通知的記帳連結不正確`)
+    let parsed: ImportedNotification['parsed'] = null
+    if (o.parsed !== null) {
+      const p = o.parsed
+      if (!isObj(p) || !isValidAmount(p.amount) || !isStr(p.merchant) || !isNullStr(p.cardLast4) || (p.occurredAt !== null && !isIso(p.occurredAt))) fail(`第 ${n} 則刷卡通知的解析結果不正確`)
+      parsed = { amount: p.amount as number, merchant: p.merchant, occurredAt: p.occurredAt as string | null, cardLast4: p.cardLast4 }
+    }
+    return {
+      id: o.id,
+      captureId: o.captureId,
+      sourceApp: o.sourceApp,
+      sourceType: o.sourceType,
+      title: o.title,
+      subtitle: o.subtitle,
+      body: o.body,
+      notificationTime: o.notificationTime as string | null,
+      capturedAt: o.capturedAt as string | null,
+      status: o.status as NotificationStatus,
+      parsed,
+      // A link to a transaction that is not in this file is dropped, never kept dangling.
+      transactionId: isStr(o.transactionId) && txIds.has(o.transactionId) ? o.transactionId : null,
+      batchId: o.batchId,
+      importedAt: o.importedAt,
+    }
+  })
+  checkUnique(importedNotifications, '刷卡通知')
+  const caps = new Set<string>()
+  for (const n of importedNotifications) {
+    if (caps.has(n.captureId)) fail('備份檔中有重複的刷卡通知')
+    caps.add(n.captureId)
+  }
+
+  const cardStatements = (raw.cardStatements as unknown[]).map((s, i): CardStatement => {
+    const n = i + 1
+    if (!isObj(s) || !isStr(s.id) || !isStr(s.paymentMethodId) || !payIds.has(s.paymentMethodId)) fail(`第 ${n} 份帳單的信用卡不存在`)
+    if (!isMonthKey(s.statementMonth)) fail(`第 ${n} 份帳單的月份不正確`)
+    for (const k of ['periodStart', 'periodEnd', 'dueDate'] as const) if (s[k] !== null && !isYmdStr(s[k])) fail(`第 ${n} 份帳單的日期不正確`)
+    if (!isStr(s.bank) || !isStr(s.fileHash) || !s.fileHash || !isStr(s.fileName) || !isStr(s.adapter) || !isStr(s.batchId)) fail(`第 ${n} 份帳單不正確`)
+    if (s.parseStatus !== 'needs_review' && s.parseStatus !== 'confirmed') fail(`第 ${n} 份帳單的解析狀態不正確`)
+    if (!isIso(s.createdAt) || !isIso(s.updatedAt)) fail(`第 ${n} 份帳單的時間不正確`)
+    return {
+      id: s.id,
+      paymentMethodId: s.paymentMethodId,
+      bank: s.bank,
+      statementMonth: s.statementMonth,
+      periodStart: s.periodStart as string | null,
+      periodEnd: s.periodEnd as string | null,
+      dueDate: s.dueDate as string | null,
+      fileHash: s.fileHash,
+      fileName: s.fileName,
+      parseStatus: s.parseStatus,
+      adapter: s.adapter,
+      batchId: s.batchId,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+    }
+  })
+  checkUnique(cardStatements, '帳單')
+  const hashes = new Set<string>()
+  for (const s of cardStatements) {
+    if (hashes.has(s.fileHash)) fail('備份檔中有重複的帳單')
+    hashes.add(s.fileHash)
+  }
+  const stIds = new Set(cardStatements.map((s) => s.id))
+
+  const statementEntries = (raw.statementEntries as unknown[]).map((e, i): StatementEntry => {
+    const n = i + 1
+    if (!isObj(e) || !isStr(e.id) || !isStr(e.statementId) || !stIds.has(e.statementId)) fail(`第 ${n} 筆帳單明細沒有對應的帳單`)
+    if ((e.txDate !== null && !isYmdStr(e.txDate)) || (e.postDate !== null && !isYmdStr(e.postDate)) || (!e.txDate && !e.postDate)) fail(`第 ${n} 筆帳單明細的日期不正確`)
+    const a = e.amount
+    if (typeof a !== 'number' || !Number.isSafeInteger(a) || a === 0 || Math.abs(a) > MAX_AMOUNT) fail(`第 ${n} 筆帳單明細的金額不正確`)
+    if (!isStr(e.merchant) || !isStr(e.currency) || !isNullStr(e.foreign) || !isNullStr(e.reference) || !isStr(e.raw)) fail(`第 ${n} 筆帳單明細不正確`)
+    if (!ENTRY_KINDS.includes(e.kind as EntryKind) || typeof e.order !== 'number') fail(`第 ${n} 筆帳單明細的類型不正確`)
+    return {
+      id: e.id,
+      statementId: e.statementId,
+      txDate: e.txDate as string | null,
+      postDate: e.postDate as string | null,
+      merchant: e.merchant,
+      amount: a,
+      currency: e.currency,
+      foreign: e.foreign,
+      reference: e.reference,
+      kind: e.kind as EntryKind,
+      raw: e.raw,
+      order: e.order,
+    }
+  })
+  checkUnique(statementEntries, '帳單明細')
+  const entryStatement = new Map(statementEntries.map((e) => [e.id, e.statementId]))
+
+  const reconciliations = (raw.reconciliations as unknown[]).map((r, i): Reconciliation => {
+    const n = i + 1
+    if (!isObj(r) || !isStr(r.id) || !isStr(r.statementId) || !stIds.has(r.statementId)) fail(`第 ${n} 筆核對紀錄沒有對應的帳單`)
+    if (r.status !== 'matched' && r.status !== 'deferred' && r.status !== 'explained') fail(`第 ${n} 筆核對紀錄的狀態不正確`)
+    if (r.method !== 'auto' && r.method !== 'manual' && r.method !== 'created') fail(`第 ${n} 筆核對紀錄不正確`)
+    if (r.entryId !== null && (!isStr(r.entryId) || entryStatement.get(r.entryId) !== r.statementId)) fail(`第 ${n} 筆核對紀錄的帳單明細不存在`)
+    if (r.transactionId !== null && (!isStr(r.transactionId) || !txIds.has(r.transactionId))) fail(`第 ${n} 筆核對紀錄的記帳不存在`)
+    if (r.status === 'matched' && (!r.entryId || !r.transactionId)) fail(`第 ${n} 筆核對紀錄缺少配對的一方`)
+    if (!r.entryId && !r.transactionId) fail(`第 ${n} 筆核對紀錄是空的`)
+    let snapshot: Reconciliation['snapshot'] = null
+    if (r.snapshot !== null) {
+      const s = r.snapshot
+      if (!isObj(s) || typeof s.amount !== 'number' || !isYmdStr(s.date) || !isStr(s.paymentMethodId)) fail(`第 ${n} 筆核對紀錄不正確`)
+      snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId }
+    }
+    if (!isStr(r.note) || !isIso(r.createdAt)) fail(`第 ${n} 筆核對紀錄不正確`)
+    return {
+      id: r.id,
+      statementId: r.statementId,
+      entryId: r.entryId as string | null,
+      transactionId: r.transactionId as string | null,
+      status: r.status,
+      method: r.method,
+      snapshot,
+      note: r.note,
+      createdAt: r.createdAt,
+    }
+  })
+  checkUnique(reconciliations, '核對紀錄')
+  // One-to-one (D-90): no entry or transaction in two pairs.
+  const pe = new Set<string>()
+  const pt = new Set<string>()
+  for (const r of reconciliations) {
+    if (r.status !== 'matched') continue
+    if (pe.has(r.entryId!) || pt.has(r.transactionId!)) fail('備份檔中有重複的核對配對')
+    pe.add(r.entryId!)
+    pt.add(r.transactionId!)
+  }
+  return { importedNotifications, importBatches, cardStatements, statementEntries, reconciliations }
 }
 
 /* ---------------- CSV (D-42) ---------------- */

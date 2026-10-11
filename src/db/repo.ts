@@ -177,8 +177,18 @@ export async function updateCategory(id: string, patch: { name?: string; isActiv
   })
 }
 
-export async function addPaymentMethod(input: { name: string; type: PaymentType }, d: MoneyDB = db): Promise<PaymentMethod> {
+/** D-80: bank name and last four digits, credit cards only. */
+function cardFields(type: PaymentType, bank?: string, last4?: string): Pick<PaymentMethod, 'bank' | 'cardLast4'> {
+  if (type !== 'credit_card') return {}
+  const b = (bank ?? '').trim().slice(0, 20)
+  const l = (last4 ?? '').trim()
+  if (l && !/^\d{4}$/.test(l)) throw new MoneyError('末四碼需為 4 位數字')
+  return { ...(b ? { bank: b } : {}), ...(l ? { cardLast4: l } : {}) }
+}
+
+export async function addPaymentMethod(input: { name: string; type: PaymentType; bank?: string; cardLast4?: string }, d: MoneyDB = db): Promise<PaymentMethod> {
   const name = cleanName(input.name)
+  const card = cardFields(input.type, input.bank, input.cardLast4)
   return d.transaction('rw', d.paymentMethods, async () => {
     const all = await d.paymentMethods.toArray()
     if (all.some((p) => p.name === name)) throw new MoneyError(`已經有「${name}」這個付款方式`)
@@ -188,6 +198,7 @@ export async function addPaymentMethod(input: { name: string; type: PaymentType 
       type: input.type,
       isActive: true,
       sortOrder: all.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1,
+      ...card,
     }
     await d.paymentMethods.add(pm)
     return pm
@@ -196,7 +207,7 @@ export async function addPaymentMethod(input: { name: string; type: PaymentType 
 
 export async function updatePaymentMethod(
   id: string,
-  patch: { name?: string; isActive?: boolean; type?: PaymentType },
+  patch: { name?: string; isActive?: boolean; type?: PaymentType; bank?: string; cardLast4?: string },
   d: MoneyDB = db,
 ): Promise<void> {
   await d.transaction('rw', d.paymentMethods, async () => {
@@ -213,6 +224,13 @@ export async function updatePaymentMethod(
       throw new MoneyError('至少要保留一個付款方式')
     }
     if (patch.isActive !== undefined) next.isActive = patch.isActive
+    if (patch.type !== undefined || patch.bank !== undefined || patch.cardLast4 !== undefined) {
+      const card = cardFields(next.type, patch.bank ?? next.bank, patch.cardLast4 ?? next.cardLast4)
+      next.bank = card.bank
+      next.cardLast4 = card.cardLast4
+      if (next.bank === undefined) delete next.bank
+      if (next.cardLast4 === undefined) delete next.cardLast4
+    }
     await d.paymentMethods.put(next)
   })
 }

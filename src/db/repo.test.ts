@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { MoneyDB } from './db'
+import { MoneyDB, SCHEMA_VERSION } from './db'
 import {
   addCategory,
   addPaymentMethod,
@@ -33,7 +33,7 @@ describe('defaults', () => {
   it('seeds categories and payment methods once', async () => {
     expect(await d.categories.count()).toBe(11)
     expect(await d.paymentMethods.count()).toBe(5)
-    expect((await d.settings.get('schemaVersion'))?.value).toBe(2)
+    expect((await d.settings.get('schemaVersion'))?.value).toBe(SCHEMA_VERSION)
   })
 })
 

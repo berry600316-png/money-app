@@ -10,7 +10,19 @@ export interface Snapshot {
 }
 
 function allTables(d: MoneyDB) {
-  return [d.transactions, d.categories, d.paymentMethods, d.settings, d.salaryItems, d.payslips]
+  return [
+    d.transactions,
+    d.categories,
+    d.paymentMethods,
+    d.settings,
+    d.salaryItems,
+    d.payslips,
+    d.importedNotifications,
+    d.importBatches,
+    d.cardStatements,
+    d.statementEntries,
+    d.reconciliations,
+  ]
 }
 
 export async function readAllData(d: MoneyDB = db): Promise<MoneyData> {
@@ -21,6 +33,11 @@ export async function readAllData(d: MoneyDB = db): Promise<MoneyData> {
     settings: (await d.settings.toArray()).filter((s) => !DEVICE_SETTING_KEYS.has(s.key)),
     salaryItems: await d.salaryItems.toArray(),
     payslips: await d.payslips.toArray(),
+    importedNotifications: await d.importedNotifications.toArray(),
+    importBatches: await d.importBatches.toArray(),
+    cardStatements: await d.cardStatements.toArray(),
+    statementEntries: await d.statementEntries.toArray(),
+    reconciliations: await d.reconciliations.toArray(),
   }))
 }
 
@@ -31,6 +48,11 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.paymentMethods.clear()
   await d.payslips.clear()
   await d.salaryItems.clear()
+  await d.importedNotifications.clear()
+  await d.importBatches.clear()
+  await d.reconciliations.clear()
+  await d.statementEntries.clear()
+  await d.cardStatements.clear()
   const keepKeys = (await d.settings.toCollection().primaryKeys()).filter((k) => !DEVICE_SETTING_KEYS.has(String(k)))
   await d.settings.bulkDelete(keepKeys)
   await d.categories.bulkAdd(data.categories)
@@ -38,6 +60,11 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.transactions.bulkAdd(data.transactions)
   await d.salaryItems.bulkAdd(data.salaryItems ?? DEFAULT_SALARY_ITEMS)
   await d.payslips.bulkAdd(data.payslips ?? [])
+  await d.importBatches.bulkAdd(data.importBatches ?? [])
+  await d.importedNotifications.bulkAdd(data.importedNotifications ?? [])
+  await d.cardStatements.bulkAdd(data.cardStatements ?? [])
+  await d.statementEntries.bulkAdd(data.statementEntries ?? [])
+  await d.reconciliations.bulkAdd(data.reconciliations ?? [])
   const userSettings: Setting[] = data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key))
   if (userSettings.length) await d.settings.bulkPut(userSettings)
 }

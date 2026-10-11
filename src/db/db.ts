@@ -1,9 +1,21 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
-import type { Category, PaymentMethod, Payslip, SalaryItem, Setting, Transaction } from './types'
+import type {
+  CardStatement,
+  Category,
+  ImportBatch,
+  ImportedNotification,
+  PaymentMethod,
+  Payslip,
+  Reconciliation,
+  SalaryItem,
+  Setting,
+  StatementEntry,
+  Transaction,
+} from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -16,6 +28,11 @@ export class MoneyDB extends Dexie {
   settings!: EntityTable<Setting, 'key'>
   salaryItems!: EntityTable<SalaryItem, 'id'>
   payslips!: EntityTable<Payslip, 'id'>
+  importedNotifications!: EntityTable<ImportedNotification, 'id'>
+  importBatches!: EntityTable<ImportBatch, 'id'>
+  cardStatements!: EntityTable<CardStatement, 'id'>
+  statementEntries!: EntityTable<StatementEntry, 'id'>
+  reconciliations!: EntityTable<Reconciliation, 'id'>
 
   constructor(name = DB_NAME) {
     super(name)
@@ -34,6 +51,18 @@ export class MoneyDB extends Dexie {
       .upgrade(async (tx) => {
         await tx.table('salaryItems').bulkAdd(DEFAULT_SALARY_ITEMS)
         await tx.table('settings').put({ key: 'schemaVersion', value: 2 })
+      })
+    // v3: credit card module (D-80..D-95). New tables only; existing data is untouched.
+    this.version(3)
+      .stores({
+        importedNotifications: 'id, &captureId, batchId, transactionId',
+        importBatches: 'id, createdAt',
+        cardStatements: 'id, paymentMethodId, &fileHash, statementMonth',
+        statementEntries: 'id, statementId',
+        reconciliations: 'id, statementId, entryId, transactionId',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('settings').put({ key: 'schemaVersion', value: 3 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {
