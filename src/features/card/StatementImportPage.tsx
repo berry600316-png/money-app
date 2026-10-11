@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { findSameStatement, saveStatement } from '../../card/cardRepo'
-import { parseStatementLines, type DraftEntry, type ParsedStatement } from '../../card/statementParser'
+import { parseStatement, type DraftEntry, type ParsedStatement } from '../../card/statementParser'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
 import type { CardStatement, EntryKind } from '../../db/types'
@@ -63,7 +63,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           setStage({ kind: 'pick' })
           return
         }
-        const p = parseStatementLines(text.lines)
+        const p = parseStatement(text.lines)
         const card =
           cards.find((c) => p.cardLast4 && c.cardLast4 === p.cardLast4) ?? cards.find((c) => p.bank && c.bank && c.bank.includes(p.bank)) ?? cards[0]
         const end = p.periodEnd ?? p.closingDate ?? ''

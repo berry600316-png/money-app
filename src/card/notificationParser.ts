@@ -1,17 +1,23 @@
 /*
- * Rule-based parsing of card notifications (D-82). Kept apart from the UI: when Richart Life changes
- * its wording, only the rules here change.
+ * Parsing of card notifications (D-82, D-97). Kept apart from the UI.
  *
- * IMPORTANT: no real Richart Life notification sample has been provided yet. The rules below cover the
- * usual Taiwanese card-notification wording and are tested only against simulated samples.
+ * 1. A bank adapter built from real samples (./notificationAdapters.ts) is tried first; a matching
+ *    template is trusted.
+ * 2. Otherwise the GENERIC rules below make a best guess so the user does not retype everything, but a
+ *    guessed purchase is never imported by default (it always carries `doubt`).
+ *
+ * IMPORTANT: no real notification sample has been provided yet; the generic rules are tested only
+ * against simulated wording.
  */
 import type { ParsedSpend } from '../db/types'
 import type { NotificationCapture } from './notificationFile'
+import { adapterFor, matchTemplate, NOTIFICATION_ADAPTERS, type NotificationAdapter } from './notificationAdapters'
 import { findDates, findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
 
 export type ParseResult =
   /** `doubt`: looks like a purchase but also reads like an offer or a code; not imported by default. */
-  | { kind: 'spend'; spend: ParsedSpend; adapter: string; doubt: string | null }
+  /** `bank`: from the adapter, null for generic guesses. */
+  | { kind: 'spend'; spend: ParsedSpend; adapter: string; bank: string | null; doubt: string | null }
   | { kind: 'not_spending'; reason: string }
   | { kind: 'unparsed'; reason: string }
 
@@ -146,7 +152,8 @@ function timeOf(text: string, ref: string | null): string | null {
   return dt.toISOString()
 }
 
-export function parseNotification(c: NotificationCapture): ParseResult {
+/** The generic best guess (no bank adapter). */
+function parseGeneric(c: NotificationCapture): ParseResult {
   const text = toHalfWidth([c.title, c.subtitle, c.body].filter(Boolean).join('\n'))
   for (const [re, reason] of ALWAYS_NOT_SPENDING) if (re.test(text)) return { kind: 'not_spending', reason }
   const { amount, stated, offerNext } = amountOf(text)
@@ -178,7 +185,8 @@ export function parseNotification(c: NotificationCapture): ParseResult {
         : null
   return {
     kind: 'spend',
-    adapter: /richart|台新/i.test(c.sourceApp) ? 'richart-generic' : 'generic',
+    adapter: 'generic',
+    bank: null,
     doubt,
     spend: {
       amount,
@@ -187,4 +195,28 @@ export function parseNotification(c: NotificationCapture): ParseResult {
       cardLast4,
     },
   }
+}
+
+export function parseNotification(c: NotificationCapture, adapters: readonly NotificationAdapter[] = NOTIFICATION_ADAPTERS): ParseResult {
+  const adapter = adapterFor(c, adapters)
+  if (adapter) {
+    const m = matchTemplate(c, adapter)
+    if (m?.kind === 'not_spending') return { kind: 'not_spending', reason: m.reason }
+    if (m?.kind === 'spend') {
+      return {
+        kind: 'spend',
+        adapter: adapter.id,
+        bank: adapter.bank,
+        doubt: null,
+        spend: { amount: m.amount, merchant: m.merchant, occurredAt: m.occurredAt, cardLast4: m.last4 },
+      }
+    }
+  }
+  const r = parseGeneric(c)
+  if (r.kind !== 'spend') return r
+  // A generic guess is never imported without a look (D-97).
+  const why = adapter
+    ? `這則「${c.sourceApp}」通知的寫法和已建立的格式不同（可能是銀行改版），金額和商店是推測的`
+    : `還沒建立「${c.sourceApp}」的通知格式，金額和商店是推測的`
+  return { ...r, bank: adapter?.bank ?? null, doubt: r.doubt ? `${why}；${r.doubt}` : `${why}，請確認` }
 }

@@ -12,7 +12,14 @@ import { txDate } from './reconcile'
 
 export const NOTIFICATION_SOURCE = 'notification'
 export const STATEMENT_SOURCE = 'statement'
-export const DEFAULT_CARD_SETTING = 'notificationDefaultCard'
+/** D-84: { sourceApp: cardId }, the card chosen last time for notifications of that app without card digits. */
+export const DEFAULT_CARDS_SETTING = 'notificationDefaultCards'
+
+export async function getDefaultCards(d: MoneyDB = db): Promise<Record<string, string>> {
+  const v = (await d.settings.get(DEFAULT_CARDS_SETTING))?.value
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'))
+}
 
 function newId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -37,7 +44,8 @@ export interface ImportSummary {
  */
 export async function commitNotificationImport(
   rows: readonly PlanRow[],
-  opts: { files: number; rememberCardId?: string | null },
+  /** rememberCards: the card the user picked per source app, remembered for next time. */
+  opts: { files: number; rememberCards?: Readonly<Record<string, string>> },
   d: MoneyDB = db,
   now = new Date(),
 ): Promise<ImportSummary> {
@@ -110,7 +118,9 @@ export async function commitNotificationImport(
       })
     }
     await d.importBatches.add({ id: batchId, kind: 'notifications', createdAt: stamp, files: opts.files, imported: summary.imported, duplicates: summary.duplicates, skipped: summary.skipped, failed: summary.failed })
-    if (opts.rememberCardId) await d.settings.put({ key: DEFAULT_CARD_SETTING, value: opts.rememberCardId })
+    if (opts.rememberCards && Object.keys(opts.rememberCards).length) {
+      await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { ...(await getDefaultCards(d)), ...opts.rememberCards } })
+    }
     return summary
   })
 }

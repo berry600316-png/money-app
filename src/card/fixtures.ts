@@ -3,6 +3,7 @@
  * Taiwanese card notifications and statements; they are NOT real Richart Life notifications or
  * real 台新 statements, and passing tests on them does not prove real-world parsing works.
  */
+import type { NotificationAdapter } from './notificationAdapters'
 import type { NotificationCapture } from './notificationFile'
 
 export function capture(partial: Partial<NotificationCapture> & { body: string }): NotificationCapture {
@@ -30,6 +31,27 @@ export const SIM_NOTIFICATIONS = {
   otp: '您的驗證碼為 123456，請勿告知他人',
   promo: '登錄活動享 NT$100 回饋，快來參加',
   noAmount: '您有一筆新的信用卡交易，請開啟 App 查看',
+}
+
+/**
+ * A bank adapter for the SIMULATED wording above, in the shape a real one will have (docs/adding-a-bank.md).
+ * Used by tests only; it is NOT registered in the app.
+ */
+export const SIM_NOTIFICATION_ADAPTER: NotificationAdapter = {
+  id: 'sim-v1',
+  bank: '台新',
+  sourceApps: /^Richart Life$/,
+  templates: [
+    {
+      kind: 'spend',
+      pattern: /^您的台新卡末四碼(?<last4>\d{4})於(?<date>\d{1,2}\/\d{1,2}) (?<time>\d{1,2}:\d{2})在(?<merchant>.+?)消費新臺幣(?<amount>[\d,]+)元$/,
+    },
+    {
+      kind: 'spend',
+      pattern: /^台新信用卡 \*{4}(?<last4>\d{4}) 於 (?<date>\d{4}\/\d{1,2}\/\d{1,2}) (?<time>\d{1,2}:\d{2}) 消費 NT\$(?<amount>[\d,]+),商店:(?<merchant>.+)$/,
+    },
+    { kind: 'not_spending', pattern: /^您的台新卡退款 NT\$[\d,]+ 已入帳$/, reason: '退款通知' },
+  ],
 }
 
 /** A made-up generic statement layout (NOT 台新's real format). */

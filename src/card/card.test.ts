@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_CATEGORIES } from '../db/defaults'
 import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
 import { suggestCategory } from './categorize'
-import { capture, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
+import { capture, SIM_NOTIFICATION_ADAPTER, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
 import { planImport } from './importPlan'
 import { readCaptureFile, readTime } from './notificationFile'
 import { parseNotification } from './notificationParser'
 import { reconcile } from './reconcile'
-import { parseStatementLines } from './statementParser'
+import type { StatementAdapter } from './statementAdapters'
+import { GENERIC_STATEMENT_WARNING, parseStatement, parseStatementLines } from './statementParser'
 import { findDates, findLast4, merchantSimilarity, normalizeMerchant, parseAmount } from './text'
 
 describe('text helpers', () => {
@@ -74,7 +75,49 @@ describe('sample files in docs/samples/notifications stay importable', () => {
   })
 })
 
-describe('notification parser (simulated samples only)', () => {
+describe('bank adapters (D-97)', () => {
+  const sim = (body: string, sourceApp = 'Richart Life') => parseNotification(capture({ body, sourceApp }), [SIM_NOTIFICATION_ADAPTER])
+  it('a notification matching a bank template is trusted: no doubt, bank known', () => {
+    const r = sim(SIM_NOTIFICATIONS.convenience)
+    expect(r).toMatchObject({ kind: 'spend', adapter: 'sim-v1', bank: '台新', doubt: null })
+    if (r.kind !== 'spend') return
+    expect(r.spend).toMatchObject({ amount: 85, merchant: '全家便利商店', cardLast4: '1234' })
+    const d = new Date(r.spend.occurredAt!)
+    expect([d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()]).toEqual([10, 11, 14, 5])
+    expect(sim(SIM_NOTIFICATIONS.clothing)).toMatchObject({ kind: 'spend', doubt: null, spend: { amount: 1280, merchant: 'UNIQLO 台北站前店', cardLast4: '5678' } })
+    expect(sim(SIM_NOTIFICATIONS.refund)).toMatchObject({ kind: 'not_spending', reason: '退款通知' })
+  })
+  it('the same app with unknown wording falls back to a guess the user must confirm', () => {
+    const r = sim('於10/11 14:05在全家消費NT$85')
+    expect(r).toMatchObject({ kind: 'spend', adapter: 'generic', bank: '台新' })
+    expect(r.kind === 'spend' && r.doubt).toContain('寫法和已建立的格式不同')
+  })
+  it('an app without an adapter is always a guess the user must confirm', () => {
+    const r = sim(SIM_NOTIFICATIONS.convenience, '某銀行 App')
+    expect(r).toMatchObject({ kind: 'spend', adapter: 'generic', bank: null })
+    expect(r.kind === 'spend' && r.doubt).toContain('還沒建立「某銀行 App」的通知格式')
+  })
+  it('the app ships with no adapter yet: every purchase needs confirmation until real samples arrive', () => {
+    const r = parseNotification(capture({ body: SIM_NOTIFICATIONS.convenience }))
+    expect(r.kind === 'spend' && r.doubt).toContain('還沒建立')
+  })
+  it('statements: a bank adapter is used when it recognises the layout; otherwise the generic reader says so', () => {
+    const fake: StatementAdapter = {
+      id: 'fake-v1',
+      bank: '測試銀行',
+      detect: (lines) => lines.some((l) => l.includes('測試銀行信用卡帳單')),
+      parse: (lines) => ({ ...parseStatementLines(lines), adapter: 'x', bank: '測試銀行', warnings: [] }),
+    }
+    const mine = parseStatement(['測試銀行信用卡帳單', ...SIM_STATEMENT_LINES], [fake])
+    expect(mine).toMatchObject({ adapter: 'fake-v1', bank: '測試銀行' })
+    expect(mine.warnings).not.toContain(GENERIC_STATEMENT_WARNING)
+    const other = parseStatement(SIM_STATEMENT_LINES, [fake])
+    expect(other.adapter).toBe('generic')
+    expect(other.warnings[0]).toBe(GENERIC_STATEMENT_WARNING)
+  })
+})
+
+describe('generic notification rules (no bank adapter: always confirmed by the user)', () => {
   const p = (body: string) => parseNotification(capture({ body }))
   it('reads a purchase with merchant, amount, time and card', () => {
     const r = p(SIM_NOTIFICATIONS.convenience)
@@ -127,7 +170,7 @@ describe('notification parser (simulated samples only)', () => {
     expect(p('3D 驗證 OTP：556677')).toMatchObject({ kind: 'not_spending' })
     expect(p('動態密碼是 889900')).toMatchObject({ kind: 'not_spending' })
   })
-  it('only a clean, full purchase notice is imported by default (D-96)', () => {
+  it('generic guesses always carry a reason to confirm (D-96, D-97)', () => {
     const full = p('您的台新卡末四碼1234於10/11 14:05在全家便利商店消費新臺幣85元，本筆享 1% 回饋')
     expect(full.kind === 'spend' && full.doubt).toContain('請確認')
     const noShape = p('您的台新卡消費 NT$85')
@@ -135,7 +178,7 @@ describe('notification parser (simulated samples only)', () => {
     expect(p('台新卡消費通知：您於 Uber Eats 外送 消費 NT$320，末四碼1234').kind === 'spend').toBe(true)
     const bare = p('您的台新卡在 蝦皮購物 消費 NT$899，本筆享 1% 現金回饋')
     expect(bare.kind === 'spend' && bare.doubt).toContain('請確認')
-    expect(p(SIM_NOTIFICATIONS.convenience)).toMatchObject({ kind: 'spend', doubt: null })
+    expect(p(SIM_NOTIFICATIONS.convenience)).toMatchObject({ kind: 'spend' })
   })
   it('a purchase that mentions a reward, a code or 登錄 is still a purchase', () => {
     const spend = (body: string) => {
@@ -232,7 +275,8 @@ describe('import planning: duplicates, cards, categories (D-83..D-85)', () => {
     paymentMethods: [card('taishin', '1234'), card('other', '9999')],
     categories: DEFAULT_CATEGORIES,
     history: [{ merchant: '全家便利商店', categoryId: 'food' }],
-    defaultCardId: null,
+    defaultCards: {},
+    adapters: [SIM_NOTIFICATION_ADAPTER],
     now: new Date(2026, 9, 11, 20),
   }
   it('same captureId (already imported, or twice in one batch) is a duplicate', () => {
@@ -265,7 +309,13 @@ describe('import planning: duplicates, cards, categories (D-83..D-85)', () => {
     expect(planImport({ ...base, captures: [c], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBe('taishin')
     const noLast4 = capture({ body: '於10/11 14:05在全家消費NT$85' })
     expect(planImport({ ...base, captures: [noLast4], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBeNull()
-    expect(planImport({ ...base, defaultCardId: 'other', captures: [noLast4], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBe('other')
+    expect(planImport({ ...base, defaultCards: { 'Richart Life': 'other' }, captures: [noLast4], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBe('other')
+    // Each app has its own remembered card: another bank's notification never borrows Richart's.
+    const fromOther = capture({ body: '於10/11 14:05在全家消費NT$85', sourceApp: '某銀行 App' })
+    expect(planImport({ ...base, defaultCards: { 'Richart Life': 'other' }, captures: [fromOther], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBeNull()
+    // No digits: the adapter's bank picks the only card of that bank.
+    const banks = [{ ...card('taishin'), bank: '台新' }, { ...card('ctbc'), bank: '中國信託' }]
+    expect(planImport({ ...base, paymentMethods: banks, captures: [noLast4], knownCaptureIds: new Set(), transactions: [] })[0].paymentMethodId).toBe('taishin')
   })
   it('categories: history first, then keywords, else 其他', () => {
     expect(suggestCategory('全家便利商店', base.history, DEFAULT_CATEGORIES)).toBe('food')

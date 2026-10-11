@@ -8,7 +8,9 @@ import { addPaymentMethod, addTransaction, deleteTransaction, MoneyError, update
 import { DEFAULT_CATEGORIES } from '../db/defaults'
 import {
   commitNotificationImport,
+  DEFAULT_CARDS_SETTING,
   deferToNext,
+  getDefaultCards,
   deleteStatement,
   matchManually,
   reconfirmPair,
@@ -18,7 +20,7 @@ import {
   applyStatementAmount,
   type StatementInput,
 } from './cardRepo'
-import { capture, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
+import { capture, SIM_NOTIFICATION_ADAPTER, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
 import { planImport } from './importPlan'
 import { reconcile } from './reconcile'
 import { parseStatementLines } from './statementParser'
@@ -43,7 +45,8 @@ async function plan(bodies: string[], ids?: string[]) {
     paymentMethods: await d.paymentMethods.toArray(),
     categories: DEFAULT_CATEGORIES,
     history: [],
-    defaultCardId: null,
+    defaultCards: {},
+    adapters: [SIM_NOTIFICATION_ADAPTER],
     now,
   })
 }
@@ -76,16 +79,16 @@ describe('notification import (Phase 1)', () => {
     expect(await d.transactions.count()).toBe(1)
   })
   it('rejects the whole batch when a chosen row has no card, writing nothing', async () => {
-    const rows = await plan(['於10/11 14:05在全家消費NT$85'])
-    expect(rows[0].paymentMethodId).toBeNull()
+    const rows = (await plan(['於10/11 14:05在全家消費NT$85'])).map((r) => ({ ...r, include: true, paymentMethodId: null }))
     await expect(commitNotificationImport(rows, { files: 1 }, d, now)).rejects.toBeInstanceOf(MoneyError)
     expect(await d.transactions.count()).toBe(0)
     expect(await d.importedNotifications.count()).toBe(0)
   })
-  it('remembers the chosen card for next time (D-84)', async () => {
+  it('remembers the chosen card per source app, keeping the choices of other apps (D-84)', async () => {
+    await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { 'Other Bank': 'cash' } })
     const rows = (await plan(['於10/11 14:05在全家消費NT$85'])).map((r) => ({ ...r, paymentMethodId: cardId }))
-    await commitNotificationImport(rows, { files: 1, rememberCardId: cardId }, d, now)
-    expect((await d.settings.get('notificationDefaultCard'))?.value).toBe(cardId)
+    await commitNotificationImport(rows, { files: 1, rememberCards: { 'Richart Life': cardId } }, d, now)
+    expect(await getDefaultCards(d)).toEqual({ 'Other Bank': 'cash', 'Richart Life': cardId })
   })
 })
 

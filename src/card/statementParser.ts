@@ -7,6 +7,7 @@
  * the result is always "needs review" unless the totals check out.
  */
 import type { EntryKind } from '../db/types'
+import { STATEMENT_ADAPTERS, type StatementAdapter } from './statementAdapters'
 import { dayDiff, findDates, findLast4, parseAmount, toHalfWidth } from './text'
 
 export interface DraftEntry {
@@ -311,4 +312,15 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
     warnings,
     unreadLines,
   }
+}
+
+/** Generic strict reader's notice: shown first, so the user knows nothing here was read with a bank's own layout. */
+export const GENERIC_STATEMENT_WARNING = '還沒建立這家銀行的帳單格式，以下是通用讀法，請逐筆核對'
+
+/** Layer 2 entry point (D-97): the bank's own adapter when one recognises the layout, else the generic reader. */
+export function parseStatement(lines: readonly string[], adapters: readonly StatementAdapter[] = STATEMENT_ADAPTERS): ParsedStatement {
+  const adapter = adapters.find((a) => a.detect(lines))
+  if (adapter) return { ...adapter.parse(lines), adapter: adapter.id }
+  const r = parseStatementLines(lines)
+  return { ...r, warnings: [GENERIC_STATEMENT_WARNING, ...r.warnings] }
 }

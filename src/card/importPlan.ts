@@ -6,6 +6,7 @@ import type { Category, PaymentMethod, Transaction } from '../db/types'
 import { toYmd } from '../lib/dates'
 import { suggestCategory, type MerchantHistory } from './categorize'
 import type { NotificationCapture } from './notificationFile'
+import type { NotificationAdapter } from './notificationAdapters'
 import { parseNotification } from './notificationParser'
 import { merchantSimilarity, SIMILAR_MERCHANT } from './text'
 
@@ -21,7 +22,7 @@ export interface PlanRow {
   /** ISO purchase time (falls back to notification / capture time, then now). */
   occurredAt: string
   cardLast4: string | null
-  /** Card from last4 or the remembered default; null = the user must choose (D-84). */
+  /** Card from last4, the adapter's bank, or the card remembered for this app; null = the user must choose (D-84). */
   paymentMethodId: string | null
   categoryId: string
   /** Pre-selected for import: new rows yes, suspected duplicates no (D-83). */
@@ -42,18 +43,26 @@ export interface PlanInput {
   paymentMethods: readonly PaymentMethod[]
   categories: readonly Category[]
   history: readonly MerchantHistory[]
-  /** Remembered card for this source app (D-84). */
-  defaultCardId: string | null
+  /** Card remembered per source app (D-84): { "Richart Life": cardId }. */
+  defaultCards: Readonly<Record<string, string>>
+  /** Bank adapters; production uses the registry (tests pass their own). */
+  adapters?: readonly NotificationAdapter[]
   now?: Date
 }
 
-function cardFor(last4: string | null, input: PlanInput): string | null {
+function cardFor(last4: string | null, bank: string | null, sourceApp: string, input: PlanInput): string | null {
   const cards = input.paymentMethods.filter((p) => p.type === 'credit_card' && p.isActive)
   if (last4) {
     const hit = cards.filter((p) => p.cardLast4 === last4)
     if (hit.length === 1) return hit[0].id
   }
-  if (input.defaultCardId && input.paymentMethods.some((p) => p.id === input.defaultCardId && p.isActive)) return input.defaultCardId
+  if (bank) {
+    // The only active card of the adapter's bank.
+    const hit = cards.filter((p) => p.bank && (p.bank.includes(bank) || bank.includes(p.bank)))
+    if (hit.length === 1) return hit[0].id
+  }
+  const remembered = input.defaultCards[sourceApp]
+  if (remembered && cards.some((p) => p.id === remembered)) return remembered
   return null
 }
 
@@ -77,7 +86,7 @@ export function planImport(input: PlanInput): PlanRow[] {
       continue
     }
     seen.add(c.captureId)
-    const r = parseNotification(c)
+    const r = parseNotification(c, input.adapters)
     if (r.kind === 'not_spending') {
       rows.push({ ...base, status: 'not_spending', reason: r.reason })
       continue
@@ -88,7 +97,7 @@ export function planImport(input: PlanInput): PlanRow[] {
     }
     let occurredAt = r.spend.occurredAt ?? fallbackTime
     if (Date.parse(occurredAt) > now.getTime()) occurredAt = now.toISOString()
-    const card = cardFor(r.spend.cardLast4, input)
+    const card = cardFor(r.spend.cardLast4, r.bank, c.sourceApp, input)
     const row: PlanRow = {
       ...base,
       status: 'new',

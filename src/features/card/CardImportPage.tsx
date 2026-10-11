@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { commitNotificationImport, DEFAULT_CARD_SETTING } from '../../card/cardRepo'
+import { commitNotificationImport, getDefaultCards } from '../../card/cardRepo'
 import { planImport, type PlanRow } from '../../card/importPlan'
 import { readCaptureFile, type NotificationCapture } from '../../card/notificationFile'
 import { db } from '../../db/db'
@@ -19,7 +19,8 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
   const [files, setFiles] = useState(0)
   const [errors, setErrors] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [chosenCard, setChosenCard] = useState('')
+  /** Card per source app for rows without card digits (D-84). */
+  const [chosenCards, setChosenCards] = useState<Record<string, string>>({})
   const [showSkipped, setShowSkipped] = useState(false)
   const cards = ref.payments.filter((p) => p.type === 'credit_card' && p.isActive)
   const expenseCats = ref.categories.filter((c) => c.type === 'expense' && c.isActive)
@@ -36,10 +37,10 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         errs.push(...r.errors)
       }
       const since = new Date(Date.now() - 120 * 864e5).toISOString()
-      const [known, recent, defaultCard] = await Promise.all([
+      const [known, recent, defaultCards] = await Promise.all([
         db.importedNotifications.toArray(),
         db.transactions.where('occurredAt').above(since).toArray(),
-        db.settings.get(DEFAULT_CARD_SETTING),
+        getDefaultCards(),
       ])
       const history = [...recent]
         .filter((t) => t.type === 'expense' && t.merchant)
@@ -52,12 +53,12 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         paymentMethods: ref.payments,
         categories: ref.categories,
         history,
-        defaultCardId: (defaultCard?.value as string | undefined) ?? null,
+        defaultCards,
       })
       setRows(plan)
       setFiles(list.length)
       setErrors(errs)
-      setChosenCard((defaultCard?.value as string | undefined) ?? cards[0]?.id ?? '')
+      setChosenCards(defaultCards)
     } catch {
       toast('無法讀取這些檔案', { kind: 'error' })
     } finally {
@@ -68,7 +69,9 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
 
   const importable = rows?.filter((r) => r.status === 'new' || r.status === 'suspect') ?? []
   const chosen = importable.filter((r) => r.include)
-  const needsCard = chosen.some((r) => !r.paymentMethodId)
+  const needsCardApps = [...new Set(chosen.filter((r) => !r.paymentMethodId).map((r) => r.capture.sourceApp))]
+  const cardOf = (app: string) => (chosenCards[app] && cards.some((c) => c.id === chosenCards[app]) ? chosenCards[app] : (cards[0]?.id ?? ''))
+  const missingCard = needsCardApps.some((a) => !cardOf(a))
   const skipped = rows?.filter((r) => r.status === 'duplicate' || r.status === 'not_spending' || r.status === 'unparsed') ?? []
   const count = (s: PlanRow['status']) => rows?.filter((r) => r.status === s).length ?? 0
 
@@ -76,14 +79,15 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
 
   const commit = async () => {
     if (!rows || busy) return
-    if (needsCard && !chosenCard) {
+    if (missingCard) {
       toast('請先選擇信用卡', { kind: 'error' })
       return
     }
     setBusy(true)
     try {
-      const final = rows.map((r) => (r.include && !r.paymentMethodId ? { ...r, paymentMethodId: chosenCard } : r))
-      const s = await commitNotificationImport(final, { files, rememberCardId: needsCard ? chosenCard : null })
+      const final = rows.map((r) => (r.include && !r.paymentMethodId ? { ...r, paymentMethodId: cardOf(r.capture.sourceApp) } : r))
+      const rememberCards = Object.fromEntries(needsCardApps.map((a) => [a, cardOf(a)]))
+      const s = await commitNotificationImport(final, { files, rememberCards })
       toast(s.imported ? `已匯入 ${s.imported} 筆刷卡紀錄` : '沒有新的刷卡紀錄')
       onBack()
     } catch (e) {
@@ -167,10 +171,10 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             )}
           </div>
 
-          {needsCard && (
-            <div className="select-row">
-              <label htmlFor="imp-card">這些刷卡是哪張卡？</label>
-              <select id="imp-card" value={chosenCard} onChange={(e) => setChosenCard(e.target.value)}>
+          {needsCardApps.map((app, i) => (
+            <div className="select-row" key={app}>
+              <label htmlFor={`imp-card-${i}`}>{needsCardApps.length > 1 ? `「${app}」的刷卡是哪張卡？` : '這些刷卡是哪張卡？'}</label>
+              <select id={`imp-card-${i}`} value={cardOf(app)} onChange={(e) => setChosenCards((m) => ({ ...m, [app]: e.target.value }))}>
                 {cards.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -179,7 +183,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
                 ))}
               </select>
             </div>
-          )}
+          ))}
 
           {importable.filter((r) => r.status === 'new').length > 0 && (
             <>
@@ -231,7 +235,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
 
           <p className="set-foot">匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
           <div className="foot-bar">
-            <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || (needsCard && !chosenCard)}>
+            <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || missingCard}>
               {busy ? '匯入中…' : chosen.length ? `匯入 ${chosen.length} 筆` : '沒有要匯入的紀錄'}
             </button>
             <button type="button" className="btn-quiet" onClick={() => setRows(null)} disabled={busy}>
