@@ -14,7 +14,7 @@ import {
   recordFromEntry,
   saveAutoPairs,
   saveStatement,
-  useStatementAmount,
+  applyStatementAmount,
   type StatementInput,
 } from './cardRepo'
 import { capture, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
@@ -146,7 +146,7 @@ describe('reconciliation decisions (Phase 3)', () => {
   it('amount difference: the record is only changed when the user asks; its date never changes (§8.3)', async () => {
     const { st, entries, cpc } = await setup()
     const e = entries.find((x) => x.amount === 1015)!
-    await useStatementAmount(st.id, e.id, cpc.id, d, now)
+    await applyStatementAmount(st.id, e.id, cpc.id, d, now)
     const after = (await d.transactions.get(cpc.id))!
     expect(after.amount).toBe(1015)
     expect(after.occurredAt).toBe(cpc.occurredAt)

@@ -20,12 +20,31 @@ import { PayslipPage } from './features/salary/PayslipPage'
 import { currentMonthKey } from './lib/months'
 import { defaultNewMonth } from './lib/salaryHistory'
 import { StackPage } from './ui/StackPage'
+import { CardImportPage } from './features/card/CardImportPage'
+import { ReconcilePage } from './features/card/ReconcilePage'
+import { StatementImportPage } from './features/card/StatementImportPage'
+import { ReconProvider } from './ui/reconContext'
 import { OverlayContext } from './ui/overlay'
 import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 
 type Tab = 'home' | 'list' | 'stats'
-type Route = { kind: 'payslips' } | { kind: 'payslip'; id: string } | { kind: 'history'; itemId: string }
+type Route =
+  | { kind: 'payslips' }
+  | { kind: 'payslip'; id: string }
+  | { kind: 'history'; itemId: string }
+  | { kind: 'cardImport' }
+  | { kind: 'reconcile'; statementId: string | null }
+  | { kind: 'statementImport' }
+
+const ROUTE_LABEL: Record<Route['kind'], string> = {
+  payslips: '薪資單',
+  payslip: '薪資單',
+  history: '項目歷史',
+  cardImport: '匯入',
+  reconcile: '核對',
+  statementImport: '帳單',
+}
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'home', label: '首頁', icon: 'tabHome' },
@@ -39,7 +58,9 @@ export function App() {
   if (!categories || !payments) return <div className="device" aria-busy="true" />
   return (
     <RefDataProvider categories={categories} payments={payments}>
-      <Shell />
+      <ReconProvider>
+        <Shell />
+      </ReconProvider>
     </RefDataProvider>
   )
 }
@@ -173,8 +194,20 @@ function Shell() {
   const backLabelAt = (i: number) => {
     const below = routes.slice(0, i).filter((r) => !r.closing).pop()
     if (!below) return tab === 'home' ? '首頁' : tab === 'list' ? '明細' : '統計'
-    return below.route.kind === 'history' ? '項目歷史' : '薪資單'
+    return ROUTE_LABEL[below.route.kind]
   }
+
+  // After importing a statement: leave the import page and show that statement's reconciliation.
+  const showStatement = (statementId: string) =>
+    setRoutes((rs) => {
+      const live = rs.filter((r) => !r.closing)
+      const top = live[live.length - 1]
+      const below = live[live.length - 2]
+      const rest = rs.filter((r) => r !== top)
+      if (below && below.route.kind === 'reconcile') return rest.map((r) => (r === below ? { ...r, route: { kind: 'reconcile', statementId } } : r))
+      routeKey.current += 1
+      return [...rest, { key: routeKey.current, route: { kind: 'reconcile', statementId }, closing: false }]
+    })
 
   return (
     <div ref={deviceRef} className={'device' + (pushed ? ' pushed' : '')}>
@@ -207,6 +240,8 @@ function Shell() {
             onOpenTx={openTx}
             onAdd={addTx}
             scrollRef={listRef}
+            onImportCards={() => push({ kind: 'cardImport' })}
+            onReconcile={() => push({ kind: 'reconcile', statementId: null })}
           />
           <StatsScreen
             active={tab === 'stats'}
@@ -261,7 +296,7 @@ function Shell() {
           const covered = routes.slice(i + 1).some((x) => !x.closing)
           const back = backLabelAt(i)
           return (
-            <StackPage key={r.key} closing={r.closing} covered={covered} label={r.route.kind === 'history' ? '項目歷史' : '薪資單'}>
+            <StackPage key={r.key} closing={r.closing} covered={covered} label={ROUTE_LABEL[r.route.kind]}>
               {r.route.kind === 'payslips' && (
                 <PayslipListPage
                   backLabel={back}
@@ -285,6 +320,18 @@ function Shell() {
                 />
               )}
               {r.route.kind === 'history' && <ItemHistoryPage itemId={r.route.itemId} backLabel={back} onBack={pop} />}
+              {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} />}
+              {r.route.kind === 'statementImport' && <StatementImportPage backLabel={back} onBack={pop} onSaved={showStatement} />}
+              {r.route.kind === 'reconcile' && (
+                <ReconcilePage
+                  key={r.route.statementId ?? 'latest'}
+                  statementId={r.route.statementId}
+                  backLabel={back}
+                  onBack={pop}
+                  onImportStatement={() => push({ kind: 'statementImport' })}
+                  onEditTx={(id) => setEntry({ open: true, id })}
+                />
+              )}
             </StackPage>
           )
         })}

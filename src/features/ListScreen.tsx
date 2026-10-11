@@ -35,7 +35,11 @@ export function ListScreen({
   onOpenTx,
   onAdd,
   scrollRef,
+  onImportCards,
+  onReconcile,
 }: {
+  onImportCards: () => void
+  onReconcile: () => void
   active: boolean
   month: YearMonth
   onMonth: (ym: YearMonth) => void
@@ -66,6 +70,17 @@ export function ListScreen({
       <div className="title-row">
         <h1 className="large-title">明細</h1>
         <MonthSwitch value={month} onChange={onMonth} dim={searching} />
+      </div>
+      {/* D-95: credit card entry points, no extra tab. */}
+      <div className="card-entry">
+        <button type="button" onClick={onImportCards}>
+          <Icon name="inbox" />
+          匯入刷卡紀錄
+        </button>
+        <button type="button" onClick={onReconcile}>
+          <Icon name="reconcile" />
+          信用卡核對
+        </button>
       </div>
       <div className="tools">
         <label className="search">

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "captureId": "sim-0002",
+  "sourceApp": "Richart Life",
+  "sourceType": "notification",
+  "title": "刷卡通知",
+  "subtitle": null,
+  "body": "台新信用卡 ****1234 於 2026/10/11 12:30 消費 NT$1,280，商店：UNIQLO 台北站前店",
+  "notificationTime": "2026-10-11T12:30:40+08:00",
+  "capturedAt": "2026-10-11T12:30:41+08:00"
+}

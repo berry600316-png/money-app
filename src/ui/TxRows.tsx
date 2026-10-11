@@ -4,10 +4,12 @@ import { dayLabel } from '../lib/dates'
 import { fmt } from '../lib/money'
 import { groupByDay } from '../lib/stats'
 import { Icon } from './Icon'
+import { useIsReconciled } from './reconContext'
 import { useRefData } from './refData'
 
 export function TxRow({ tx, onOpen }: { tx: Transaction; onOpen: (id: string) => void }) {
   const { category, payment } = useRefData()
+  const reconciled = useIsReconciled(tx)
   const c = category(tx.categoryId)
   const sub = [c.name, payment(tx.paymentMethodId).name, tx.note].filter(Boolean).join(' · ')
   const income = tx.type === 'income'
@@ -20,6 +22,11 @@ export function TxRow({ tx, onOpen }: { tx: Transaction; onOpen: (id: string) =>
         <span className="row-title">
           {tx.merchant || c.name}
           {tx.source === PAYSLIP_SOURCE && <span className="tag tag-brand">薪資單</span>}
+          {reconciled && (
+            <span className="tx-ok" aria-label="已和銀行帳單核對">
+              <Icon name="check" />
+            </span>
+          )}
         </span>
         <span className="row-sub">{sub}</span>
       </span>

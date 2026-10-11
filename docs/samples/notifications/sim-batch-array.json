@@ -1,0 +1,24 @@
+[
+  {
+    "schemaVersion": 1,
+    "captureId": "sim-0004",
+    "sourceApp": "Richart Life",
+    "sourceType": "notification",
+    "title": "刷卡通知",
+    "subtitle": null,
+    "body": "您的台新卡末四碼1234於10/10 19:30在UBER *EATS消費新臺幣320元",
+    "notificationTime": "2026-10-10T19:30:20+08:00",
+    "capturedAt": "2026-10-10T19:30:21+08:00"
+  },
+  {
+    "schemaVersion": 1,
+    "captureId": "sim-0005",
+    "sourceApp": "Richart Life",
+    "sourceType": "notification",
+    "title": "刷卡通知",
+    "subtitle": null,
+    "body": "您的台新卡末四碼1234於10/10 21:02在台灣中油消費新臺幣1,015元",
+    "notificationTime": "2026-10-10T21:02:00+08:00",
+    "capturedAt": "2026-10-10T21:02:01+08:00"
+  }
+]

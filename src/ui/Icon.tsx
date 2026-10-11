@@ -40,6 +40,9 @@ const PATHS: Record<string, string> = {
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.3h.01"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  inbox: '<path d="M4 13.5 6.5 5h11L20 13.5V19H4Z"/><path d="M4 13.5h4.5l1.5 2.5h4l1.5-2.5H20"/>',
+  doc: '<path d="M6.5 3.5h7.5l4 4V20.5h-11.5Z"/><path d="M13.5 3.5v4.5h4.5M9.5 12.5h5M9.5 16h5"/>',
+  reconcile: '<rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M3.5 10h17M8 14.5l1.8 1.8 3.4-3.6"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   receipt: '<path d="M6 3.5h12v17l-2.5-1.5-2 1.5-1.5-1.5-1.5 1.5-2-1.5L6 20.5Z"/><path d="M9 8h6M9 11.5h6M9 15h4"/>',
 }

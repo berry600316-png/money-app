@@ -22,6 +22,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const [payType, setPayType] = useState<PaymentType>('other')
   const [active, setActive] = useState(true)
   const [nature, setNature] = useState<SalaryNature>('fixed')
+  const [bank, setBank] = useState('')
+  const [last4, setLast4] = useState('')
   const salaryItems = useSalaryItems()
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
@@ -43,6 +45,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
       setName(p?.name ?? '')
       setPayType(p?.type ?? 'other')
       setActive(p?.isActive ?? true)
+      setBank(p?.bank ?? '')
+      setLast4(p?.cardLast4 ?? '')
     } else {
       const s = target.id ? salaryItems?.find((x) => x.id === target.id) : undefined
       setName(s?.name ?? '')
@@ -76,8 +80,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
         if (t.id) await updateCategory(t.id, { name, isActive: active })
         else await addCategory({ name, type: t.type, icon })
       } else if (t.kind === 'payment') {
-        if (t.id) await updatePaymentMethod(t.id, { name, type: payType, isActive: active })
-        else await addPaymentMethod({ name, type: payType })
+        if (t.id) await updatePaymentMethod(t.id, { name, type: payType, isActive: active, bank, cardLast4: last4 })
+        else await addPaymentMethod({ name, type: payType, bank, cardLast4: last4 })
       } else {
         if (t.id) await updateSalaryItem(t.id, { name, nature, isActive: active })
         else await addSalaryItem({ name, kind: t.salaryKind, nature })
@@ -156,6 +160,36 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {t.kind === 'payment' && payType === 'credit_card' && (
+            <div className="card-fields">
+              <div>
+                <label className="lbl" htmlFor="editor-bank">
+                  發卡銀行
+                </label>
+                <input id="editor-bank" className="field" value={bank} maxLength={20} placeholder="例如：台新" autoComplete="off" onChange={(e) => setBank(e.target.value)} />
+              </div>
+              <div>
+                <label className="lbl" htmlFor="editor-last4">
+                  卡號末四碼
+                </label>
+                <input
+                  id="editor-last4"
+                  className="field num"
+                  value={last4}
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={4}
+                  placeholder="1234"
+                  autoComplete="off"
+                  onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                />
+              </div>
+              <p className="range-help" style={{ gridColumn: '1 / -1' }}>
+                用來對應刷卡通知與銀行帳單。只記末四碼，不會存完整卡號。
+              </p>
             </div>
           )}
 

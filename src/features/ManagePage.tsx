@@ -71,7 +71,11 @@ export function ManagePage({
               <button type="button" key={p.id} className={'srow' + (p.isActive ? '' : ' off')} onClick={() => onEdit({ kind: 'payment', id: p.id })}>
                 <span className="s-main">
                   {p.name}
-                  <span className="s-sub">{PAYMENT_TYPE_LABELS[p.type]}</span>
+                  <span className="s-sub">
+                    {PAYMENT_TYPE_LABELS[p.type]}
+                    {p.bank ? ` · ${p.bank}` : ''}
+                    {p.cardLast4 ? ` · 末四碼 ${p.cardLast4}` : ''}
+                  </span>
                 </span>
                 {!p.isActive && <span className="s-val">已停用</span>}
                 <Icon name="chev" className="chev" />

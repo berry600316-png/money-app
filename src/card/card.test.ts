@@ -57,6 +57,21 @@ describe('notification files (D-81)', () => {
   })
 })
 
+describe('sample files in docs/samples/notifications stay importable', () => {
+  const files = import.meta.glob('../../docs/samples/notifications/*.json', { eager: true, query: '?raw', import: 'default' }) as Record<string, string>
+  it('every sample parses, and purchases are recognised', () => {
+    expect(Object.keys(files).length).toBeGreaterThanOrEqual(4)
+    const kinds: string[] = []
+    for (const [path, text] of Object.entries(files)) {
+      const r = readCaptureFile(text, path)
+      expect(r.errors).toEqual([])
+      for (const c of r.captures) kinds.push(parseNotification(c).kind)
+    }
+    expect(kinds.filter((k) => k === 'spend')).toHaveLength(4)
+    expect(kinds.filter((k) => k === 'not_spending')).toHaveLength(1)
+  })
+})
+
 describe('notification parser (simulated samples only)', () => {
   const p = (body: string) => parseNotification(capture({ body }))
   it('reads a purchase with merchant, amount, time and card', () => {

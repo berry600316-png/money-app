@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "captureId": "sim-0003",
+  "sourceApp": "Richart Life",
+  "sourceType": "notification",
+  "title": "帳務通知",
+  "subtitle": null,
+  "body": "您本期信用卡帳款已繳款成功 NT$12,345，感謝您",
+  "notificationTime": "2026-10-05T09:00:00+08:00",
+  "capturedAt": "2026-10-05T09:00:02+08:00"
+}

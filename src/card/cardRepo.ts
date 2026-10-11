@@ -269,7 +269,7 @@ export async function matchManually(statementId: string, entryId: string, transa
  * §8.3: the user chose to change the record to the statement amount. The record's date is never
  * touched (D-92); the pair is made with the new amount in the same transaction.
  */
-export async function useStatementAmount(statementId: string, entryId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
+export async function applyStatementAmount(statementId: string, entryId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
   await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries], async () => {
     const tx = await d.transactions.get(transactionId)
     const entry = await d.statementEntries.get(entryId)

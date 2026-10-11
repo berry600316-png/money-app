@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "captureId": "sim-0001",
+  "sourceApp": "Richart Life",
+  "sourceType": "notification",
+  "title": "刷卡通知",
+  "subtitle": null,
+  "body": "您的台新卡末四碼1234於10/11 14:05在全家便利商店消費新臺幣85元",
+  "notificationTime": "2026-10-11T14:05:10+08:00",
+  "capturedAt": "2026-10-11T14:05:12+08:00"
+}
