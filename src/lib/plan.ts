@@ -106,13 +106,13 @@ export function summarizePlan(
     saving,
     keep,
     spendable: keep === null ? null : keep - saving,
-    items: views.sort(byStateThenDay),
+    items: views.sort(byDay),
   }
 }
 
-function byStateThenDay(a: PlanItemView, b: PlanItemView): number {
-  const o = { pending: 0, linked: 1, skipped: 2 }
-  return o[a.state] - o[b.state] || a.dueDay - b.dueDay || a.item.name.localeCompare(b.item.name)
+/** By due day only: recording or skipping an item never moves it in the list (D-113). */
+function byDay(a: PlanItemView, b: PlanItemView): number {
+  return a.dueDay - b.dueDay || a.item.name.localeCompare(b.item.name) || a.item.id.localeCompare(b.item.id)
 }
 
 /**

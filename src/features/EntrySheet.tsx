@@ -252,6 +252,7 @@ export function EntrySheet({
         toast('已更新')
       } else if (saveNew) {
         await saveNew(input)
+        toast(`已記下 NT$ ${fmt(amount)}，並對應必要支出`)
       } else {
         await addTransaction(input)
         toast(`已記下${draft.type === 'income' ? '收入' : ''} NT$ ${fmt(amount)}`)

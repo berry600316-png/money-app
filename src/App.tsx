@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { useCategories, usePaymentMethods } from './db/hooks'
 import { EditorSheet } from './features/EditorSheet'
-import { EntrySheet } from './features/EntrySheet'
+import { EntrySheet, type EntryPrefill } from './features/EntrySheet'
+import { PlanPage } from './features/plan/PlanPage'
+import { PlanTemplatesPage } from './features/plan/PlanTemplatesPage'
+import { recordPlannedExpense } from './db/planRepo'
+import type { TxInput } from './db/repo'
 import { HomeScreen } from './features/HomeScreen'
 import { emptyFilters, ListScreen, type ListFilters } from './features/ListScreen'
 import { ManagePage, type EditorTarget, type ManageKind } from './features/ManagePage'
@@ -38,6 +42,8 @@ type Route =
   | { kind: 'cardImport' }
   | { kind: 'reconcile'; statementId: string | null }
   | { kind: 'statementImport' }
+  | { kind: 'plan'; month: string }
+  | { kind: 'planTemplates' }
 
 const ROUTE_LABEL: Record<Route['kind'], string> = {
   payslips: '薪資單',
@@ -46,6 +52,8 @@ const ROUTE_LABEL: Record<Route['kind'], string> = {
   cardImport: '匯入',
   reconcile: '核對',
   statementImport: '帳單',
+  plan: '規劃',
+  planTemplates: '固定項目',
 }
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -96,6 +104,8 @@ function Shell() {
   const [month, setMonth] = useState<YearMonth>(() => ymOf(new Date()))
   const [filters, setFilters] = useState<ListFilters>(() => emptyFilters())
   const [entry, setEntry] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
+  // D-109: the entry sheet opened from a planned expense (add + link in one go).
+  const [planEntry, setPlanEntry] = useState<{ itemId: string; name: string; prefill: EntryPrefill } | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [manage, setManage] = useState<ManageKind | null>(null)
   const [manageShown, setManageShown] = useState<ManageKind>('category')
@@ -174,8 +184,13 @@ function Shell() {
     },
     [push],
   )
-  const addTx = useCallback(() => setEntry({ open: true, id: null }), [])
+  const addTx = useCallback(() => {
+    setPlanEntry(null)
+    setEntry({ open: true, id: null })
+  }, [])
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), [])
+  const setRouteMonth = (key: number, month: string) =>
+    setRoutes((rs) => rs.map((r) => (r.key === key && r.route.kind === 'plan' ? { ...r, route: { kind: 'plan', month } } : r)))
 
   const openManage = (k: ManageKind) => {
     setManageShown(k)
@@ -238,6 +253,7 @@ function Shell() {
               setSettingsOpen(true)
               setBackupRequest((n) => n + 1)
             }}
+            onPlan={() => push({ kind: 'plan', month: currentMonthKey() })}
           />
           <ListScreen
             active={tab === 'list'}
@@ -330,6 +346,28 @@ function Shell() {
               {r.route.kind === 'history' && <ItemHistoryPage itemId={r.route.itemId} backLabel={back} onBack={pop} />}
               {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} />}
               {r.route.kind === 'statementImport' && <StatementImportPage backLabel={back} onBack={pop} onSaved={showStatement} />}
+              {r.route.kind === 'plan' && (
+                <PlanPage
+                  month={r.route.month}
+                  onMonth={(m) => setRouteMonth(r.key, m)}
+                  backLabel={back}
+                  onBack={pop}
+                  onRecord={(v) => {
+                    setPlanEntry({
+                      itemId: v.item.id,
+                      name: v.item.name,
+                      prefill: { amount: v.item.amount, merchant: v.item.name, categoryId: v.item.categoryId, paymentMethodId: v.item.paymentMethodId },
+                    })
+                    setEntry({ open: true, id: null })
+                  }}
+                  onEditTx={(id) => {
+                    setPlanEntry(null)
+                    setEntry({ open: true, id })
+                  }}
+                  onTemplates={() => push({ kind: 'planTemplates' })}
+                />
+              )}
+              {r.route.kind === 'planTemplates' && <PlanTemplatesPage backLabel={back} onBack={pop} />}
               {r.route.kind === 'reconcile' && (
                 <ReconcilePage
                   key={r.route.statementId ?? 'latest'}
@@ -347,6 +385,9 @@ function Shell() {
         <EntrySheet
           open={entry.open}
           editId={entry.id}
+          prefill={planEntry && !entry.id ? planEntry.prefill : null}
+          banner={planEntry && !entry.id ? `儲存後會自動對應「${planEntry.name}」，不會多記一筆。` : null}
+          saveNew={planEntry && !entry.id ? (input: TxInput) => recordPlannedExpense(planEntry.itemId, input).then(() => undefined) : null}
           onClose={closeEntry}
           onUsePayslip={() => {
             closeEntry()

@@ -6,6 +6,7 @@ import { dailyExpense, summarize } from '../lib/stats'
 import { Icon } from '../ui/Icon'
 import { TxGroups } from '../ui/TxRows'
 import { BackupBanner } from './BackupBanner'
+import { HomePlanCard } from './plan/HomePlanCard'
 
 export function HomeScreen({
   active,
@@ -15,8 +16,11 @@ export function HomeScreen({
   onSeeAll,
   onSettings,
   onBackup,
+  onPlan,
 }: {
   onBackup: () => void
+  /** D-113: the month plan, under the month overview. */
+  onPlan: () => void
   active: boolean
   scrollRef: RefObject<HTMLElement | null>
   onOpenTx: (id: string) => void
@@ -77,6 +81,8 @@ export function HomeScreen({
           </div>
         </dl>
       </section>
+
+      <HomePlanCard onOpen={onPlan} />
 
       <section className="daily">
         <div className="bars" role="img" aria-label={`本月每日支出，日均 ${fmt(view.avg)} 元`}>
