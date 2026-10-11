@@ -1,4 +1,5 @@
 import { useEffect, useRef, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { useLayer } from './layers'
 
 /**
  * Bottom sheet with iOS-like behaviour: slides up, scrim tap or a downward drag on the
@@ -12,6 +13,7 @@ export function BottomSheet({
   children,
   className,
   sheetRef,
+  escClose = true,
 }: {
   open: boolean
   onClose: () => void
@@ -20,10 +22,14 @@ export function BottomSheet({
   children: ReactNode
   className?: string
   sheetRef?: RefObject<HTMLDivElement | null>
+  /** false when the content handles Esc itself (the entry sheet's keypad). */
+  escClose?: boolean
 }) {
   const localRef = useRef<HTMLDivElement | null>(null)
   const ref = sheetRef ?? localRef
   const drag = useRef({ down: false, dragging: false, y0: 0, dy: 0, t0: 0 })
+  // Esc closes the top-most layer only, through the same onClose as every other way out (D-101).
+  useLayer(open, escClose ? onClose : null)
 
   useEffect(() => {
     const el = ref.current

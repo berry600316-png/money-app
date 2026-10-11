@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useLayer } from './layers'
 
 export interface SheetAction {
   label: string
@@ -27,18 +28,12 @@ export function ActionSheet({
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const titleId = useId()
+  useLayer(open, onClose)
   useEffect(() => {
     if (!open) return
     const t = window.setTimeout(() => ref.current?.focus({ preventScroll: true }), 60)
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.clearTimeout(t)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [open, onClose])
+    return () => window.clearTimeout(t)
+  }, [open])
 
   return (
     <div className={'as-wrap' + (open ? ' open' : '') + (className ? ' ' + className : '')} aria-hidden={!open} inert={!open}>

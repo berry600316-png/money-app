@@ -28,6 +28,7 @@ import { OverlayContext } from './ui/overlay'
 import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 import { DiscardHost, DiscardProvider, useCloseGuard, useDiscardAsking } from './ui/discard'
+import { anyLayerOpen } from './ui/layers'
 
 type Tab = 'home' | 'list' | 'stats'
 type Route =
@@ -184,7 +185,8 @@ function Shell() {
   // Escape closes the top-most layer (desktop testing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || entry.open || asking) return
+      // Sheets and dialogs answer Esc themselves (ui/layers); pages only when none is open.
+      if (e.key !== 'Escape' || entry.open || asking || anyLayerOpen()) return
       if (slipEditor) guardSlip(() => setSlipEditor(null))
       else if (editor) guardEditor(() => setEditor(null))
       else if (manage) setManage(null)

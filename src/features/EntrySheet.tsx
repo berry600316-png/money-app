@@ -95,6 +95,8 @@ export function EntrySheet({
   const merchantRef = useRef<HTMLInputElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
   const opened = useRef('')
+  /** The stored date/time and its marker: the marker stays only while both are unchanged (D-100). */
+  const openedAt = useRef<{ date: string; time: string; timeSource?: TimeSource }>({ date: '', time: '' })
   const guard = useCloseGuard('entry')
   useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft) !== opened.current)
   const requestClose = () => guard(onClose)
@@ -119,6 +121,7 @@ export function EntrySheet({
     setSuggestions([])
     const start = (dr: Draft) => {
       opened.current = fieldsOf(dr)
+      openedAt.current = { date: dr.date, time: dr.time, timeSource: dr.timeSource }
       setDraft(dr)
     }
     if (editId) {
@@ -331,6 +334,7 @@ export function EntrySheet({
     <BottomSheet
       open={open}
       onClose={requestClose}
+      escClose={false}
       labelledBy="entry-title"
       sheetRef={sheetRef}
       className={typing ? 'typing' : undefined}
@@ -471,7 +475,8 @@ export function EntrySheet({
                   const date = v > today ? today : v
                   // D-99: the chosen time stays; on today it can't be later than now.
                   const nowHm = timeLabel(new Date())
-                  patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date })
+                  // A new date makes the time the user's own, as the save does (D-100).
+                  patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date, timeSource: date === openedAt.current.date && draft.time === openedAt.current.time ? openedAt.current.timeSource : undefined })
                 }}
               />
             </label>
