@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { addCategory, addPaymentMethod, MoneyError, NAME_MAX, updateCategory, updatePaymentMethod } from '../db/repo'
 import { PAYMENT_TYPE_LABELS, type PaymentType, type SalaryNature } from '../db/types'
 import { useSalaryItems } from '../db/hooks'
@@ -9,6 +9,7 @@ import { CATEGORY_ICON_CHOICES, Icon, ICON_LABELS } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
 import { useToast } from '../ui/Toast'
 import type { EditorTarget } from './ManagePage'
+import { useCloseGuard, useDirtyCheck } from '../ui/discard'
 
 const PAYMENT_TYPES = Object.keys(PAYMENT_TYPE_LABELS) as PaymentType[]
 
@@ -30,8 +31,25 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   // Keep showing the last target while the sheet slides away.
   const [shown, setShown] = useState<EditorTarget | null>(null)
 
+  // D-101: snapshot the fields once they are loaded, compare on close.
+  const fields = JSON.stringify([name.trim(), icon, payType, active, nature, bank.trim(), last4])
+  const opened = useRef<string | null>(null)
+  const snapNext = useRef(false)
+  // Declared before the loading effect so it sees the loaded values one commit later.
+  useEffect(() => {
+    if (snapNext.current) {
+      opened.current = fields
+      snapNext.current = false
+    }
+  })
+  useDirtyCheck('editor', open, () => !saving && opened.current !== null && fields !== opened.current)
+  const guard = useCloseGuard('editor')
+  const requestClose = () => guard(onClose)
+
   useEffect(() => {
     if (!target) return
+    opened.current = null
+    snapNext.current = true
     setShown(target)
     setErr('')
     setSaving(false)
@@ -97,11 +115,11 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   return (
     <BottomSheet
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       labelledBy="editor-title"
       head={
         <div className="sheet-bar">
-          <button type="button" className="txt-btn" onClick={onClose}>
+          <button type="button" className="txt-btn" onClick={requestClose}>
             取消
           </button>
           <h2 id="editor-title">{title}</h2>

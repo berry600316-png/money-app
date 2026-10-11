@@ -1,7 +1,7 @@
 import { db, type MoneyDB } from './db'
 import type { Category, PaymentMethod, PaymentType, Transaction, TxType } from './types'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
-import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
+import { fromYmd, isValidHm, localIso, minuteKey, occurredAtFor, timeLabel, toYmd } from '../lib/dates'
 import { PAYSLIP_SOURCE } from './defaults'
 
 /** An error whose message is safe to show to the user as-is. */
@@ -19,6 +19,8 @@ export interface TxInput {
   paymentMethodId: string
   /** Local calendar date, "YYYY-MM-DD". */
   date: string
+  /** Local time "HH:MM" (D-99). Omitted only by callers that predate it: the date-only rule then applies. */
+  time?: string
   note: string
 }
 
@@ -37,9 +39,20 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
     throw new MoneyError('日期不正確')
   }
   if (input.date > toYmd(now)) throw new MoneyError('不能選未來的日期')
+  if (input.time !== undefined) {
+    if (!isValidHm(input.time)) throw new MoneyError('時間不正確')
+    if (`${input.date} ${input.time}` > minuteKey(now)) throw new MoneyError('不能選未來的時間')
+  }
   const [cat, pay] = await Promise.all([d.categories.get(input.categoryId), d.paymentMethods.get(input.paymentMethodId)])
   if (!cat || cat.type !== input.type) throw new MoneyError('請選擇分類')
   if (!pay) throw new MoneyError('請選擇付款方式')
+}
+
+/** The stored instant for a date + time; the current minute keeps the exact current instant (stable order). */
+function instantFor(input: TxInput, now: Date): string {
+  if (input.time === undefined) return occurredAtFor(input.date, now)
+  if (input.date === toYmd(now) && input.time === timeLabel(now)) return now.toISOString()
+  return localIso(input.date, input.time)
 }
 
 function clean(input: TxInput) {
@@ -61,7 +74,7 @@ export async function addTransaction(input: TxInput, d: MoneyDB = db, now = new 
   const tx: Transaction = {
     id: newId(),
     ...clean(input),
-    occurredAt: occurredAtFor(input.date, now),
+    occurredAt: instantFor(input, now),
     source: 'manual',
     externalId: null,
     createdAt: stamp,
@@ -80,13 +93,17 @@ export async function updateTransaction(id: string, input: TxInput, d: MoneyDB =
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
     if (prev.source === PAYSLIP_SOURCE) throw new MoneyError('這筆收入由薪資單產生，請到薪資單修改')
-    const keepTime = toYmd(new Date(prev.occurredAt)) === input.date
+    // Unchanged date (and time, when given) keeps the stored instant and its time source (D-99, D-100);
+    // a changed time is the user's own, so the "approximate" marker goes away.
+    const prevAt = new Date(prev.occurredAt)
+    const keepTime = input.time === undefined ? toYmd(prevAt) === input.date : minuteKey(prevAt) === `${input.date} ${input.time}`
     const next: Transaction = {
       ...prev,
       ...clean(input),
-      occurredAt: keepTime ? prev.occurredAt : occurredAtFor(input.date, now),
+      occurredAt: keepTime ? prev.occurredAt : instantFor(input, now),
       updatedAt: now.toISOString(),
     }
+    if (!keepTime) delete next.timeSource
     // D-20 "last used" follows new entries only; correcting an old record doesn't change the default.
     await d.transactions.put(next)
     return next

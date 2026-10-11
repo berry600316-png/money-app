@@ -125,3 +125,44 @@ describe('categories & payment methods', () => {
     await expect(updatePaymentMethod(p.id, { isActive: false }, d)).rejects.toThrow('至少要保留一個付款方式')
   })
 })
+
+describe('date and time (D-99, D-100)', () => {
+  const at = (iso: string) => {
+    const t = new Date(iso)
+    return [t.getFullYear(), t.getMonth() + 1, t.getDate(), t.getHours(), t.getMinutes()]
+  }
+  it('stores the chosen local time; the current minute keeps the exact instant', async () => {
+    const a = await addTransaction({ ...base, date: '2026-10-08', time: '21:40' }, d, now)
+    expect(at(a.occurredAt)).toEqual([2026, 10, 8, 21, 40])
+    const b = await addTransaction({ ...base, date: '2026-10-10', time: '09:15' }, d, now)
+    expect(b.occurredAt).toBe(now.toISOString())
+  })
+  it('rejects a future time and an invalid one', async () => {
+    await expect(addTransaction({ ...base, date: '2026-10-10', time: '09:16' }, d, now)).rejects.toThrow('不能選未來的時間')
+    await expect(addTransaction({ ...base, date: '2026-10-09', time: '24:00' }, d, now)).rejects.toThrow('時間不正確')
+    await expect(addTransaction({ ...base, date: '2026-10-09', time: '9:05' }, d, now)).rejects.toThrow('時間不正確')
+    expect(await d.transactions.count()).toBe(0)
+  })
+  it('changing the date keeps the chosen time', async () => {
+    const a = await addTransaction({ ...base, date: '2026-10-08', time: '21:40' }, d, now)
+    const b = await updateTransaction(a.id, { ...base, date: '2026-10-05', time: '21:40' }, d, now)
+    expect(at(b.occurredAt)).toEqual([2026, 10, 5, 21, 40])
+  })
+  it('an unchanged date and time keeps the stored instant and its time source; a new time drops the marker', async () => {
+    const stored = new Date(2026, 9, 7, 14, 5, 33).toISOString()
+    await d.transactions.add({ id: 'n1', type: 'expense', amount: 85, merchant: '全家', categoryId: 'food', paymentMethodId: 'card', occurredAt: stored, note: '', source: 'notification', externalId: 'c1', createdAt: stored, updatedAt: stored, timeSource: 'notification' })
+    const same = await updateTransaction('n1', { ...base, amount: 90, date: '2026-10-07', time: '14:05' }, d, now)
+    expect(same.occurredAt).toBe(stored)
+    expect(same.timeSource).toBe('notification')
+    const moved = await updateTransaction('n1', { ...base, amount: 90, date: '2026-10-07', time: '13:58' }, d, now)
+    expect(at(moved.occurredAt)).toEqual([2026, 10, 7, 13, 58])
+    expect(moved.timeSource).toBeUndefined()
+    expect((await d.transactions.get('n1'))?.timeSource).toBeUndefined()
+  })
+  it('records written before times existed are never touched', async () => {
+    const noon = new Date(2026, 9, 1, 12, 0).toISOString()
+    await d.transactions.add({ id: 'old', type: 'expense', amount: 50, merchant: '', categoryId: 'food', paymentMethodId: 'card', occurredAt: noon, note: '', source: 'manual', externalId: null, createdAt: noon, updatedAt: noon })
+    const t = await updateTransaction('old', { ...base, date: '2026-10-01', time: '12:00', note: '午餐' }, d, now)
+    expect(t.occurredAt).toBe(noon)
+  })
+})

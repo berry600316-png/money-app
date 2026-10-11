@@ -7,7 +7,9 @@
  * No real sample has been provided yet, so the registry is empty. To add a bank, see docs/adding-a-bank.md.
  */
 import type { NotificationCapture } from './notificationFile'
-import { findDates, findTime, parseAmount, toHalfWidth } from './text'
+import { purchaseTime } from './purchaseTime'
+import { parseAmount, toHalfWidth } from './text'
+import type { TimeSource } from '../db/types'
 
 export interface NotificationTemplate {
   /** What this wording means. */
@@ -36,30 +38,11 @@ export interface NotificationAdapter {
 export const NOTIFICATION_ADAPTERS: NotificationAdapter[] = []
 
 export type TemplateMatch =
-  | { kind: 'spend'; amount: number; merchant: string; last4: string | null; occurredAt: string | null }
+  | { kind: 'spend'; amount: number; merchant: string; last4: string | null; occurredAt: string | null; timeSource?: TimeSource }
   | { kind: 'not_spending'; reason: string }
 
 export function adapterFor(c: NotificationCapture, adapters: readonly NotificationAdapter[]): NotificationAdapter | null {
   return adapters.find((a) => a.sourceApps.test(c.sourceApp)) ?? null
-}
-
-/** Purchase time from the template's date/time groups; the year comes from the notification time. */
-function timeFrom(date: string | undefined, time: string | undefined, ref: string | null): string | null {
-  const refDate = ref ? new Date(ref) : null
-  if (!date) {
-    if (!time || !refDate) return ref
-    const hm = findTime(time)
-    if (!hm) return ref
-    return new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate(), hm[0], hm[1]).toISOString()
-  }
-  const [ymd] = findDates(date, (refDate ?? new Date()).getFullYear())
-  if (!ymd) return ref
-  const [y, m, d] = ymd.split('-').map(Number)
-  const hm = time ? findTime(time) : null
-  let dt = new Date(y, m - 1, d, hm?.[0] ?? 12, hm?.[1] ?? 0)
-  // "12/31" read on 1 January belongs to last year.
-  if (refDate && dt.getTime() - refDate.getTime() > 2 * 864e5) dt = new Date(y - 1, m - 1, d, hm?.[0] ?? 12, hm?.[1] ?? 0)
-  return dt.toISOString()
 }
 
 /** The first template that matches the whole message, or null (an unknown wording: never guessed here). */
@@ -79,7 +62,7 @@ export function matchTemplate(c: NotificationCapture, adapter: NotificationAdapt
       amount,
       merchant: (g.merchant ?? '').trim().slice(0, 40),
       last4: g.last4 && /^\d{4}$/.test(g.last4) ? g.last4 : null,
-      occurredAt: timeFrom(g.date, g.time, c.notificationTime ?? c.capturedAt),
+      ...purchaseTime(`${g.date ?? ''} ${g.time ?? ''}`, c),
     }
   }
   return null

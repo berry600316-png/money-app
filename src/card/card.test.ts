@@ -7,6 +7,7 @@ import { planImport } from './importPlan'
 import { readCaptureFile, readTime } from './notificationFile'
 import { parseNotification } from './notificationParser'
 import { reconcile } from './reconcile'
+import { purchaseTime } from './purchaseTime'
 import type { StatementAdapter } from './statementAdapters'
 import { GENERIC_STATEMENT_WARNING, parseStatement, parseStatementLines } from './statementParser'
 import { findDates, findLast4, merchantSimilarity, normalizeMerchant, parseAmount } from './text'
@@ -599,5 +600,50 @@ describe('reconciliation engine (spec §7, §8)', () => {
   it('deferred records stay "waiting for next statement"', () => {
     const d: Reconciliation = { id: 'r3', statementId: 'st', entryId: null, transactionId: 'louisa', status: 'deferred', method: 'manual', snapshot: null, note: '', createdAt: '' }
     expect(reconcile({ statement, entries, transactions: records, recons: [d] }).items.find((i) => 'tx' in i && i.tx?.id === 'louisa')?.kind).toBe('pending_next')
+  })
+})
+
+describe('purchase time (D-100)', () => {
+  const arrived = new Date(2026, 9, 11, 14, 6, 20).toISOString()
+  const captured = new Date(2026, 9, 11, 18, 30).toISOString()
+  const hm = (iso: string | null) => {
+    const t = new Date(iso!)
+    return `${t.getMonth() + 1}/${t.getDate()} ${t.getHours()}:${String(t.getMinutes()).padStart(2, '0')}`
+  }
+  it('date and time in the message are exact', () => {
+    const r = purchaseTime('於10/11 14:05在全家消費', { notificationTime: arrived, capturedAt: captured })
+    expect([hm(r.occurredAt), r.timeSource]).toEqual(['10/11 14:05', undefined])
+  })
+  it('no time in the message: the arrival time, marked as such', () => {
+    const r = purchaseTime('在全家消費 NT$85', { notificationTime: arrived, capturedAt: captured })
+    expect([r.occurredAt, r.timeSource]).toEqual([arrived, 'notification'])
+    const sameDay = purchaseTime('10/11 在全家消費', { notificationTime: arrived, capturedAt: captured })
+    expect([sameDay.occurredAt, sameDay.timeSource]).toEqual([arrived, 'notification'])
+  })
+  it('a date that is not the arrival day: that date at 12:00, marked date-only', () => {
+    const r = purchaseTime('10/09 在全家消費', { notificationTime: arrived, capturedAt: captured })
+    expect([hm(r.occurredAt), r.timeSource]).toEqual(['10/9 12:00', 'date'])
+  })
+  it('only a time: that time on the arrival day', () => {
+    const r = purchaseTime('14:01 在全家消費', { notificationTime: arrived, capturedAt: captured })
+    expect([hm(r.occurredAt), r.timeSource]).toEqual(['10/11 14:01', undefined])
+  })
+  it('the capture time is never used as the purchase time', () => {
+    const r = purchaseTime('在全家消費', { notificationTime: null, capturedAt: captured })
+    expect([hm(r.occurredAt), r.timeSource]).toEqual(['10/11 12:00', 'date'])
+    expect(purchaseTime('在全家消費', { notificationTime: null, capturedAt: null })).toEqual({ occurredAt: null })
+  })
+  it('the import plan and the record carry the marker', () => {
+    const rows = planImport({
+      captures: [capture({ body: '在全家消費 NT$85', notificationTime: arrived })],
+      knownCaptureIds: new Set(),
+      transactions: [],
+      paymentMethods: [card('taishin', '1234')],
+      categories: DEFAULT_CATEGORIES,
+      history: [],
+      defaultCards: {},
+      now: new Date(2026, 9, 11, 20),
+    })
+    expect(rows[0]).toMatchObject({ occurredAt: arrived, timeSource: 'notification' })
   })
 })

@@ -188,18 +188,20 @@ describe('CSV export (D-42)', () => {
   })
 })
 
-describe('backup reminder (D-41)', () => {
+describe('backup reminder (D-102)', () => {
   const day = 864e5
   const t = (daysAgo: number) => new Date(now.getTime() - daysAgo * day).toISOString()
-  it('needs >30 days and ≥20 new entries', () => {
-    expect(shouldRemindBackup({ now, lastBackupAt: t(31), installedAt: t(90), dismissedAt: null, addedSince: 20 })).toBe(true)
-    expect(shouldRemindBackup({ now, lastBackupAt: t(29), installedAt: t(90), dismissedAt: null, addedSince: 50 })).toBe(false)
-    expect(shouldRemindBackup({ now, lastBackupAt: t(31), installedAt: t(90), dismissedAt: null, addedSince: 19 })).toBe(false)
-    expect(shouldRemindBackup({ now, lastBackupAt: null, installedAt: t(40), dismissedAt: null, addedSince: 25 })).toBe(true)
+  it('reminds after more than 30 days, whatever the number of new records', () => {
+    // D-102: over 30 days is enough, however few records were added.
+    expect(shouldRemindBackup({ now, lastBackupAt: t(31), installedAt: t(90), dismissedAt: null })).toBe(true)
+    expect(shouldRemindBackup({ now, lastBackupAt: t(30), installedAt: t(90), dismissedAt: null })).toBe(false)
+    expect(shouldRemindBackup({ now, lastBackupAt: t(29), installedAt: t(90), dismissedAt: null })).toBe(false)
+    expect(shouldRemindBackup({ now, lastBackupAt: null, installedAt: t(31), dismissedAt: null })).toBe(true)
+    expect(shouldRemindBackup({ now, lastBackupAt: null, installedAt: t(20), dismissedAt: null })).toBe(false)
   })
   it('a dismissal hides it for 7 days', () => {
-    expect(shouldRemindBackup({ now, lastBackupAt: t(40), installedAt: t(90), dismissedAt: t(6), addedSince: 30 })).toBe(false)
-    expect(shouldRemindBackup({ now, lastBackupAt: t(40), installedAt: t(90), dismissedAt: t(8), addedSince: 30 })).toBe(true)
+    expect(shouldRemindBackup({ now, lastBackupAt: t(40), installedAt: t(90), dismissedAt: t(6) })).toBe(false)
+    expect(shouldRemindBackup({ now, lastBackupAt: t(40), installedAt: t(90), dismissedAt: t(8) })).toBe(true)
   })
   it('counts entries created after the last backup', async () => {
     await addTransaction({ ...base, date: '2026-10-01' }, d, new Date(2026, 9, 1, 8))

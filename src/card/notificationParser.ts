@@ -12,7 +12,8 @@
 import type { ParsedSpend } from '../db/types'
 import type { NotificationCapture } from './notificationFile'
 import { adapterFor, matchTemplate, NOTIFICATION_ADAPTERS, type NotificationAdapter } from './notificationAdapters'
-import { findDates, findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
+import { purchaseTime } from './purchaseTime'
+import { findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
 
 export type ParseResult =
   /** `doubt`: looks like a purchase but also reads like an offer or a code; not imported by default. */
@@ -138,20 +139,6 @@ function merchantOf(text: string): string {
   return ''
 }
 
-/** Purchase time: date/time printed in the text, else the notification time, else capture time. */
-function timeOf(text: string, ref: string | null): string | null {
-  const refDate = ref ? new Date(ref) : null
-  const yearHint = (refDate ?? new Date()).getFullYear()
-  const [ymd] = findDates(text, yearHint)
-  if (!ymd) return ref
-  const [y, m, d] = ymd.split('-').map(Number)
-  const hm = findTime(text.replace(/\d{2,4}[/.-]\d{1,2}[/.-]\d{1,2}|\d{1,2}\/\d{1,2}/g, ' '))
-  let dt = new Date(y, m - 1, d, hm?.[0] ?? 12, hm?.[1] ?? 0)
-  // "12/31" read in January belongs to last year.
-  if (refDate && dt.getTime() - refDate.getTime() > 2 * 864e5) dt = new Date(y - 1, m - 1, d, hm?.[0] ?? 12, hm?.[1] ?? 0)
-  return dt.toISOString()
-}
-
 /** The generic best guess (no bank adapter). */
 function parseGeneric(c: NotificationCapture): ParseResult {
   const text = toHalfWidth([c.title, c.subtitle, c.body].filter(Boolean).join('\n'))
@@ -191,7 +178,7 @@ function parseGeneric(c: NotificationCapture): ParseResult {
     spend: {
       amount,
       merchant,
-      occurredAt: timeOf(text, c.notificationTime ?? c.capturedAt),
+      ...purchaseTime(text, c),
       cardLast4,
     },
   }
@@ -208,7 +195,7 @@ export function parseNotification(c: NotificationCapture, adapters: readonly Not
         adapter: adapter.id,
         bank: adapter.bank,
         doubt: null,
-        spend: { amount: m.amount, merchant: m.merchant, occurredAt: m.occurredAt, cardLast4: m.last4 },
+        spend: { amount: m.amount, merchant: m.merchant, occurredAt: m.occurredAt, cardLast4: m.last4, ...(m.timeSource ? { timeSource: m.timeSource } : {}) },
       }
     }
   }

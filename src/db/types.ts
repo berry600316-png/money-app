@@ -17,7 +17,14 @@ export interface Transaction {
   externalId: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * D-100: how sure the time is. Absent = exact (typed by the user, or printed in a notification).
+   * 'notification' = when the notification arrived; 'date' = only the date is known (time stored as 12:00).
+   */
+  timeSource?: TimeSource
 }
+
+export type TimeSource = 'notification' | 'date'
 
 export interface Category {
   id: string
@@ -95,6 +102,8 @@ export interface ParsedSpend {
   /** ISO time of the purchase if the notification states it. */
   occurredAt: string | null
   cardLast4: string | null
+  /** D-100: absent = exact. */
+  timeSource?: TimeSource
 }
 
 export type NotificationStatus = 'imported' | 'duplicate' | 'skipped' | 'not_spending' | 'unparsed'

@@ -11,9 +11,10 @@ import {
   recentMerchants,
   restoreTransaction,
   updateTransaction,
+  type TxInput,
 } from '../db/repo'
-import type { TxType } from '../db/types'
-import { dayLabel, fromYmd, toYmd } from '../lib/dates'
+import type { TimeSource, TxType } from '../db/types'
+import { dayLabel, fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { applyKey, fmt } from '../lib/money'
 import { requestPersistentStorage } from '../pwa/pwa'
 import { BottomSheet } from '../ui/BottomSheet'
@@ -21,6 +22,7 @@ import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
 import { Seg } from '../ui/Seg'
 import { useToast } from '../ui/Toast'
+import { useCloseGuard, useDirtyCheck, useDiscardAsking } from '../ui/discard'
 
 interface Draft {
   type: TxType
@@ -28,9 +30,23 @@ interface Draft {
   categoryId: string
   paymentMethodId: string
   date: string
+  /** "HH:MM" (D-99). */
+  time: string
+  /** D-100: shown next to the time until the user changes it. */
+  timeSource?: TimeSource
   merchant: string
   note: string
   showNote: boolean
+}
+
+/** Everything the user can change; the snapshot taken on open is compared with it (D-101). */
+const fieldsOf = (d: Draft) => JSON.stringify([d.type, d.amount, d.categoryId, d.paymentMethodId, d.date, d.time, d.merchant.trim(), d.note.trim()])
+
+export interface EntryPrefill {
+  amount?: number
+  merchant?: string
+  categoryId?: string
+  paymentMethodId?: string
 }
 
 const KIND_OPTIONS = [
@@ -50,11 +66,20 @@ export function EntrySheet({
   editId,
   onClose,
   onUsePayslip,
+  prefill,
+  banner,
+  saveNew,
 }: {
   open: boolean
   editId: string | null
   onClose: () => void
   onUsePayslip: () => void
+  /** New entry pre-filled from elsewhere (D-109: a planned expense). */
+  prefill?: EntryPrefill | null
+  /** One line shown above the amount (D-109). */
+  banner?: string | null
+  /** Replaces the plain "add" save for a new entry (D-109: add + link in one transaction). */
+  saveNew?: ((input: TxInput) => Promise<void>) | null
 }) {
   const ref = useRefData()
   const toast = useToast()
@@ -69,6 +94,11 @@ export function EntrySheet({
   const amtWrapRef = useRef<HTMLDivElement | null>(null)
   const merchantRef = useRef<HTMLInputElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
+  const opened = useRef('')
+  const guard = useCloseGuard('entry')
+  useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft) !== opened.current)
+  const requestClose = () => guard(onClose)
+  const asking = useDiscardAsking()
 
   const activeCategory = (type: TxType, preferred: string) => {
     const ok = ref.categories.find((c) => c.id === preferred && c.type === type && c.isActive)
@@ -87,6 +117,10 @@ export function EntrySheet({
     setSaving(false)
     setTyping(false)
     setSuggestions([])
+    const start = (dr: Draft) => {
+      opened.current = fieldsOf(dr)
+      setDraft(dr)
+    }
     if (editId) {
       // Clear first so a quick tap on save can never write the previous draft into this record.
       setDraft(null)
@@ -97,12 +131,15 @@ export function EntrySheet({
           onClose()
           return
         }
-        setDraft({
+        const at = new Date(t.occurredAt)
+        start({
           type: t.type,
           amount: String(t.amount),
           categoryId: t.categoryId,
           paymentMethodId: t.paymentMethodId,
-          date: toYmd(new Date(t.occurredAt)),
+          date: toYmd(at),
+          time: timeLabel(at),
+          timeSource: t.timeSource,
           merchant: t.merchant,
           note: t.note,
           showNote: !!t.note,
@@ -113,13 +150,15 @@ export function EntrySheet({
         onClose()
       })
     } else {
-      setDraft({
+      const now = new Date()
+      start({
         type: 'expense',
-        amount: '',
-        categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense),
-        paymentMethodId: activePayment(lastPay),
-        date: toYmd(new Date()),
-        merchant: '',
+        amount: prefill?.amount ? String(prefill.amount) : '',
+        categoryId: activeCategory('expense', prefill?.categoryId ?? DEFAULT_CATEGORY_ID.expense),
+        paymentMethodId: activePayment(prefill?.paymentMethodId ?? lastPay),
+        date: toYmd(now),
+        time: timeLabel(now),
+        merchant: prefill?.merchant ?? '',
         note: '',
         showNote: false,
       })
@@ -201,12 +240,15 @@ export function EntrySheet({
       categoryId: draft.categoryId,
       paymentMethodId: draft.paymentMethodId,
       date: draft.date,
+      time: draft.time,
       note: draft.note,
     }
     try {
       if (editId) {
         await updateTransaction(editId, input)
         toast('已更新')
+      } else if (saveNew) {
+        await saveNew(input)
       } else {
         await addTransaction(input)
         toast(`已記下${draft.type === 'income' ? '收入' : ''} NT$ ${fmt(amount)}`)
@@ -244,11 +286,12 @@ export function EntrySheet({
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
+      if (asking) return
       const tag = (document.activeElement?.tagName ?? '').toUpperCase()
       const inField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'
       if (e.key === 'Escape') {
         if (inField) (document.activeElement as HTMLElement).blur()
-        else onClose()
+        else requestClose()
         return
       }
       if (inField || e.metaKey || e.ctrlKey || e.altKey) return
@@ -287,13 +330,13 @@ export function EntrySheet({
   return (
     <BottomSheet
       open={open}
-      onClose={onClose}
+      onClose={requestClose}
       labelledBy="entry-title"
       sheetRef={sheetRef}
       className={typing ? 'typing' : undefined}
       head={
         <div className="sheet-bar">
-          <button type="button" className="txt-btn" onClick={onClose}>
+          <button type="button" className="txt-btn" onClick={requestClose}>
             取消
           </button>
           <h2 className="sr" id="entry-title">
@@ -324,6 +367,12 @@ export function EntrySheet({
     >
       {draft && (
         <>
+          {banner && (
+            <p className="entry-banner">
+              <Icon name="link" />
+              {banner}
+            </p>
+          )}
           <div className="amt-wrap" ref={amtWrapRef}>
             <span className="cur">NT$</span>
             <span
@@ -418,7 +467,36 @@ export function EntrySheet({
                 }}
                 onChange={(e) => {
                   const v = e.target.value
-                  if (v) patch({ date: v > today ? today : v })
+                  if (!v) return
+                  const date = v > today ? today : v
+                  // D-99: the chosen time stays; on today it can't be later than now.
+                  const nowHm = timeLabel(new Date())
+                  patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date })
+                }}
+              />
+            </label>
+            <label className={'pill' + (draft.timeSource ? ' approx' : '')} htmlFor="f-time">
+              <Icon name="clock" />
+              <span className="num-ui">{draft.time}</span>
+              {draft.timeSource && <small>{draft.timeSource === 'notification' ? '通知時間' : '時間未知'}</small>}
+              <input
+                id="f-time"
+                type="time"
+                className="pill-input"
+                value={draft.time}
+                aria-label="時間"
+                onClick={(e) => {
+                  try {
+                    e.currentTarget.showPicker()
+                  } catch {
+                    /* not supported: native tap still opens the picker */
+                  }
+                }}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (!/^\d{2}:\d{2}$/.test(v)) return
+                  const nowHm = timeLabel(new Date())
+                  patch({ time: draft.date === today && v > nowHm ? nowHm : v, timeSource: undefined })
                 }}
               />
             </label>

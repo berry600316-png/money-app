@@ -83,6 +83,7 @@ export async function commitNotificationImport(
           externalId: c.captureId,
           createdAt: stamp,
           updatedAt: stamp,
+          ...(row.timeSource ? { timeSource: row.timeSource } : {}),
         }
         await d.transactions.add(tx)
         transactionId = tx.id

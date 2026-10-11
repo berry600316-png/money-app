@@ -62,7 +62,25 @@ export function sameLocalDay(a: Date, b: Date): boolean {
   return toYmd(a) === toYmd(b)
 }
 
-/** D-21: today keeps the current time, other days are stored at local 12:00. */
+/** "HH:MM", 00:00–23:59. */
+export function isValidHm(s: string): boolean {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(s)
+}
+
+/** Local date + time ("YYYY-MM-DD", "HH:MM") → UTC ISO (D-99). Seconds are 0. */
+export function localIso(ymd: string, hm: string): string {
+  const d = fromYmd(ymd)
+  const [h, m] = hm.split(':').map(Number)
+  d.setHours(h, m, 0, 0)
+  return d.toISOString()
+}
+
+/** Comparable local minute key, "YYYY-MM-DD HH:MM". */
+export function minuteKey(d: Date): string {
+  return `${toYmd(d)} ${timeLabel(d)}`
+}
+
+/** Payslip income and other date-only records: today keeps the current time, other days local 12:00. */
 export function occurredAtFor(ymd: string, now = new Date()): string {
   if (ymd === toYmd(now)) return now.toISOString()
   const d = fromYmd(ymd)

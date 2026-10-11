@@ -27,6 +27,7 @@ import { ReconProvider } from './ui/reconContext'
 import { OverlayContext } from './ui/overlay'
 import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
+import { DiscardHost, DiscardProvider, useCloseGuard, useDiscardAsking } from './ui/discard'
 
 type Tab = 'home' | 'list' | 'stats'
 type Route =
@@ -59,7 +60,9 @@ export function App() {
   return (
     <RefDataProvider categories={categories} payments={payments}>
       <ReconProvider>
-        <Shell />
+        <DiscardProvider>
+          <Shell />
+        </DiscardProvider>
       </ReconProvider>
     </RefDataProvider>
   )
@@ -103,6 +106,9 @@ function Shell() {
   const routeKey = useRef(0)
   const [slipEditor, setSlipEditor] = useState<PayslipEditorTarget | null>(null)
   const payslips = usePayslips()
+  const guardEditor = useCloseGuard('editor')
+  const guardSlip = useCloseGuard('payslipEditor')
+  const asking = useDiscardAsking()
 
   useKeyboardInset(deviceRef)
 
@@ -178,16 +184,16 @@ function Shell() {
   // Escape closes the top-most layer (desktop testing).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || entry.open) return
-      if (slipEditor) setSlipEditor(null)
-      else if (editor) setEditor(null)
+      if (e.key !== 'Escape' || entry.open || asking) return
+      if (slipEditor) guardSlip(() => setSlipEditor(null))
+      else if (editor) guardEditor(() => setEditor(null))
       else if (manage) setManage(null)
       else if (settingsOpen) setSettingsOpen(false)
       else if (liveRoutes.length) pop()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [entry.open, editor, manage, settingsOpen, slipEditor, liveRoutes.length, pop])
+  }, [entry.open, editor, manage, settingsOpen, slipEditor, liveRoutes.length, pop, asking, guardEditor, guardSlip])
 
   const pushed = settingsOpen || liveRoutes.length > 0
   // Back label = the page underneath, ignoring pages that are already sliding away.
@@ -360,6 +366,7 @@ function Shell() {
           }}
         />
         <div className="overlay-root" ref={setOverlayEl} />
+        <DiscardHost />
       </ToastProvider>
       </OverlayContext.Provider>
     </div>

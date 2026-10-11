@@ -9,6 +9,7 @@ import { fmt } from '../../lib/money'
 import { currentMonthKey } from '../../lib/months'
 import { ActionSheet } from '../../ui/ActionSheet'
 import { BottomSheet } from '../../ui/BottomSheet'
+import { useCloseGuard, useDirtyCheck } from '../../ui/discard'
 import { Icon } from '../../ui/Icon'
 import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
@@ -371,14 +372,22 @@ function EntryEditor({
     }
   }
   const set = (p: Partial<DraftEntry>) => setE((x) => (x ? { ...x, ...p } : x))
+  // D-101
+  useDirtyCheck(
+    'statementEntry',
+    target !== null,
+    () => !!target && !!e && (JSON.stringify(e) !== JSON.stringify(target.entry) || amount !== (target.entry.amount ? String(target.entry.amount) : '')),
+  )
+  const guard = useCloseGuard('statementEntry')
+  const requestClose = () => guard(onClose)
   return (
     <BottomSheet
       open={target !== null}
-      onClose={onClose}
+      onClose={requestClose}
       labelledBy="entry-ed-title"
       head={
         <div className="sheet-bar">
-          <button type="button" className="txt-btn" onClick={onClose}>
+          <button type="button" className="txt-btn" onClick={requestClose}>
             取消
           </button>
           <h2 id="entry-ed-title">{target?.index === null ? '補登明細' : '修改明細'}</h2>

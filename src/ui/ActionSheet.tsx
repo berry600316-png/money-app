@@ -14,12 +14,16 @@ export function ActionSheet({
   title,
   message,
   actions,
+  cancelLabel = '取消',
+  className,
 }: {
   open: boolean
   onClose: () => void
   title: string
   message?: ReactNode
   actions: SheetAction[]
+  cancelLabel?: string
+  className?: string
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const titleId = useId()
@@ -37,7 +41,7 @@ export function ActionSheet({
   }, [open, onClose])
 
   return (
-    <div className={'as-wrap' + (open ? ' open' : '')} aria-hidden={!open} inert={!open}>
+    <div className={'as-wrap' + (open ? ' open' : '') + (className ? ' ' + className : '')} aria-hidden={!open} inert={!open}>
       <div className="backdrop" onClick={onClose} />
       <div className="as" role="alertdialog" aria-modal="true" aria-labelledby={titleId} ref={ref} tabIndex={-1}>
         <div className="as-card">
@@ -50,7 +54,7 @@ export function ActionSheet({
           ))}
         </div>
         <button type="button" className="as-cancel" onClick={onClose}>
-          取消
+          {cancelLabel}
         </button>
       </div>
     </div>

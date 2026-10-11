@@ -2,7 +2,7 @@
  * Import planning for notification captures (D-83..D-85): parse, map to a card, find duplicates,
  * suggest a category. Pure: the UI shows the plan; db/cardRepo commits the user's choices.
  */
-import type { Category, PaymentMethod, Transaction } from '../db/types'
+import type { Category, PaymentMethod, TimeSource, Transaction } from '../db/types'
 import { toYmd } from '../lib/dates'
 import { suggestCategory, type MerchantHistory } from './categorize'
 import type { NotificationCapture } from './notificationFile'
@@ -19,8 +19,10 @@ export interface PlanRow {
   reason: string
   amount: number
   merchant: string
-  /** ISO purchase time (falls back to notification / capture time, then now). */
+  /** ISO purchase time (D-100). */
   occurredAt: string
+  /** D-100: absent = exact. */
+  timeSource?: TimeSource
   cardLast4: string | null
   /** Card from last4, the adapter's bank, or the card remembered for this app; null = the user must choose (D-84). */
   paymentMethodId: string | null
@@ -95,7 +97,8 @@ export function planImport(input: PlanInput): PlanRow[] {
       rows.push({ ...base, status: 'unparsed', reason: r.reason })
       continue
     }
-    let occurredAt = r.spend.occurredAt ?? fallbackTime
+    let occurredAt = r.spend.occurredAt ?? now.toISOString()
+    const timeSource: TimeSource | undefined = r.spend.occurredAt ? r.spend.timeSource : 'date'
     if (Date.parse(occurredAt) > now.getTime()) occurredAt = now.toISOString()
     const card = cardFor(r.spend.cardLast4, r.bank, c.sourceApp, input)
     const row: PlanRow = {
@@ -105,6 +108,7 @@ export function planImport(input: PlanInput): PlanRow[] {
       amount: r.spend.amount,
       merchant: r.spend.merchant,
       occurredAt,
+      ...(timeSource ? { timeSource } : {}),
       cardLast4: r.spend.cardLast4,
       paymentMethodId: card,
       categoryId: suggestCategory(r.spend.merchant, input.history, input.categories),

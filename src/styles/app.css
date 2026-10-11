@@ -117,6 +117,8 @@ svg { display: block; }
 .banner button { border: 0; background: none; color: var(--brand); min-width: 40px; min-height: 40px; border-radius: 12px; display: grid; place-items: center; }
 .banner button.banner-act { padding: 0 12px; font-weight: 600; font-size: 0.875rem; background: rgba(40, 78, 67, 0.08); min-height: 34px; }
 .banner button svg { width: 16px; height: 16px; }
+.banner span small { display: block; font-size: 0.75rem; color: var(--ink-2); margin-top: 1px; }
+.banner button.banner-later { padding: 0 6px; font-size: 0.8125rem; color: var(--ink-2); min-width: 0; }
 
 .daily { padding: 22px 0 6px; }
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 52px; }
@@ -310,6 +312,11 @@ button.srow:disabled:active { background: transparent; }
 .pill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 13px 0 11px; border-radius: 18px; border: 0; background: var(--card); font-size: 0.875rem; color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; cursor: pointer; overflow: hidden; }
 .pill svg { width: 16px; height: 16px; color: var(--ink-2); }
 .pill.on { box-shadow: 0 0 0 1.5px var(--brand) inset; }
+.pill small { font-size: 0.6875rem; color: var(--ink-2); margin-left: -2px; }
+.pill.approx { box-shadow: 0 0 0 1px var(--line) inset, 0 0 0 0 transparent; }
+.num-ui { font-variant-numeric: tabular-nums; }
+.entry-banner { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 9px 12px; border-radius: 14px; background: var(--brand-soft); color: var(--brand); font-size: 0.8125rem; line-height: 1.4; }
+.entry-banner svg { width: 16px; height: 16px; flex: none; }
 .pill-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; -webkit-appearance: none; appearance: none; cursor: pointer; font-size: 16px; }
 .field { width: 100%; height: 44px; border: 0; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; padding: 0 14px; font-size: 16px; outline: none; }
 .field:focus { box-shadow: 0 0 0 1.5px var(--brand) inset; }
@@ -551,6 +558,7 @@ button.srow:disabled:active { background: transparent; }
 /* ---------- action sheet ---------- */
 .overlay-root { position: absolute; inset: 0; z-index: 50; pointer-events: none; }
 .as-wrap { position: absolute; inset: 0; z-index: 50; pointer-events: none; overflow: clip; }
+.as-wrap.top { z-index: 56; }
 .as { position: absolute; left: 10px; right: 10px; bottom: calc(var(--sab) + 10px); display: flex; flex-direction: column; gap: 10px; transform: translateY(120%); transition: transform 0.45s var(--ease); pointer-events: auto; outline: none; }
 .as-wrap.open .as { transform: none; }
 .as-card { background: var(--card); border-radius: 22px; overflow: hidden; text-align: center; }

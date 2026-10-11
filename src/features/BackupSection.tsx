@@ -41,6 +41,8 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
   const [range, setRange] = useState<{ from: string; to: string; preview: RangePreview } | null>(null)
   const shownRange = useLast(range)
   const [confirmUndo, setConfirmUndo] = useState(false)
+  const [savedCheck, setSavedCheck] = useState<string | null>(null)
+  const shownSavedCheck = useLast(savedCheck)
   const fileInput = useRef<HTMLInputElement | null>(null)
   const shownPrepared = useLast(prepared)
   const shownRestore = useLast(pendingRestore)
@@ -93,9 +95,15 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
       toast('已匯出 CSV')
       return
     }
+    // D-102: the share sheet can't tell us the file really landed somewhere; ask before recording it.
+    setSavedCheck(p.file.name)
+  }
+
+  const confirmSaved = async () => {
+    setSavedCheck(null)
     try {
       await markBackedUp()
-      toast('已匯出備份')
+      toast('已記錄備份時間')
     } catch {
       toast('備份已存出，但無法記錄備份時間', { kind: 'error' })
     }
@@ -228,6 +236,17 @@ export function BackupSection({ backupRequest }: { backupRequest: number }) {
             </>
           }
           actions={[{ label: shownPrepared?.kind === 'csv' ? '儲存 CSV…' : '儲存備份…', onClick: () => void save() }]}
+        />
+        <ActionSheet
+          open={savedCheck !== null}
+          onClose={() => {
+            setSavedCheck(null)
+            toast('沒有記錄備份時間，之後可以再備份')
+          }}
+          title="備份檔存好了嗎？"
+          message={<>在「檔案」裡看得到 {shownSavedCheck} 才算存好。</>}
+          cancelLabel="沒有存成"
+          actions={[{ label: '已存好', onClick: () => void confirmSaved() }]}
         />
         <ActionSheet
           open={mode === 'choose'}

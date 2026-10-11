@@ -195,6 +195,7 @@ export function parseBackup(text: string): BackupFile {
     if (!isIso(t.occurredAt) || !isIso(t.createdAt) || !isIso(t.updatedAt)) fail(`第 ${n} 筆交易的時間不正確`)
     if (!isStr(t.merchant) || !isStr(t.note) || !isStr(t.source)) fail(`第 ${n} 筆交易的文字欄位不正確`)
     if (t.externalId !== null && !isStr(t.externalId)) fail(`第 ${n} 筆交易的外部編號不正確`)
+    if (t.timeSource !== undefined && t.timeSource !== 'notification' && t.timeSource !== 'date') fail(`第 ${n} 筆交易的時間來源不正確`)
     return {
       id: t.id,
       type: t.type as TxType,
@@ -208,6 +209,7 @@ export function parseBackup(text: string): BackupFile {
       externalId: t.externalId as string | null,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
+      ...(t.timeSource ? { timeSource: t.timeSource as Transaction['timeSource'] } : {}),
     }
   })
   checkUnique(transactions, '交易')

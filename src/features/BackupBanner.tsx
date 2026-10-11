@@ -1,41 +1,42 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { addedSince, shouldRemindBackup } from '../backup/store'
+import { shouldRemindBackup } from '../backup/store'
 import { db } from '../db/db'
-import { daysBetween } from '../lib/dates'
 import { Icon } from '../ui/Icon'
 import { useToast } from '../ui/Toast'
 
-/** D-41: one dismissible line on the home screen when a backup is overdue. */
+/** D-102: one quiet line on the home screen when the last backup is over 30 days old. */
 export function BackupBanner({ onBackup }: { onBackup: () => void }) {
   const toast = useToast()
   const state = useLiveQuery(async () => {
     const get = async (k: string) => ((await db.settings.get(k))?.value as string | undefined) ?? null
     const [lastBackupAt, installedAt, dismissedAt] = await Promise.all([get('lastBackupAt'), get('installedAt'), get('backupReminderDismissedAt')])
-    const added = await addedSince(lastBackupAt ?? installedAt)
-    const show = shouldRemindBackup({ now: new Date(), lastBackupAt, installedAt, dismissedAt, addedSince: added })
+    const show = shouldRemindBackup({ now: new Date(), lastBackupAt, installedAt, dismissedAt })
     return { show, lastBackupAt }
   }, [])
 
   if (!state?.show) return null
-  const text = state.lastBackupAt ? `已經 ${daysBetween(state.lastBackupAt)} 天沒有備份` : '還沒有備份過'
+  const last = state.lastBackupAt ? new Date(state.lastBackupAt) : null
 
   return (
     <div className="banner" role="status">
       <Icon name="clock" />
-      <span>{text}</span>
+      <span>
+        已經超過 30 天沒有備份
+        <small>{last ? `上次備份：${last.getMonth() + 1} 月 ${last.getDate()} 日` : '還沒有備份過'}</small>
+      </span>
       <button type="button" className="banner-act" onClick={onBackup}>
-        備份
+        立即備份
       </button>
       <button
         type="button"
-        aria-label="先不要提醒"
+        className="banner-later"
         onClick={() => {
           db.settings
             .put({ key: 'backupReminderDismissedAt', value: new Date().toISOString() })
-            .then(() => toast('7 天後再提醒'), () => toast('無法關閉提醒，請再試一次', { kind: 'error' }))
+            .then(() => toast('7 天後再提醒'), () => toast('無法延後提醒，請再試一次', { kind: 'error' }))
         }}
       >
-        <Icon name="x" />
+        稍後提醒
       </button>
     </div>
   )

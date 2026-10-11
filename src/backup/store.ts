@@ -258,20 +258,19 @@ export async function markBackedUp(d: MoneyDB = db, now = new Date()): Promise<v
 const DAY = 864e5
 
 /**
- * D-41: remind when the last backup (or install, if never) is over 30 days old and at least
- * 20 transactions were added since; a dismissal hides it for 7 days.
+ * D-102: remind when the last backup (or install, if never) is over 30 days old; a dismissal hides it
+ * for 7 days. (The old "at least 20 new records" condition of D-41 is gone.)
  */
 export function shouldRemindBackup(input: {
   now: Date
   lastBackupAt: string | null
   installedAt: string | null
   dismissedAt: string | null
-  addedSince: number
 }): boolean {
   const base = input.lastBackupAt ?? input.installedAt
   if (!base) return false
   const age = input.now.getTime() - Date.parse(base)
-  if (age <= 30 * DAY || input.addedSince < 20) return false
+  if (age <= 30 * DAY) return false
   if (input.dismissedAt && input.now.getTime() - Date.parse(input.dismissedAt) < 7 * DAY) return false
   return true
 }

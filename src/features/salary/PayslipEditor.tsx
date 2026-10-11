@@ -10,6 +10,7 @@ import { currentMonthKey, monthKeyLabel } from '../../lib/months'
 import { draftToLines, editPayslipDraft, newPayslipDraft, payDateFor, payMonthOffset, type PayslipDraft } from '../../lib/salaryHistory'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
+import { useCloseGuard, useDirtyCheck } from '../../ui/discard'
 
 export type PayslipEditorTarget = { payslipId: string } | { month: string }
 
@@ -35,6 +36,11 @@ export function PayslipEditor({
   const [shown, setShown] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const open = target !== null
+  // D-101: compare with the draft as it was opened.
+  const opened = useRef('')
+  useDirtyCheck('payslipEditor', open, () => !!draft && !saving && JSON.stringify(draft) !== opened.current)
+  const guard = useCloseGuard('payslipEditor')
+  const requestClose = () => guard(onClose)
 
   const fallbackPayment = () => {
     const t = ref.payments.find((p) => p.id === 'transfer' && p.isActive)
@@ -49,10 +55,14 @@ export function PayslipEditor({
       const s = slips.find((x) => x.id === target.payslipId)
       if (!s) return
       setEditId(s.id)
-      setDraft(editPayslipDraft(s, items))
+      const dr = editPayslipDraft(s, items)
+      opened.current = JSON.stringify(dr)
+      setDraft(dr)
     } else {
       setEditId(null)
-      setDraft(newPayslipDraft(target.month, slips, items, fallbackPayment()))
+      const dr = newPayslipDraft(target.month, slips, items, fallbackPayment())
+      opened.current = JSON.stringify(dr)
+      setDraft(dr)
     }
     bodyRef.current?.scrollTo({ top: 0 })
     // Only when a new target arrives; live updates must not reset what the user typed.
@@ -169,7 +179,7 @@ export function PayslipEditor({
   return (
     <section className={'editor' + (open && shown ? ' open' : '')} role="dialog" aria-modal="true" aria-labelledby="slip-ed-title" aria-hidden={!open} inert={!open}>
       <div className="page-head">
-        <button type="button" className="txt-btn" onClick={onClose}>
+        <button type="button" className="txt-btn" onClick={requestClose}>
           取消
         </button>
         <h1 id="slip-ed-title">{isNew ? '新增薪資單' : '編輯薪資單'}</h1>
