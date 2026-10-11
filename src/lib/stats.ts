@@ -108,3 +108,98 @@ export function searchTx(
     return hay.includes(q)
   })
 }
+
+/* ---------------- list filters (D-103) ---------------- */
+
+export type DateMode = 'month' | 'range' | 'all'
+/** Payment filter value meaning "every payment method whose type is credit card". */
+export const ALL_CARDS = '__cards__'
+
+export interface TxFilter {
+  q: string
+  type: 'all' | TxType
+  /** Empty = every category. */
+  categoryIds: string[]
+  /** null = any; ALL_CARDS; or a payment method id. */
+  payment: string | null
+  dateMode: DateMode
+  /** Inclusive local dates for 'range'. */
+  from: string
+  to: string
+}
+
+/**
+ * D-103 / Q63: the dates actually searched. A custom range always holds; in month mode, typing a search
+ * looks at every date (shown to the user), and clearing it returns to the month.
+ */
+export function effectiveDateMode(f: Pick<TxFilter, 'q' | 'dateMode'>): DateMode {
+  return f.dateMode === 'month' && f.q.trim() ? 'all' : f.dateMode
+}
+
+/** True when anything narrows the list beyond "this month, everything". */
+export function isFiltered(f: TxFilter): boolean {
+  return f.q.trim() !== '' || f.type !== 'all' || f.categoryIds.length > 0 || f.payment !== null || f.dateMode !== 'month'
+}
+
+/**
+ * Every condition at once, on whatever rows the caller loaded for the date mode; dates are checked
+ * again here so a wider source never leaks rows. Totals must come from this full result (not the
+ * rows shown on screen).
+ */
+export function filterTx(
+  list: readonly Transaction[],
+  f: TxFilter,
+  ctx: { month: YearMonth; isCard: (paymentId: string) => boolean; names: { category: (id: string) => string; payment: (id: string) => string } },
+): Transaction[] {
+  const mode = effectiveDateMode(f)
+  let l = list.filter((t) => {
+    if (mode === 'month' && !isInMonth(t.occurredAt, ctx.month)) return false
+    if (mode === 'range') {
+      const d = toYmd(new Date(t.occurredAt))
+      if (d < f.from || d > f.to) return false
+    }
+    if (f.type !== 'all' && t.type !== f.type) return false
+    if (f.categoryIds.length && !f.categoryIds.includes(t.categoryId)) return false
+    if (f.payment === ALL_CARDS ? !ctx.isCard(t.paymentMethodId) : f.payment !== null && t.paymentMethodId !== f.payment) return false
+    return true
+  })
+  if (f.q.trim()) l = searchTx(l, f.q, ctx.names)
+  return sortDesc(l)
+}
+
+/* ---------------- yearly overview (D-104) ---------------- */
+
+export interface MonthTotals {
+  ym: YearMonth
+  income: number
+  expense: number
+  balance: number
+  /** A month that has not started yet: no numbers are shown for it. */
+  future: boolean
+}
+
+/**
+ * The 12 months of `year` from real transactions only (no plans, no estimates), using the same
+ * summarize() as the monthly view so the two can never disagree.
+ */
+export function yearByMonth(list: readonly Transaction[], year: number, now = new Date()): MonthTotals[] {
+  const out: MonthTotals[] = []
+  for (let m = 0; m < 12; m++) {
+    const ym = { y: year, m }
+    const future = year > now.getFullYear() || (year === now.getFullYear() && m > now.getMonth())
+    const s = future ? { income: 0, expense: 0, balance: 0 } : summarize(filterMonth(list, ym))
+    out.push({ ym, ...s, future })
+  }
+  return out
+}
+
+/** Year totals = the sum of its months. */
+export function yearTotals(months: readonly MonthTotals[]) {
+  let income = 0
+  let expense = 0
+  for (const m of months) {
+    income += m.income
+    expense += m.expense
+  }
+  return { income, expense, balance: income - expense }
+}

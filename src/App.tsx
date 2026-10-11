@@ -3,7 +3,7 @@ import { useCategories, usePaymentMethods } from './db/hooks'
 import { EditorSheet } from './features/EditorSheet'
 import { EntrySheet } from './features/EntrySheet'
 import { HomeScreen } from './features/HomeScreen'
-import { ListScreen, type ListFilters } from './features/ListScreen'
+import { emptyFilters, ListScreen, type ListFilters } from './features/ListScreen'
 import { ManagePage, type EditorTarget, type ManageKind } from './features/ManagePage'
 import { SettingsPage } from './features/SettingsPage'
 import { StatsScreen } from './features/StatsScreen'
@@ -93,7 +93,7 @@ function Shell() {
   const statsRef = useRef<HTMLElement | null>(null)
   const [tab, setTab] = useState<Tab>('home') // D-26: always start on home
   const [month, setMonth] = useState<YearMonth>(() => ymOf(new Date()))
-  const [filters, setFilters] = useState<ListFilters>({ q: '', type: 'all', categoryId: null })
+  const [filters, setFilters] = useState<ListFilters>(() => emptyFilters())
   const [entry, setEntry] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [manage, setManage] = useState<ManageKind | null>(null)
@@ -228,7 +228,7 @@ function Shell() {
             onAdd={addTx}
             onSeeAll={() => {
               setMonth(ymOf(new Date()))
-              setFilters({ q: '', type: 'all', categoryId: null })
+              setFilters(emptyFilters())
               setTab('list')
             }}
             onSettings={() => setSettingsOpen(true)}
@@ -259,7 +259,7 @@ function Shell() {
                 push({ kind: 'payslips' }) // D-73
                 return
               }
-              setFilters({ q: '', type: 'all', categoryId })
+              setFilters(emptyFilters({ categoryIds: [categoryId] }))
               setTab('list')
               listRef.current?.scrollTo({ top: 0 })
             }}
@@ -310,7 +310,7 @@ function Shell() {
                   onOpen={(id) => push({ kind: 'payslip', id })}
                   onNew={(m) => newPayslip(m)}
                   onSeeIncome={() => {
-                    setFilters({ q: '', type: 'all', categoryId: SALARY_CATEGORY_ID })
+                    setFilters(emptyFilters({ categoryIds: [SALARY_CATEGORY_ID] }))
                     setTab('list')
                     setRoutes([])
                   }}

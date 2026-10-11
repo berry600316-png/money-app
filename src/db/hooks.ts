@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
 import type { Category, PaymentMethod, Payslip, SalaryItem, Transaction } from './types'
-import { addMonths, monthRangeIso, type YearMonth } from '../lib/dates'
+import { addMonths, fromYmd, monthRangeIso, type YearMonth } from '../lib/dates'
 
 /* Live queries re-run automatically after any write, so every screen updates at once. */
 
@@ -25,7 +25,18 @@ export function useRecentTx(limit: number): Transaction[] | undefined {
   return useLiveQuery(() => db.transactions.orderBy('occurredAt').reverse().limit(limit).toArray(), [limit])
 }
 
-/** Every transaction; only used while searching (D-32). */
+/** Inclusive local dates "YYYY-MM-DD" (D-103). */
+export function useRangeTx(from: string, to: string, enabled = true): Transaction[] | undefined {
+  return useLiveQuery(() => {
+    if (!enabled || !from || !to || from > to) return Promise.resolve([] as Transaction[])
+    const start = fromYmd(from).toISOString()
+    const end = fromYmd(to)
+    end.setDate(end.getDate() + 1)
+    return db.transactions.where('occurredAt').between(start, end.toISOString(), true, false).toArray()
+  }, [from, to, enabled])
+}
+
+/** Every transaction (searching all dates, "全部日期", yearly stats). */
 export function useAllTx(enabled: boolean): Transaction[] | undefined {
   return useLiveQuery(() => (enabled ? db.transactions.toArray() : Promise.resolve([] as Transaction[])), [enabled])
 }
