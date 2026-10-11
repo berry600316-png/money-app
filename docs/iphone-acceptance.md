@@ -5,7 +5,7 @@
 
 ## A. 安裝
 
-- [ ] A1 Safari 開啟 `https://basd0123.github.io/money-app/`，畫面正常（不是空白）。
+- [ ] A1 Safari 開啟 `https://berry600316-png.github.io/money-app/`，畫面正常（不是空白）。
 - [ ] A2 分享 → 加入主畫面：名稱顯示「Money」，圖示是深綠底三條線（方案 A），沒有白邊。
 - [ ] A3 從主畫面開啟：沒有 Safari 網址列，是獨立畫面。
 - [ ] A4 頂端狀態列（時間、電池）清楚可讀，背景與 App 的暖白色一致，沒有一條白色或黑色色塊。

@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import pkg from './package.json'
 
-// GitHub Pages serves the app from https://<user>.github.io/money-app/
+// GitHub Pages serves the app from https://berry600316-png.github.io/money-app/
 const PAGES_BASE = '/money-app/'
 
 /**

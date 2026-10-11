@@ -35,11 +35,11 @@ npm run preview    # 在本機預覽正式版，http://localhost:4173/money-app/
 
 1. 在 GitHub 建立公開 repo `money-app`（免費帳號只有公開 repo 能用 Pages；repo 只有程式碼，沒有任何記帳資料）。
 2. repo 的 Settings → Pages → Source 選 **GitHub Actions**。
-3. push 到 `main`，`.github/workflows/deploy.yml` 會自動建置並發布到 `https://<帳號>.github.io/money-app/`。
+3. push 到 `main`，`.github/workflows/deploy.yml` 會自動建置並發布到 `https://berry600316-png.github.io/money-app/`。
 
 ## 在 iPhone 安裝
 
-1. 用 Safari 開啟 `https://<帳號>.github.io/money-app/`。
+1. 用 Safari 開啟 `https://berry600316-png.github.io/money-app/`。
 2. 點分享 → 加入主畫面，保持「打開為網頁 App」開啟。
 3. 從主畫面的 Money 圖示開啟一次，等設定頁顯示「離線使用：已就緒」，之後沒有網路也能使用。
 
