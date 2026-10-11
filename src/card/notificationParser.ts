@@ -26,21 +26,23 @@ export type ParseResult =
  */
 
 /** Words for one-time codes. */
-const CODE_WORD = /驗證碼|OTP|動態密碼|一次性密碼|認證碼|簡訊密碼|交易密碼|安全碼/i
+const CODE_WORD = /驗證碼|OTP|動態密碼|一次性密碼|認證碼|簡訊密碼|交易密碼|驗證密碼|安全碼|確認碼|授權碼|密碼/i
 /** A code standing apart ("驗證碼為 123456"); "OTP2024 選物店" is a shop and "0800-123-456" a phone number. */
 const CODE_WITH_DIGITS = new RegExp(`(?:${CODE_WORD.source})(?:\\s*(?:為|是)?\\s*[:：]\\s*|\\s*(?:為|是)\\s*|\\s+)\\d{4,8}(?![\\d-])`, 'i')
 
 /** Never a new purchase, whatever else the message says. */
 const ALWAYS_NOT_SPENDING: [RegExp, string][] = [
-  [/繳款成功|已繳款|自動扣繳成功|繳費成功|繳款通知/, '繳款通知'],
-  [/將於.{0,12}扣款|自動扣款|帳單金額|應繳金額|本期應繳|電子帳單|帳單通知|帳單已/, '帳單或扣款通知'],
+  [/繳款成功|已繳款|繳款通知/, '繳款通知'],
+  [/將於.{0,12}扣款|帳單金額|應繳金額|本期應繳|電子帳單|帳單通知|帳單已/, '帳單或扣款通知'],
 ]
 /** Not a purchase, unless the message also states one; then it is a purchase the user must confirm. */
 const NOT_SPENDING: [RegExp, string][] = [
   [/退款|退貨|退刷|刷退/, '退款'],
   [/取消交易|交易取消|已取消|撤銷|沖正/, '取消交易'],
   [/入帳成功/, '入帳'],
-  [/交易失敗|拒絕|未成功|額度不足/, '交易失敗'],
+  [/失敗|拒絕|未成功|不成功|未獲核准|未核准|婉拒|額度不足/, '交易失敗'],
+  // Paying a bill by card can be a real charge ("在中華電信自動扣款 1,299"), so these are not absolute.
+  [/自動扣款|自動扣繳|繳費成功/, '代繳或扣款'],
   [CODE_WITH_DIGITS, '驗證碼'],
 ]
 /** Offer wording: "not a purchase" when no purchase is stated. */
@@ -53,7 +55,7 @@ const WEAK_NOT_SPENDING: [RegExp, string][] = [
 ]
 /** Offer or code wording anywhere: a purchase that mentions these is never imported without a look. */
 const DOUBT = new RegExp(
-  `${CODE_WORD.source}|回饋|優惠|活動|登錄|抽獎|贈|購物金|刷卡金|點數|紅利|折|滿額|利率|好禮|(?<!外)送|加碼|兌換|限定|首刷|分期|以上`,
+  `${CODE_WORD.source}|回饋|優惠|活動|登錄|抽獎|贈|購物金|刷卡金|點數|紅利|折|滿額|利率|好禮|(?<!外)送|加碼|兌換|限定|首刷|分期|以上|現賺|賺|抵用券|好康|現折`,
   'i',
 )
 const SPENDING = /消費|刷卡|交易|扣款|簽帳|授權|支付|付款/
@@ -84,14 +86,14 @@ function amountsOf(t: string): AmountHit[] {
  * Words directly in front of an amount that make it a threshold or a reward, not what was paid.
  * Anchored to the amount so shop names (達美樂, 每日優鮮) don't count.
  */
-const NOT_PAID_BEFORE = /(?:滿額?|達到?|超過|最高|上限|回饋金?|折抵?|贈送?|送|享有?|獲得|加碼|刷卡金|購物金|累積\S{0,3})\s*[:：]?\s*$/
+const NOT_PAID_BEFORE = /(?:滿額?|達到?|超過|最高|上限|回饋金?|折抵?|贈送?|送|享有?|獲得|加碼|現賺|賺|拿|得|現折|刷卡金|購物金|累積\S{0,3})\s*[:：]?\s*$/
 /** Words directly in front of an amount that make it what was paid ("消費 NT$899", "交易金額：NT$500"). */
-const PAID_BEFORE = /(?:消費|刷卡|交易|扣款|簽帳|授權|支付|付款|金額)\s*[:：]?\s*$/
+const PAID_BEFORE = /(?:消費|刷卡|交易|扣款|簽帳|授權|支付|付款|金額|繳納|費)\s*[:：]?\s*$/
 /** ...or directly after it ("NT$85 刷卡成功"). */
 const PAID_AFTER = /^\s*元?\s*(?:消費|刷卡|交易|扣款|支付|付款|簽帳)/
 /** Offer wording right after an amount: it may be a threshold ("消費 NT$3,000 享 5% 回饋"), so never guessed. */
 const OFFER_AFTER =
-  /^\s*元?\s*(?:\(含\)\s*)?(?:以上|起|即|就|可|再|享|送|贈|回饋|參加|抽|折|兌換|加碼|分\s*\d+\s*期)|^\s*元?\s*[,、]\s*(?:\(含\)\s*)?(?:以上|即|就|可|再|送|贈|兌換|加碼)/
+  /^\s*元?\s*(?:\(含\)\s*)?(?:以上|起|即|就|可|再|享|送|贈|加贈|回饋|參加|抽|折|現折|現賺|賺|拿|兌換|加碼|分\s*\d+\s*期)|^\s*元?\s*[,、]\s*(?:\(含\)\s*)?(?:以上|即|就|可|再|享|回饋|送|贈|加贈|兌換|加碼|現折|現賺|折|賺|拿|得)/
 
 /** The amount that was paid: the first one introduced by a spending word, else the first plain one. */
 function amountOf(text: string): { amount: number | null; stated: boolean; offerNext: boolean } {

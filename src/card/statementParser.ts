@@ -71,7 +71,9 @@ const ENTRY_LINE = new RegExp(
 const NO_YEAR = /^(?:\d{1,2}\/\d{1,2}|\d{1,2}\s*月)/
 /** Text that looks like a date in a form we do not read (26/10/05, 20261005, 10-05, 10.05, OCT05, 10 / 05). */
 const DATE_ISH =
-  /(?<!\d)\d{1,2}\s*[/.-]\s*\d{1,2}(?!\d)|\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?\s*\d{1,2}(?!\d)|(?<!\d)(?:19|20)\d{6}(?!\d)|(?<!\d)\d{1,2}\s*月/i
+  /(?<!\d)\d{1,2}\s*[/.-]\s*\d{1,2}(?!\d)|\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?\s*\d{1,2}(?!\d)|(?<!\d)\d{1,2}\s*(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)|(?<!\d)(?:19|20)\d{6}(?!\d)|(?<!\d)\d{1,2}\s*月/i
+/** A line that starts with something date-like. */
+const LEADING_DATE = new RegExp(`^(?:${DATE_TOKEN}|${DATE_ISH.source})`, 'i')
 /** A guessed year further than this before the cycle start gets a warning. */
 const FAR_FROM_CYCLE_DAYS = 62
 /** Any line ending in a number (an entry whose date we could not read, or a wrapped line). */
@@ -88,11 +90,15 @@ const CURRENCY_CODES = new Set(
 )
 /** Codes also recognised when printed in lower or mixed case ("usd"). */
 const COMMON_CODES = new Set('USD JPY EUR GBP KRW HKD CNY RMB SGD AUD NZD THB CAD CHF MYR VND PHP IDR INR MOP US'.split(' '))
+/** Currency named inside a word ("AMAZON(USD)", "東京迪士尼日圓", "東京 円"): the amount may be foreign. */
+const CURRENCY_INSIDE = new RegExp(
+  `(?:^|[^A-Za-z])(?:${[...COMMON_CODES].join('|')})(?:[^A-Za-z]|$)|日圓|日元|円|美金|美元|人民幣|歐元|韓元|韓圜|港幣|港元|英鎊|澳幣|泰銖|越南盾|外幣`,
+)
 const TWD_WORD = /^(?:NT\$|NTD|TWD|新?[臺台]幣)$/i
 const CJK_CURRENCY = /^(?:外幣|美金|.{0,4}幣|[美日港澳紐加星新坡韓歐]元|日圓|韓圜|英鎊|泰銖|越南盾|.{0,3}(?:披索|比索|法郎|盧比|里拉|令吉|克朗|盧布|蘭特|第納爾|里亞爾|茲羅提))$/
 const CURRENCY_SYMBOL = /[$¥€£₩₫฿₱₹]/
 /** Card digits label at the end of the description: the "amount" after it is the card number. */
-const CARD_LABEL_END = /(?:卡\s*末|[末後尾]\s*[四4]\s*碼|尾\s*[數号號]|卡\s*號)\s*[:：-]?$/
+const CARD_LABEL_END = /(?:卡\s*末|[附正]\s*卡|[末後尾]\s*[四4]\s*碼|尾\s*[數号號]|卡\s*號)\s*[:：-]?$/
 
 function isNumberToken(t: string): boolean {
   const u = t.replace(/^(?:NT\$|NTD|TWD)/i, '').replace(/(?:元|TWD|NTD)$/i, '')
@@ -190,8 +196,8 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
     const m = line.match(ENTRY_LINE)
     const unread = () => unreadLines.push(original)
     if (NOT_ENTRY.test(line)) {
-      // A heading word in an entry-shaped line ("10/05 10/05 循環信用利息 235") is shown, not dropped.
-      if (m) unread()
+      // A heading word in a line that starts like an entry ("10/05 10/05 循環信用利息 235") is shown, not dropped.
+      if (m || LEADING_DATE.test(line)) unread()
       continue
     }
     if (!m) {
@@ -226,12 +232,13 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
       tokens.some(isNumberToken) || // another amount column, or "1 234"
       tokens.some((t) => /^[-+]$/.test(t)) || // a sign printed apart from the amount ("- 365")
       tokens.some((t) => isCurrencyToken(t) || isGluedForeign(t) || (CURRENCY_SYMBOL.test(t) && !/^NT\$/i.test(t))) || // foreign amount elsewhere
-      CARD_LABEL_END.test(description) // "尾號 1234"
+      CARD_LABEL_END.test(description) || // "尾號 1234"
+      CURRENCY_INSIDE.test(description) // "AMAZON(USD) 32", "東京迪士尼日圓 3200"
     ) {
       unread()
       continue
     }
-    let amount = signed(amountToken)
+    const amount = signed(amountToken)
     if (amount === null || amount === 0) {
       unread()
       continue
@@ -256,7 +263,12 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
     if (reference) merchant = merchant.replace(reference, ' ')
     merchant = merchant.replace(/\s{2,}/g, ' ').replace(/^[\s|:：-]+|[\s|:：-]+$/g, '').trim()
     const kind = classify(merchant, amount)
-    if (kind === 'payment' || kind === 'refund') amount = -Math.abs(amount)
+    // The printed sign is never overridden by wording: "中華電信 自動扣繳 1,299" is a charge, "退貨手續費 30" a fee.
+    // A payment/refund word on a positive amount is a contradiction → shown, not guessed.
+    if ((kind === 'payment' || kind === 'refund') && amount > 0) {
+      unread()
+      continue
+    }
     entries.push({ txDate, postDate, merchant: merchant || '（未辨識）', amount, currency: 'TWD', foreign, reference, kind, raw: original })
   }
 

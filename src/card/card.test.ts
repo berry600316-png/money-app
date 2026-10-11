@@ -145,7 +145,8 @@ describe('notification parser (simulated samples only)', () => {
     expect(spend('您的台新卡在 蝦皮購物 消費 NT$899，本筆享 1% 現金回饋')).toEqual([899, '蝦皮購物'])
     expect(spend('您的台新卡在 全聯福利中心 消費 NT$1,200，單筆滿 3,000 元，已累積回饋點數')).toEqual([1200, '全聯福利中心'])
     expect(spend('您的台新卡單筆滿 3,000 元送點數，本次在 全聯 消費 NT$450')).toEqual([450, '全聯'])
-    expect(spend('您的台新卡於 好市多 消費 NT$3,456，享 2.5% 回饋')).toEqual([3456, '好市多'])
+    // "金額，享 X% 回饋" reads the same as an offer threshold, so it is left for the user (unparsed), never not_spending.
+    expect(p('您的台新卡於 好市多 消費 NT$3,456，享 2.5% 回饋').kind).toBe('unparsed')
     expect(spend('您的台新卡在 達美樂 消費 NT$500，如非本人交易請勿提供驗證碼')).toEqual([500, '達美樂'])
     expect(spend('您的台新卡在 OTP咖啡 消費 NT$120')).toEqual([120, 'OTP咖啡'])
     expect(spend('全家 NT$85 刷卡成功，享 1% 回饋')).toEqual([85, '']) // no shop wording → left for the user to fill
@@ -158,6 +159,8 @@ describe('notification parser (simulated samples only)', () => {
       '您的台新卡在全家消費NT$85 即享優惠',
       '您的台新卡在全家消費NT$85，若非本人交易請致電客服協助取消交易',
       '您的台新卡在拒絕平庸咖啡消費NT$150',
+      '您的台新卡末四碼1234於10/11 14:05在中華電信自動扣款新臺幣1,299元',
+      '您以信用卡末四碼1234於10/11 14:05繳納臺北自來水費NT$300，繳費成功',
     ]
     for (const body of purchases) expect(p(body).kind, body).not.toBe('not_spending')
     const offersAndCodes: [string, number[]][] = [
@@ -176,6 +179,21 @@ describe('notification parser (simulated samples only)', () => {
       ['刷卡消費 NT$2,000 再享 3 期 0 利率', []],
       ['您的台新卡將於10/15扣款 NT$12,345', []],
       ['本期帳單金額 NT$12,345，將於10/15自動扣款', []],
+      // round 5
+      ['您的3D驗證密碼為482913，於UNIQLO刷卡交易NT$1,280，卡號末四碼1234，10/11 14:05', [1280]],
+      ['交易確認碼482913，於UNIQLO刷卡消費NT$1,280，卡號末四碼1234，10/11 14:05', [1280]],
+      ['密碼：482913，您正於UNIQLO網路刷卡交易NT$1,280，卡號末四碼1234，10/11 14:05', [1280]],
+      ['週末於新光三越刷卡消費NT$5,000，現賺NT$500，至10/31 23:59止', []],
+      ['於新光三越刷卡消費NT$3,000，拿NT$300好康，末四碼1234 10/11 14:05', []],
+      ['於全家刷卡消費NT$300，得50元抵用券，末四碼1234 10/11 14:05', []],
+      ['即日起刷卡消費NT$3,000，享5%回饋', []],
+      ['刷卡消費NT$3,000，回饋NT$300', []],
+      ['刷卡消費NT$3,000，加贈NT$300', []],
+      ['刷卡消費NT$3,000，現折NT$300', []],
+      ['於新光三越刷卡消費NT$3,000加贈NT$300，至10/31 23:59止', []],
+      ['於新光三越刷卡消費NT$3,000現折NT$300，至10/31 23:59止', []],
+      ['您的台新卡末四碼1234於10/11 14:05在UNIQLO刷卡NT$1,280未獲核准', [1280]],
+      ['您的台新卡末四碼1234於10/11 14:05在UNIQLO刷卡NT$1,280授權失敗', [1280]],
     ]
     for (const [body, allowed] of offersAndCodes) {
       const r = p(body)
@@ -369,6 +387,25 @@ describe('statement parser (generic adapter, simulated layout)', () => {
     const r = parseStatementLines([...head, ...unread, '卡號 ****-****-****-1234'])
     expect(r.entries).toEqual([])
     expect(r.unreadLines).toEqual(unread)
+    // Round 5: date-first lines with heading words, day-month dates, currencies inside words, and wording
+    // that contradicts the printed sign are all shown, never dropped or re-signed.
+    const r5 = [
+      '10/05 10/05 循環信用利息 NT$235',
+      '10/03 10/05 額度調整手續費 100元整',
+      '18SEP 20SEP AMAZON 32 USD',
+      '10/05 10/07 中華電信 自動扣繳 1,299',
+      '10/05 10/07 退貨手續費 30',
+      '10/05 10/07 超商繳款手續費 15',
+      '10/05 10/07 取消訂閱補收費用 120',
+      '09/18 09/20 AMAZON(USD) 32',
+      '09/18 09/20 AMAZON/USD 32',
+      '09/18 09/20 東京迪士尼日圓 3200',
+      '09/18 09/20 東京 円 3200',
+      '09/18 09/20 附卡 5678',
+    ]
+    const round5 = parseStatementLines([...head, ...r5])
+    expect(round5.entries).toEqual([])
+    expect(round5.unreadLines).toEqual(r5)
     // Unicode minus signs are read as minus.
     const minus = parseStatementLines([...head, '10/09 10/09 UNIQLO −365', '10/09 10/09 UNIQLO –365'])
     expect(minus.entries.map((e) => e.amount)).toEqual([-365, -365])
