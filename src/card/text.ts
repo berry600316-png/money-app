@@ -37,7 +37,7 @@ function validYmd(y: number, m: number, d: number): string | null {
 
 /**
  * Find dates in text. Supports 2026/10/05, 2026-10-05, 2026.10.05, ROC years 115/10/05,
- * "2026年10月5日", and month/day only ("10/05", needs `yearHint`).
+ * "2026年10月5日", and month/day only ("10/05", "10月5日"; these need `yearHint`).
  * Returns local "YYYY-MM-DD" strings in the order found.
  */
 export function findDates(text: string, yearHint?: number): string[] {
@@ -62,6 +62,9 @@ export function findDates(text: string, yearHint?: number): string[] {
     push(m.index!, m[0].length, validYmd(y, Number(m[2]), Number(m[3])))
   }
   if (yearHint) {
+    for (const m of s.matchAll(/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*日/g)) {
+      push(m.index!, m[0].length, validYmd(yearHint, Number(m[1]), Number(m[2])))
+    }
     for (const m of s.matchAll(/(?<![\d/.-])(\d{1,2})\/(\d{1,2})(?![\d/])/g)) {
       push(m.index!, m[0].length, validYmd(yearHint, Number(m[1]), Number(m[2])))
     }

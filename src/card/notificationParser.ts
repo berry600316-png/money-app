@@ -20,6 +20,15 @@ const NOT_SPENDING: [RegExp, string][] = [
   [/取消交易|交易取消|已取消|撤銷|沖正/, '取消交易通知'],
   [/繳款成功|已繳款|入帳成功|自動扣繳成功|繳費成功|繳款通知/, '繳款通知'],
   [/交易失敗|拒絕|未成功|額度不足/, '交易失敗通知'],
+  // An actual one-time code ("驗證碼為 123456"): 3-D Secure messages also carry merchant + amount,
+  // but the purchase itself arrives as a separate notification.
+  [/(?:驗證碼|OTP|動態密碼)\s*(?:為|是)?\s*[:：]?\s*\d{4,8}(?!\d)/i, '安全性通知'],
+]
+/**
+ * Wording that means "not a purchase" unless the message states a purchase outright
+ * ("在 蝦皮 消費 NT$899，本筆享 1% 回饋" is a purchase that mentions a reward).
+ */
+const UNLESS_PURCHASE: [RegExp, string][] = [
   [/驗證碼|OTP|動態密碼/i, '安全性通知'],
   // Offers mention spending too ("刷卡消費滿 NT$3,000 享 5% 回饋"): an amount threshold or a percentage reward.
   [/(?:滿|達|累積)\s*(?:NT\$|新?[臺台]幣)?\s*[\d,]+\s*元?.{0,12}(?:享|送|贈|回饋|折)|享\s*\d+(?:\.\d+)?\s*%|登錄|抽獎/, '行銷或回饋通知'],
@@ -33,14 +42,46 @@ const WEAK_NOT_SPENDING: [RegExp, string][] = [
 const SPENDING = /消費|刷卡|交易|扣款|簽帳|授權|支付|付款/
 const FOREIGN = /\b(USD|JPY|EUR|GBP|KRW|HKD|CNY|SGD|AUD|THB)\b|美元|日圓|日幣|歐元|韓元|港幣|人民幣/
 
-/** Amount right after a currency marker, or "1,234 元". */
-function amountOf(text: string): number | null {
-  const t = toHalfWidth(text)
-  const m =
-    t.match(new RegExp(NTD_RE.source + '\\s*[:：]?\\s*(-?[\\d,]+(?:\\.\\d+)?)', 'i')) ??
-    t.match(/(-?\d{1,3}(?:,\d{3})+|-?\d+)(?:\.\d+)?\s*元/)
-  if (!m) return null
-  return parseAmount(m[m.length - 1])
+interface AmountHit {
+  value: number | null
+  /** Text just before the amount (currency marker included), used to tell a purchase from a threshold. */
+  before: string
+  /** Text just after the amount ("NT$50 以上" is a threshold). */
+  after: string
+}
+
+/** Every NTD amount in the text: after a currency marker, or "1,234 元". */
+function amountsOf(t: string): AmountHit[] {
+  const hits: { at: number; end: number; hit: AmountHit }[] = []
+  const add = (m: RegExpMatchArray, token: string) => {
+    const at = m.index!
+    if (hits.some((h) => at < h.end && at + m[0].length > h.at)) return
+    hits.push({ at, end: at + m[0].length, hit: { value: parseAmount(token), before: t.slice(Math.max(0, at - 10), at), after: t.slice(at + m[0].length, at + m[0].length + 6) } })
+  }
+  for (const m of t.matchAll(new RegExp(NTD_RE.source + '\\s*[:：]?\\s*(-?[\\d,]+(?:\\.\\d+)?)', 'gi'))) add(m, m[m.length - 1])
+  for (const m of t.matchAll(/(-?\d{1,3}(?:,\d{3})+|-?\d+)(?:\.\d+)?\s*元/g)) add(m, m[1])
+  return hits.sort((a, b) => a.at - b.at).map((h) => h.hit)
+}
+
+/**
+ * Words directly in front of an amount that make it a threshold or a reward, not what was paid.
+ * Anchored to the amount so shop names (達美樂, 每日優鮮) don't count.
+ */
+const NOT_PAID_BEFORE = /(?:滿|達到?|超過|最高|上限|回饋|折抵|贈送?|享有?|獲得|累積\S{0,3})\s*[:：]?\s*$/
+/** Words directly in front of an amount that make it what was paid ("消費 NT$899", "交易金額：NT$500"). */
+const PAID_BEFORE = /(?:消費|刷卡|交易|扣款|簽帳|授權|支付|付款|金額)\s*[:：]?\s*$/
+const NOT_PAID_AFTER = /^\s*元?\s*(?:以上|起|即享|就送|即送|即贈)/
+/** ...or directly followed by one ("NT$85 刷卡成功"). */
+const PAID_AFTER = /^\s*元?\s*(?:消費|刷卡|交易|扣款|支付|付款|簽帳)/
+const notPaid = (h: AmountHit) => NOT_PAID_BEFORE.test(h.before) || NOT_PAID_AFTER.test(h.after)
+
+/** The amount that was paid: the first one introduced by a spending word, else the first non-threshold one. */
+function amountOf(text: string): { amount: number | null; stated: boolean } {
+  const hits = amountsOf(toHalfWidth(text)).filter((h) => h.value !== null)
+  const paid = hits.find((h) => (PAID_BEFORE.test(h.before) || PAID_AFTER.test(h.after)) && !notPaid(h))
+  if (paid) return { amount: paid.value, stated: true }
+  const plain = hits.find((h) => !notPaid(h))
+  return { amount: plain?.value ?? null, stated: false }
 }
 
 const MERCHANT_PATTERNS = [
@@ -88,7 +129,10 @@ function timeOf(text: string, ref: string | null): string | null {
 export function parseNotification(c: NotificationCapture): ParseResult {
   const text = [c.title, c.subtitle, c.body].filter(Boolean).join('\n')
   for (const [re, reason] of NOT_SPENDING) if (re.test(text)) return { kind: 'not_spending', reason }
-  const amount = amountOf(text)
+  const { amount, stated } = amountOf(text)
+  // A purchase is "stated" when an amount is introduced by a spending word, or a non-threshold amount
+  // comes with a named shop ("商店：X", "於 X 消費").
+  if (!(stated || (amount !== null && merchantOf(text)))) for (const [re, reason] of UNLESS_PURCHASE) if (re.test(text)) return { kind: 'not_spending', reason }
   // The title is often generic ("刷卡通知") even for promotions, so judge by the message itself.
   const message = [c.subtitle, c.body].filter(Boolean).join('\n') || text
   if (!(SPENDING.test(message) && amount !== null)) {

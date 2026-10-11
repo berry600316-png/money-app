@@ -22,6 +22,8 @@ describe('text helpers', () => {
     expect(findDates('2026/10/05 與 115/10/06')).toEqual(['2026-10-05', '2026-10-06'])
     expect(findDates('2026年10月7日')).toEqual(['2026-10-07'])
     expect(findDates('10/11 14:05', 2026)).toEqual(['2026-10-11'])
+    expect(findDates('10月5日', 2026)).toEqual(['2026-10-05'])
+    expect(findDates('10月5日')).toEqual([])
     expect(findDates('2026/02/31')).toEqual([])
   })
   it('finds last four digits', () => {
@@ -95,6 +97,23 @@ describe('notification parser (simulated samples only)', () => {
     expect(p(SIM_NOTIFICATIONS.noAmount)).toMatchObject({ kind: 'unparsed' })
     expect(p('刷卡消費滿 NT$3,000 享 5% 回饋')).toMatchObject({ kind: 'not_spending' })
     expect(p('交易驗證碼 889900，本次消費 NT$500，請勿告知他人')).toMatchObject({ kind: 'not_spending' })
+    expect(p('即日起刷卡享 5% 回饋，登錄抽 iPhone')).toMatchObject({ kind: 'not_spending' })
+    expect(p('於全家消費 NT$50 以上即享 5% 回饋')).toMatchObject({ kind: 'not_spending' })
+    expect(p('本月累積消費 NT$5,000，再刷 NT$1,000 即享回饋')).toMatchObject({ kind: 'not_spending' })
+  })
+  it('a purchase that mentions a reward, a code or 登錄 is still a purchase', () => {
+    const spend = (body: string) => {
+      const r = p(body)
+      return r.kind === 'spend' ? [r.spend.amount, r.spend.merchant] : r
+    }
+    expect(spend('您的台新卡在 蝦皮購物 消費 NT$899，本筆享 1% 現金回饋')).toEqual([899, '蝦皮購物'])
+    expect(spend('您的台新卡在 全聯福利中心 消費 NT$1,200，單筆滿 3,000 元，已累積回饋點數')).toEqual([1200, '全聯福利中心'])
+    expect(spend('您的台新卡單筆滿 3,000 元送點數，本次在 全聯 消費 NT$450')).toEqual([450, '全聯'])
+    expect(spend('您的台新卡於 好市多 消費 NT$3,456，享 2.5% 回饋')).toEqual([3456, '好市多'])
+    expect(spend('您的台新卡在 達美樂 消費 NT$500，如非本人交易請勿提供驗證碼')).toEqual([500, '達美樂'])
+    expect(spend('您的台新卡在 OTP咖啡 消費 NT$120')).toEqual([120, 'OTP咖啡'])
+    expect(spend('全家 NT$85 刷卡成功，享 1% 回饋')).toEqual([85, '']) // no shop wording → left for the user to fill
+    expect(spend('您的台新卡在 登錄咖啡 消費 NT$95，抽獎活動進行中')).toEqual([95, '登錄咖啡'])
   })
   it('a "12/31" read in early January belongs to last year', () => {
     const r = parseNotification(capture({ body: '於12/31 23:10在全家消費NT$50', notificationTime: new Date(2027, 0, 1, 0, 5).toISOString() }))
@@ -212,6 +231,56 @@ describe('statement parser (generic adapter, simulated layout)', () => {
     ])
     expect(r.unreadLines).toHaveLength(2)
     expect(r.warnings.join()).toContain('無法辨識')
+  })
+  it('never reads a wrong amount from the end of a line: it goes to "unread" instead', () => {
+    const head = ['帳單結帳日 2026/10/15', '帳單週期 2026/09/16 ~ 2026/10/15']
+    const unread = [
+      '10/02 10/04 AMAZON 1,000 NZD 32', // currency not in the code list before → foreign last
+      '10/02 10/04 淘寶 1,000 RMB 200',
+      '10/02 10/04 AMAZON 1,000 美金 32',
+      '10/02 10/04 AMAZON 1,000 日圓 3,200',
+      '10/02 10/04 AMAZON 1,000 US 32',
+      '10/02 10/04 某商店 1,234.567', // 3 decimals
+      '10/02 10/04 全家 尾號1234', // card digits
+      '10/02 10/04 全家 末四碼 1234',
+      '10/02 10/04 全家 500 1,000', // two amount columns
+      '10/02 10/04 全家 1 234', // thousands split by a space
+      '26/10/05 26/10/06 全家 500', // unsupported date formats are never guessed
+      '20261005 20261006 全家 500',
+      '10-05 10-06 全家 500',
+      '10.05 10.06 全家 500',
+    ]
+    const r = parseStatementLines([...head, ...unread])
+    expect(r.entries).toEqual([])
+    expect(r.unreadLines).toEqual(unread)
+  })
+  it('a foreign amount printed before the TWD amount is fine', () => {
+    const r = parseStatementLines(['帳單結帳日 2026/10/15', '10/02 10/04 AMAZON NZD 32.00 650', '10/03 10/05 東京書店 日幣 3,200 680'])
+    expect(r.entries.map((e) => [e.amount, e.foreign, e.merchant])).toEqual([
+      [650, 'NZD 32.00', 'AMAZON'],
+      [680, '日幣 3,200', '東京書店'],
+    ])
+  })
+  it('summary lines with a date and a number are not entries', () => {
+    const r = parseStatementLines(['帳單結帳日 2026/10/15', '繳款日 2026/11/02 1,000', '消費 筆數 2026/10/15 5', '10/05 10/07 全家 85'])
+    expect(r.entries.map((e) => [e.merchant, e.amount, e.kind])).toEqual([['全家', 85, 'purchase']])
+    expect(r.unreadLines).toEqual([])
+  })
+  it('reads 10月5日 and warns about one-date lines and far-off guessed years', () => {
+    const one = parseStatementLines(['帳單結帳日 2026/10/15', '10月05日 全家 85', '10/06 全聯 120'])
+    expect(one.entries.map((e) => [e.txDate, e.postDate])).toEqual([
+      ['2026-10-05', null],
+      ['2026-10-06', null],
+    ])
+    expect(one.warnings.join()).toContain('只讀到一個日期')
+    const mixed = parseStatementLines(['帳單結帳日 2026/10/15', '10/05 10/07 全家 85', '10/06 國外交易服務費 15'])
+    expect(mixed.warnings.join()).toContain('有 1 筆明細只讀到一個日期')
+    const far = parseStatementLines(['帳單結帳日 2026/10/15', '帳單週期 2026/09/16 ~ 2026/10/15', '12/28 12/30 全家 85', '10/05 10/07 全聯 120'])
+    expect(far.entries[0].txDate).toBe('2025-12-28')
+    expect(far.warnings.join()).toContain('請確認年份')
+    // A date printed WITH a year is never questioned (an installment's original purchase date).
+    const printed = parseStatementLines(['帳單結帳日 2026/10/15', '2026/03/05 2026/10/07 分期 第3/6期 1,000'])
+    expect(printed.warnings.join()).not.toContain('請確認年份')
   })
   it('no text → no entries and a clear warning', () => {
     expect(parseStatementLines([]).warnings).toContain('沒有讀到任何交易明細')
