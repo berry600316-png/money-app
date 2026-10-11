@@ -41,6 +41,7 @@ Money 對每家銀行各有一個專用的解析格式（adapter），由**真�
 - `sourceApps`：捷徑寫入的 `sourceApp`，例如 `/^Richart Life$/`。
 - `templates`：每種寫法一個，`pattern` 用 `^…$` 錨定整段文字（已轉半形；全形逗號、冒號會變成 `,`、`:`），
   用具名群組取欄位：`amount`（消費必填）、`merchant`、`last4`、`date`、`time`。非消費的寫法用 `kind: 'not_spending'` 加 `reason`。
+  整段文字是「標題、副標題、內文」以換行相接；對不上時會再拿「只有內文」比對一次（適合標題會變動的 App）。
 
 範例見 `src/card/fixtures.ts` 的 `SIM_NOTIFICATION_ADAPTER`（模擬寫法，只給測試用，沒有註冊進 App）。
 
@@ -50,6 +51,9 @@ Money 對每家銀行各有一個專用的解析格式（adapter），由**真�
 ### 帳單格式
 
 在 `src/card/statementAdapters.ts` 的 `STATEMENT_ADAPTERS` 加一個物件：
+
+- `id`：例如 `taishin-v1`，會存在帳單紀錄上。
+- `bank`：例如 `台新`。
 
 - `detect(lines)`：用這家銀行帳單**版面上固定的多個字樣**判斷（例如表頭欄位名稱），不要只看銀行名稱。
 - `parse(lines)`：照真實帳單的欄位位置讀出基本資料與逐筆明細，回傳 `ParsedStatement`（型別在 `src/card/statementParser.ts`）。
