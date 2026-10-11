@@ -43,7 +43,7 @@ const BANKS = ['台新', '國泰世華', '國泰', '中國信託', '中信', '�
 
 /** Summary / heading lines: never entries. */
 const NOT_ENTRY =
-  /合計|小計|總計|總額|應繳|應付|本期新增|本期帳單|帳單金額|前期|上期|循環|額度|餘額|帳單結帳日|結帳日|繳款截止|繳款期限|繳款日|截止|到期日|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|利率|紅利點數|帳號|戶名|統一編號|筆\s*數|件\s*數|次\s*數/
+  /合計|小計|總計|總額|應繳|應付|本期新增|本期帳單|帳單金額|前期|上期|循環|額度|餘額|帳單結帳日|結帳日|繳款截止|繳款期限|繳款日|截止|到期日|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|利率|紅利點數|帳號|戶名|統一編號|卡\s*號|筆\s*數|件\s*數|次\s*數/
 
 const KIND_RULES: [RegExp, EntryKind][] = [
   [/繳款|自動扣繳|轉帳繳|已繳|感謝您|ATM繳/, 'payment'],
@@ -64,7 +64,7 @@ const KIND_RULES: [RegExp, EntryKind][] = [
 const DATE_TOKEN = String.raw`\d{4}[/.-]\d{1,2}[/.-]\d{1,2}|\d{3}[/.-]\d{1,2}[/.-]\d{1,2}|\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\/\d{1,2}`
 const AMOUNT_TOKEN = String.raw`\(?-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\)?-?|\(?-?\d+(?:\.\d{1,2})?\)?-?`
 const ENTRY_LINE = new RegExp(
-  String.raw`^(${DATE_TOKEN})(?![\d/.-])\s*(?:(${DATE_TOKEN})(?![\d/.-])\s*)?(.*?)(?<![\d.,:/$¥€£₩₫฿₱₹*])(${AMOUNT_TOKEN})\s*(?:元|TWD|NTD)?$`,
+  String.raw`^(${DATE_TOKEN})(?![\d/.-])\s*(?:(${DATE_TOKEN})(?![\d/.-])\s*)?(.*?)(?<![\d.,:/$¥€£₩₫฿₱₹*A-Za-z])(${AMOUNT_TOKEN})\s*(?:元|TWD|NTD)?$`,
   'i',
 )
 /** Dates printed without a year ("10/05", "10月5日"): the year is our guess. */
@@ -74,6 +74,8 @@ const DATE_ISH =
   /(?<!\d)\d{1,2}\s*[/.-]\s*\d{1,2}(?!\d)|\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?\s*\d{1,2}(?!\d)|(?<!\d)(?:19|20)\d{6}(?!\d)|(?<!\d)\d{1,2}\s*月/i
 /** A guessed year further than this before the cycle start gets a warning. */
 const FAR_FROM_CYCLE_DAYS = 62
+/** Any line ending in a number (an entry whose date we could not read, or a wrapped line). */
+const TAIL_NUMBER = /(?<![\d.,:/*A-Za-z])\(?-?\d[\d,]*(?:\.\d+)?\)?-?\s*(?:元|TWD|NTD)?$/i
 
 /** ISO 4217 codes (common English words such as ALL/TOP/CUP left out) plus US and RMB. */
 const CURRENCY_CODES = new Set(
@@ -90,7 +92,7 @@ const TWD_WORD = /^(?:NT\$|NTD|TWD|新?[臺台]幣)$/i
 const CJK_CURRENCY = /^(?:外幣|美金|.{0,4}幣|[美日港澳紐加星新坡韓歐]元|日圓|韓圜|英鎊|泰銖|越南盾|.{0,3}(?:披索|比索|法郎|盧比|里拉|令吉|克朗|盧布|蘭特|第納爾|里亞爾|茲羅提))$/
 const CURRENCY_SYMBOL = /[$¥€£₩₫฿₱₹]/
 /** Card digits label at the end of the description: the "amount" after it is the card number. */
-const CARD_LABEL_END = /(?:[末後尾]\s*[四4]\s*碼|尾\s*[數号號]|卡\s*號)\s*[:：-]?$/
+const CARD_LABEL_END = /(?:卡\s*末|[末後尾]\s*[四4]\s*碼|尾\s*[數号號]|卡\s*號)\s*[:：-]?$/
 
 function isNumberToken(t: string): boolean {
   const u = t.replace(/^(?:NT\$|NTD|TWD)/i, '').replace(/(?:元|TWD|NTD)$/i, '')
@@ -109,8 +111,8 @@ function isCurrencyToken(t: string): boolean {
 /** "US$32.00", "¥3,200", "USD32.00": a foreign amount in one token. */
 function isGluedForeign(t: string): boolean {
   if (/^NT\$/i.test(t)) return false
-  const m = t.match(/^([A-Za-z]{0,3}\$|[¥€£₩₫฿₱₹]|[A-Z]{3})-?[\d,]+(?:\.\d+)?$/)
-  return !!m && (CURRENCY_SYMBOL.test(m[1]) || CURRENCY_CODES.has(m[1]))
+  const m = t.match(/^(\D+?)[:：]?-?[\d,]+(?:\.\d+)?$/)
+  return !!m && (CURRENCY_SYMBOL.test(m[1]) || isCurrencyToken(m[1])) // "日圓3,200" too
 }
 
 function signed(token: string): number | null {
@@ -172,7 +174,9 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
   }
   if (!periodEnd && closingDate) periodEnd = closingDate
 
-  const closingYear = closingDate ? Number(closingDate.slice(0, 4)) : yearHint
+  // Month/day entries take their year from the end of the cycle (closing date, else the printed cycle end).
+  const cycleEndForYear = closingDate ?? periodEnd
+  const closingYear = cycleEndForYear ? Number(cycleEndForYear.slice(0, 4)) : yearHint
   const cycleStart = periodStart ?? closingDate
   const cycleEnd = closingDate ?? periodEnd
   const entries: DraftEntry[] = []
@@ -180,14 +184,19 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
   const singleDate: string[] = []
   const outOfCycle: { raw: string; date: string }[] = []
   for (const original of lines) {
-    const line = toHalfWidth(original).trim()
+    // Minus signs PDFs use instead of "-" (−, –, —, ﹣).
+    const line = toHalfWidth(original).replace(/[−–—﹣]/g, '-').trim()
     if (!line) continue
-    if (NOT_ENTRY.test(line)) continue
     const m = line.match(ENTRY_LINE)
     const unread = () => unreadLines.push(original)
+    if (NOT_ENTRY.test(line)) {
+      // A heading word in an entry-shaped line ("10/05 10/05 循環信用利息 235") is shown, not dropped.
+      if (m) unread()
+      continue
+    }
     if (!m) {
       // Not an entry shape. Anything that could still be one is shown as unread, never dropped silently.
-      if (findDates(line, closingYear).length || DATE_ISH.test(line) || /\d{1,3}(?:,\d{3})+/.test(line)) unread()
+      if (findDates(line, closingYear).length || DATE_ISH.test(line) || TAIL_NUMBER.test(line)) unread()
       continue
     }
     const [, dateA, dateB, middle, amountToken] = m
@@ -209,11 +218,13 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
       foreign = last
       tokens = tokens.slice(0, -1)
     }
+    while (tokens.length && TWD_WORD.test(tokens[tokens.length - 1])) tokens = tokens.slice(0, -1) // "全家 NT$ 85"
     const description = tokens.join(' ')
     const cents = amountToken.match(/\.(\d{1,2})/)
     if (
       (cents && Number(cents[1]) !== 0) || // cents in a TWD column
       tokens.some(isNumberToken) || // another amount column, or "1 234"
+      tokens.some((t) => /^[-+]$/.test(t)) || // a sign printed apart from the amount ("- 365")
       tokens.some((t) => isCurrencyToken(t) || isGluedForeign(t) || (CURRENCY_SYMBOL.test(t) && !/^NT\$/i.test(t))) || // foreign amount elsewhere
       CARD_LABEL_END.test(description) // "尾號 1234"
     ) {
@@ -227,7 +238,7 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
     }
     // Month/day dates may belong to last year in a January statement; dates printed with a year stay as printed.
     const fix = (token: string, d: string) =>
-      NO_YEAR.test(token) && closingDate && d > closingDate ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d
+      NO_YEAR.test(token) && cycleEndForYear && d > cycleEndForYear ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d
     const txDate = fix(dateA, parsedA)
     const postDate = dateB && parsedB ? fix(dateB, parsedB) : null
     if (!postDate) singleDate.push(original)

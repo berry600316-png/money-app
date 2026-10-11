@@ -96,10 +96,14 @@ describe('notification parser (simulated samples only)', () => {
     expect(p(SIM_NOTIFICATIONS.foreign)).toMatchObject({ kind: 'unparsed' })
     expect(p(SIM_NOTIFICATIONS.noAmount)).toMatchObject({ kind: 'unparsed' })
     expect(p('刷卡消費滿 NT$3,000 享 5% 回饋')).toMatchObject({ kind: 'not_spending' })
-    expect(p('交易驗證碼 889900，本次消費 NT$500，請勿告知他人')).toMatchObject({ kind: 'not_spending' })
+    const notAuto = (body: string) => {
+      const r = p(body)
+      return r.kind !== 'spend' || r.doubt !== null
+    }
+    expect(notAuto('交易驗證碼 889900，本次消費 NT$500，請勿告知他人')).toBe(true)
     expect(p('即日起刷卡享 5% 回饋，登錄抽 iPhone')).toMatchObject({ kind: 'not_spending' })
-    expect(p('於全家消費 NT$50 以上即享 5% 回饋')).toMatchObject({ kind: 'not_spending' })
-    expect(p('本月累積消費 NT$5,000，再刷 NT$1,000 即享回饋')).toMatchObject({ kind: 'not_spending' })
+    expect(notAuto('於全家消費 NT$50 以上即享 5% 回饋')).toBe(true)
+    expect(notAuto('本月累積消費 NT$5,000，再刷 NT$1,000 即享回饋')).toBe(true)
   })
   it('offers that state an amount are never silently imported (adversarial set, round 3)', () => {
     const offers = [
@@ -123,9 +127,12 @@ describe('notification parser (simulated samples only)', () => {
     expect(p('3D 驗證 OTP：556677')).toMatchObject({ kind: 'not_spending' })
     expect(p('動態密碼是 889900')).toMatchObject({ kind: 'not_spending' })
   })
-  it('a full purchase notice with reward wording is trusted; a bare one is left to the user', () => {
+  it('only a clean, full purchase notice is imported by default (D-96)', () => {
     const full = p('您的台新卡末四碼1234於10/11 14:05在全家便利商店消費新臺幣85元，本筆享 1% 回饋')
-    expect(full.kind === 'spend' && full.doubt).toBeNull()
+    expect(full.kind === 'spend' && full.doubt).toContain('請確認')
+    const noShape = p('您的台新卡消費 NT$85')
+    expect(noShape.kind === 'spend' && noShape.doubt).toContain('缺少')
+    expect(p('台新卡消費通知：您於 Uber Eats 外送 消費 NT$320，末四碼1234').kind === 'spend').toBe(true)
     const bare = p('您的台新卡在 蝦皮購物 消費 NT$899，本筆享 1% 現金回饋')
     expect(bare.kind === 'spend' && bare.doubt).toContain('請確認')
     expect(p(SIM_NOTIFICATIONS.convenience)).toMatchObject({ kind: 'spend', doubt: null })
@@ -143,6 +150,39 @@ describe('notification parser (simulated samples only)', () => {
     expect(spend('您的台新卡在 OTP咖啡 消費 NT$120')).toEqual([120, 'OTP咖啡'])
     expect(spend('全家 NT$85 刷卡成功，享 1% 回饋')).toEqual([85, '']) // no shop wording → left for the user to fill
     expect(spend('您的台新卡在 登錄咖啡 消費 NT$95，抽獎活動進行中')).toEqual([95, '登錄咖啡'])
+  })
+  it('adversarial set, round 4: real purchases are never "not spending"; offers and codes are never imported by default or valued at a threshold', () => {
+    const purchases = [
+      '您的台新卡末四碼1234於10/11 14:05在全家消費 NT$85 享 NT$5 回饋',
+      '您於全家消費NT$85 可享5%回饋',
+      '您的台新卡在全家消費NT$85 即享優惠',
+      '您的台新卡在全家消費NT$85，若非本人交易請致電客服協助取消交易',
+      '您的台新卡在拒絕平庸咖啡消費NT$150',
+    ]
+    for (const body of purchases) expect(p(body).kind, body).not.toBe('not_spending')
+    const offersAndCodes: [string, number[]][] = [
+      ['您的一次性密碼為 482913，用於網路交易 NT$1,280', [1280]],
+      ['您的交易認證碼為 482913，網路刷卡 NT$1,280', [1280]],
+      ['簡訊密碼 482913，刷卡金額NT$1,280，請勿外流', [1280]],
+      ['【台新】消費NT$3000，送電影票一張', []],
+      ['台新卡消費NT$3,000(含)以上送星巴克咖啡', []],
+      ['台新卡消費NT$3,000（含）以上送星巴克咖啡', []],
+      ['週末指定商店單筆消費NT$1,000折NT$100', []],
+      ['台新卡刷卡消費 NT$1,000 折 NT$100', []],
+      ['恭喜您獲得刷卡金 NT$100', []],
+      ['刷卡金NT$100已入帳', []],
+      ['台新卡友專屬！消費NT$2,000，即可兌換好禮', []],
+      ['刷卡消費每滿 NT$1,000 加碼 NT$50', []],
+      ['刷卡消費 NT$2,000 再享 3 期 0 利率', []],
+      ['您的台新卡將於10/15扣款 NT$12,345', []],
+      ['本期帳單金額 NT$12,345，將於10/15自動扣款', []],
+    ]
+    for (const [body, allowed] of offersAndCodes) {
+      const r = p(body)
+      if (r.kind !== 'spend') continue
+      expect(r.doubt, body).not.toBeNull()
+      expect(allowed, body).toContain(r.spend.amount)
+    }
   })
   it('a "12/31" read in early January belongs to last year', () => {
     const r = parseNotification(capture({ body: '於12/31 23:10在全家消費NT$50', notificationTime: new Date(2027, 0, 1, 0, 5).toISOString() }))
@@ -309,9 +349,38 @@ describe('statement parser (generic adapter, simulated layout)', () => {
       '10 / 05 10 / 07 全家 85',
       '全家 2026/10/05 85',
     ]
+    // '繳費截止日 …' is a heading (dropped); '2026/10/15 消費次數 5' has an entry's shape, so it is shown.
     const r = parseStatementLines([...head, ...unread, '繳費截止日 2026/11/02 1,000', '2026/10/15 消費次數 5'])
     expect(r.entries).toEqual([])
+    expect(r.unreadLines).toEqual([...unread, '2026/10/15 消費次數 5'])
+  })
+  it('adversarial set, round 4: signs, card digits, heading words and undated lines', () => {
+    const head = ['帳單結帳日 2026/10/15']
+    const unread = [
+      '10/09 10/09 UNIQLO - 365',
+      '10/02 10/04 全聯 XXXX1234',
+      '10/02 10/04 全聯 卡末1234',
+      '10/05 10/05 循環信用利息 235',
+      '10/05 10/05 紅利點數折抵 -100',
+      '全家便利商店 85',
+      'UBER *EATS 320',
+      '10/02 10/04 AMAZONUSD32',
+    ]
+    const r = parseStatementLines([...head, ...unread, '卡號 ****-****-****-1234'])
+    expect(r.entries).toEqual([])
     expect(r.unreadLines).toEqual(unread)
+    // Unicode minus signs are read as minus.
+    const minus = parseStatementLines([...head, '10/09 10/09 UNIQLO −365', '10/09 10/09 UNIQLO –365'])
+    expect(minus.entries.map((e) => e.amount)).toEqual([-365, -365])
+    // A currency name glued to its amount is the foreign column; "NT$" before the amount is not part of the shop.
+    const glued = parseStatementLines([...head, '10/02 10/04 AMAZON 日圓3,200 1,015', '10/02 10/04 全家 NT$ 85'])
+    expect(glued.entries.map((e) => [e.merchant, e.amount, e.foreign])).toEqual([
+      ['AMAZON', 1015, '日圓3,200'],
+      ['全家', 85, null],
+    ])
+    // No closing date: the year comes from the printed cycle end, so a January cycle reads 01/05 as this year.
+    const jan = parseStatementLines(['帳單週期 2025/12/16 ~ 2026/01/15', '12/28 12/30 全家 85', '01/05 01/06 全聯 120'])
+    expect(jan.entries.map((e) => e.txDate)).toEqual(['2025-12-28', '2026-01-05'])
     // No closing date, only a cycle: a month/day after the cycle is flagged, not trusted.
     const noClose = parseStatementLines(['帳單週期 2026/09/16 ~ 2026/10/15', '12/28 12/30 全家 85'])
     expect(noClose.warnings.join()).toContain('週期之後')
