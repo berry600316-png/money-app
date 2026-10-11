@@ -1,17 +1,18 @@
 import { PAYSLIP_SOURCE } from '../db/defaults'
 import type { Transaction } from '../db/types'
-import { dayLabel } from '../lib/dates'
+import { dayLabel, timeLabel } from '../lib/dates'
 import { fmt } from '../lib/money'
 import { groupByDay } from '../lib/stats'
 import { Icon } from './Icon'
 import { useIsReconciled } from './reconContext'
 import { useRefData } from './refData'
 
-export function TxRow({ tx, onOpen }: { tx: Transaction; onOpen: (id: string) => void }) {
+/** `showTime`: the day panel (D-115) lists one day, so the time leads the second line. */
+export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpen: (id: string) => void; showTime?: boolean }) {
   const { category, payment } = useRefData()
   const reconciled = useIsReconciled(tx)
   const c = category(tx.categoryId)
-  const sub = [c.name, payment(tx.paymentMethodId).name, tx.note].filter(Boolean).join(' · ')
+  const sub = [showTime ? timeLabel(new Date(tx.occurredAt)) : '', c.name, payment(tx.paymentMethodId).name, tx.note].filter(Boolean).join(' · ')
   const income = tx.type === 'income'
   return (
     <button type="button" className="row" onClick={() => onOpen(tx.id)}>

@@ -25,7 +25,7 @@ function rangeLabel(from: string, to: string): string {
   const thisYear = new Date().getFullYear()
   const withYear = a.getFullYear() !== b.getFullYear() || a.getFullYear() !== thisYear
   const one = (d: Date) => `${withYear ? d.getFullYear() + '/' : ''}${d.getMonth() + 1}/${d.getDate()}`
-  return `${one(a)} – ${one(b)}`
+  return from === to ? one(a) : `${one(a)} – ${one(b)}`
 }
 
 export function ListScreen({

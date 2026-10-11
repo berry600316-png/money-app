@@ -1,19 +1,29 @@
-import { useMemo, type RefObject } from 'react'
-import { useMonthTx, useRecentTx } from '../db/hooks'
-import { daysInMonth, sameLocalDay, ymOf } from '../lib/dates'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useMonthTx } from '../db/hooks'
+import { dayLabel, fromYmd, sameLocalDay, sameYm, toYmd, ymOf, type YearMonth } from '../lib/dates'
 import { fmt } from '../lib/money'
-import { dailyExpense, summarize } from '../lib/stats'
+import { sortDesc, summarize } from '../lib/stats'
+import { useToday } from '../lib/useToday'
 import { Icon } from '../ui/Icon'
-import { TxGroups } from '../ui/TxRows'
+import { TxRow } from '../ui/TxRows'
 import { BackupBanner } from './BackupBanner'
+import { HomeCalendar } from './HomeCalendar'
 import { HomePlanCard } from './plan/HomePlanCard'
+
+const WEEK = '日一二三四五六'
+
+/** The day a month opens on: today in the current month, else that month's last day. */
+function defaultDay(ym: YearMonth, today: string): string {
+  const t = fromYmd(today)
+  return sameYm(ym, ymOf(t)) ? today : toYmd(new Date(ym.y, ym.m + 1, 0))
+}
 
 export function HomeScreen({
   active,
   scrollRef,
   onOpenTx,
-  onAdd,
-  onSeeAll,
+  onAddOn,
+  onSeeDay,
   onSettings,
   onBackup,
   onPlan,
@@ -24,29 +34,50 @@ export function HomeScreen({
   active: boolean
   scrollRef: RefObject<HTMLElement | null>
   onOpenTx: (id: string) => void
-  onAdd: () => void
-  onSeeAll: () => void
+  /** D-115: a new entry on this day ("YYYY-MM-DD"). */
+  onAddOn: (ymd: string) => void
+  /** D-115: the list, filtered to this day. */
+  onSeeDay: (ymd: string) => void
   onSettings: () => void
 }) {
+  const today = useToday()
   const now = new Date()
   const ym = ymOf(now)
   const monthTx = useMonthTx(ym)
-  const recent = useRecentTx(8)
 
+  // The overview always describes the current month (D-115: the calendar may show another one).
   const view = useMemo(() => {
     const list = monthTx ?? []
     const s = summarize(list)
-    const today = summarize(list.filter((t) => sameLocalDay(new Date(t.occurredAt), now))).expense
-    const per = dailyExpense(list, ym)
-    const td = now.getDate()
-    // Scale bars to the 85th percentile so one big purchase doesn't flatten the month.
-    const past = per.slice(0, td).sort((a, b) => a - b)
-    const cap = Math.max(200, (past[Math.floor((past.length - 1) * 0.85)] ?? 0) * 1.25)
-    return { ...s, today, per, td, cap, avg: td ? Math.round(s.expense / td) : 0 }
+    const todayOut = summarize(list.filter((t) => sameLocalDay(new Date(t.occurredAt), now))).expense
+    return { ...s, today: todayOut }
     // `now` changes every render; only the calendar day it represents matters.
-  }, [monthTx, ym.y, ym.m, now.getDate()]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthTx, today]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const dim = daysInMonth(ym)
+  const [calYm, setCalYm] = useState<YearMonth>(ym)
+  const [selected, setSelected] = useState(today)
+  const calTx = useMonthTx(calYm)
+
+  // Past midnight: a calendar left on "today" follows to the new day (and month).
+  const shownToday = useRef(today)
+  useEffect(() => {
+    const prev = shownToday.current
+    shownToday.current = today
+    if (prev === today) return
+    setSelected((s) => (s === prev ? today : s))
+    setCalYm((c) => (sameYm(c, ymOf(fromYmd(prev))) ? ymOf(fromYmd(today)) : c))
+  }, [today])
+
+  const changeMonth = (next: YearMonth) => {
+    setCalYm(next)
+    setSelected(defaultDay(next, today))
+  }
+
+  const dayList = useMemo(() => sortDesc((calTx ?? []).filter((t) => toYmd(new Date(t.occurredAt)) === selected)), [calTx, selected])
+  const dayTotals = summarize(dayList)
+  const selDate = fromYmd(selected)
+  const isToday = selected === today
+  const title = dayLabel(selDate, { short: true })
 
   return (
     <section ref={scrollRef} className={'screen' + (active ? ' active' : '')} aria-label="首頁" aria-hidden={!active} inert={!active}>
@@ -84,51 +115,48 @@ export function HomeScreen({
 
       <HomePlanCard onOpen={onPlan} />
 
-      <section className="daily">
-        <div className="bars" role="img" aria-label={`本月每日支出，日均 ${fmt(view.avg)} 元`}>
-          {view.per.map((v, i) => {
-            if (i + 1 > view.td) return <i key={i} className="bar future" style={{ height: 2 }} />
-            const h = v === 0 ? 2 : Math.max(4, Math.min(1, v / view.cap) * 100) + '%'
-            return (
-              <i
-                key={i}
-                className={'bar' + (i + 1 === view.td ? ' today' : '') + (v === 0 ? ' zero' : '')}
-                style={{ height: h, animationDelay: `${i * 12}ms` }}
-              />
-            )
-          })}
-        </div>
-        <div className="daily-foot">
-          <span>
-            {ym.m + 1}/1
-          </span>
-          <span>
-            日均 <b>NT$ {fmt(view.avg)}</b>
-          </span>
-          <span>
-            {ym.m + 1}/{dim}
-          </span>
-        </div>
-      </section>
+      <HomeCalendar ym={calYm} onYm={changeMonth} list={calTx ?? []} selected={selected} onSelect={setSelected} />
 
-      <div className="sec-head">
-        <h2>最近紀錄</h2>
-        {recent && recent.length > 0 && (
-          <button type="button" className="link" onClick={onSeeAll}>
-            全部明細
-          </button>
-        )}
-      </div>
-      {recent && recent.length > 0 && <TxGroups list={recent} onOpen={onOpenTx} />}
-      {recent && recent.length === 0 && (
-        <div className="empty">
-          <strong>還沒有任何紀錄</strong>點右下的 ＋ 記下第一筆。
-          <br />
-          <button type="button" className="btn-soft" onClick={onAdd}>
-            記一筆
+      <section className="dayp" aria-label={`${title}的紀錄`}>
+        <div className="dayp-head">
+          <div className="dayp-title">
+            <h2>
+              {title}
+              <span>週{WEEK[selDate.getDay()]}</span>
+            </h2>
+            <div className="dayp-tot" aria-live="polite">
+              <span>
+                支出 <b className="num">{fmt(dayTotals.expense)}</b>
+              </span>
+              <span>
+                收入 <b className={'num' + (dayTotals.income ? ' pos' : '')}>{fmt(dayTotals.income)}</b>
+              </span>
+              <span>{dayList.length} 筆</span>
+            </div>
+          </div>
+          <button type="button" className="add-day" onClick={() => onAddOn(selected)}>
+            <Icon name="plus" />
+            {isToday ? '記一筆' : '這天'}
           </button>
         </div>
-      )}
+        {dayList.length > 0 ? (
+          <div className="card day-card" key={selected}>
+            {dayList.map((t) => (
+              <TxRow key={t.id} tx={t} onOpen={onOpenTx} showTime />
+            ))}
+          </div>
+        ) : (
+          <div className="card day-card" key={selected}>
+            <div className="empty-day">
+              <strong>{isToday ? '今天還沒有紀錄' : '這天沒有紀錄'}</strong>
+              {isToday ? '點「記一筆」或右下的＋記下今天的收支。' : `按「＋ 這天」補記，日期會設成 ${selDate.getMonth() + 1}月${selDate.getDate()}日。`}
+            </div>
+          </div>
+        )}
+        <button type="button" className="more-link" onClick={() => onSeeDay(selected)}>
+          在明細看這天 ›
+        </button>
+      </section>
     </section>
   )
 }

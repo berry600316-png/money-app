@@ -756,3 +756,50 @@ button.lrow:active { background: var(--row-press); }
 .app-entering .screen.active > :nth-child(3) { animation-delay: 0.06s; }
 .app-entering .screen.active > :nth-child(n + 4) { animation-delay: 0.09s; }
 
+
+/* ---------- home calendar (D-115, option B) ---------- */
+.hcal { margin-top: 18px; background: var(--card); border-radius: 22px; padding: 12px 12px 10px; box-shadow: 0 1px 2px rgba(32, 41, 35, 0.04); }
+.hcal-head { display: flex; align-items: center; justify-content: space-between; padding: 0 2px 6px; }
+.hcal-sw { display: flex; align-items: center; gap: 2px; }
+.hcal-sw h2 { margin: 0; min-width: 76px; text-align: center; font-size: 1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hcal-sw button { width: 34px; height: 34px; border: 0; border-radius: 17px; background: none; color: var(--brand); display: grid; place-items: center; }
+.hcal-sw button:disabled { color: var(--muted-ink); }
+.hcal-sw button svg { width: 18px; height: 18px; }
+.hcal-avg { font-size: 0.75rem; color: var(--ink-2); }
+.hcal-avg b { font-size: 0.9375rem; font-weight: 500; color: var(--ink); }
+.hcal-wk { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center; font-size: 0.6875rem; color: var(--ink-2); padding-bottom: 4px; }
+.hcal-wk span:first-child, .hcal-wk span:last-child { color: var(--muted-ink); }
+.hcal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.cday { position: relative; display: grid; place-items: center; min-height: 42px; border: 0; background: none; border-radius: 12px; padding: 0; color: var(--ink); }
+.cday.pad { visibility: hidden; }
+.cday .tint { position: absolute; inset: 3px 4px; border-radius: 10px; background: var(--brand); transition: opacity 0.2s var(--ease); }
+.cday .d { position: relative; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 14px; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.cday.dark .d { color: #fff; }
+.cday.today .d { box-shadow: 0 0 0 1.5px var(--brand) inset; font-weight: 600; }
+.cday.today.dark .d { box-shadow: 0 0 0 1.5px #fff inset; }
+.cday.sel::after { content: ''; position: absolute; inset: 1px 2px; border-radius: 12px; box-shadow: 0 0 0 2px var(--brand) inset; pointer-events: none; }
+.cday.sel .d { font-weight: 700; }
+.cday.future .d { color: var(--muted-ink); }
+.cday:disabled { cursor: default; }
+.cday:active:not(:disabled) { transform: scale(0.94); transition: transform 0.12s; }
+.cday .inc { position: absolute; z-index: 1; top: 5px; right: 6px; width: 5px; height: 5px; border-radius: 3px; background: var(--brand); box-shadow: 0 0 0 1.5px var(--card); }
+.cday.dark .inc { background: #fff; box-shadow: none; }
+.hcal-legend { display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 6px 4px 0; font-size: 0.6875rem; color: var(--ink-2); }
+.hcal-legend i { display: block; width: 14px; height: 10px; border-radius: 3px; background: var(--brand); }
+
+.dayp { margin-top: 20px; }
+.dayp-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; padding: 0 4px 10px; }
+.dayp-title { min-width: 0; }
+.dayp-title h2 { margin: 0; font-size: 1.0625rem; font-weight: 600; }
+.dayp-title h2 span { margin-left: 6px; font-size: 0.875rem; font-weight: 400; color: var(--ink-2); }
+.dayp-tot { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; font-size: 0.75rem; color: var(--ink-2); }
+.dayp-tot b { font-size: 0.9375rem; font-weight: 500; color: var(--ink); }
+.dayp-tot b.pos { color: var(--brand); }
+.add-day { flex: none; display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 14px; background: var(--brand); color: #fff; font-size: 0.875rem; font-weight: 600; }
+.add-day:active { background: var(--brand-press); }
+.add-day svg { width: 16px; height: 16px; stroke-width: 2.2; }
+.day-card { animation: day-in 0.22s cubic-bezier(0.22, 0.8, 0.24, 1); }
+@keyframes day-in { from { opacity: 0.4; transform: translateY(4px); } }
+.empty-day { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px 16px; text-align: center; color: var(--ink-2); font-size: 0.875rem; line-height: 1.6; }
+.empty-day strong { color: var(--ink); font-size: 0.9375rem; }
+.more-link { display: block; width: 100%; min-height: 44px; margin-top: 4px; border: 0; background: none; color: var(--brand); font-size: 0.875rem; font-weight: 500; }

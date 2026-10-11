@@ -43,6 +43,8 @@ interface Draft {
 const fieldsOf = (d: Draft) => JSON.stringify([d.type, d.amount, d.categoryId, d.paymentMethodId, d.date, d.time, d.merchant.trim(), d.note.trim()])
 
 export interface EntryPrefill {
+  /** D-115: a new entry on this day; the time defaults to the current clock time. */
+  date?: string
   amount?: number
   merchant?: string
   categoryId?: string
@@ -159,7 +161,8 @@ export function EntrySheet({
         amount: prefill?.amount ? String(prefill.amount) : '',
         categoryId: activeCategory('expense', prefill?.categoryId ?? DEFAULT_CATEGORY_ID.expense),
         paymentMethodId: activePayment(prefill?.paymentMethodId ?? lastPay),
-        date: toYmd(now),
+        // A day chosen on the calendar (never later than today), at the current clock time (D-115).
+        date: prefill?.date && prefill.date <= toYmd(now) ? prefill.date : toYmd(now),
         time: timeLabel(now),
         merchant: prefill?.merchant ?? '',
         note: '',

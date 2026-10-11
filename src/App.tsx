@@ -107,6 +107,8 @@ function Shell() {
   const [entry, setEntry] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
   // D-109: the entry sheet opened from a planned expense (add + link in one go).
   const [planEntry, setPlanEntry] = useState<{ itemId: string; name: string; prefill: EntryPrefill } | null>(null)
+  // D-115: a new entry started from a calendar day.
+  const [entryDay, setEntryDay] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [manage, setManage] = useState<ManageKind | null>(null)
   const [manageShown, setManageShown] = useState<ManageKind>('category')
@@ -190,6 +192,12 @@ function Shell() {
   )
   const addTx = useCallback(() => {
     setPlanEntry(null)
+    setEntryDay(null)
+    setEntry({ open: true, id: null })
+  }, [])
+  const addTxOn = useCallback((ymd: string) => {
+    setPlanEntry(null)
+    setEntryDay(ymd)
     setEntry({ open: true, id: null })
   }, [])
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), [])
@@ -246,11 +254,12 @@ function Shell() {
             active={tab === 'home'}
             scrollRef={homeRef}
             onOpenTx={openTx}
-            onAdd={addTx}
-            onSeeAll={() => {
-              setMonth(ymOf(new Date()))
-              setFilters(emptyFilters())
+            onAddOn={addTxOn}
+            onSeeDay={(ymd) => {
+              // D-115: the list, filtered to that one day.
+              setFilters(emptyFilters({ dateMode: 'range', from: ymd, to: ymd }))
               setTab('list')
+              listRef.current?.scrollTo({ top: 0 })
             }}
             onSettings={() => setSettingsOpen(true)}
             onBackup={() => {
@@ -357,6 +366,7 @@ function Shell() {
                   backLabel={back}
                   onBack={pop}
                   onRecord={(v) => {
+                    setEntryDay(null)
                     setPlanEntry({
                       itemId: v.item.id,
                       name: v.item.name,
@@ -389,7 +399,7 @@ function Shell() {
         <EntrySheet
           open={entry.open}
           editId={entry.id}
-          prefill={planEntry && !entry.id ? planEntry.prefill : null}
+          prefill={entry.id ? null : planEntry ? planEntry.prefill : entryDay ? { date: entryDay } : null}
           banner={planEntry && !entry.id ? `儲存後會自動對應「${planEntry.name}」，不會多記一筆。` : null}
           saveNew={planEntry && !entry.id ? (input: TxInput) => recordPlannedExpense(planEntry.itemId, input).then(() => undefined) : null}
           onClose={closeEntry}
