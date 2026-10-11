@@ -103,7 +103,7 @@ describe('parseBackup rejects bad files before anything is written', () => {
 
   it('rejects non-JSON and foreign files', () => {
     expect(() => parseBackup('not json')).toThrow(BackupError)
-    expect(bad({ hello: 1 })).toThrow('不是 Money 的備份檔')
+    expect(bad({ hello: 1 })).toThrow('不是 Cai Jie 的備份檔')
     expect(bad({ ...good(), format: 2 })).toThrow('版本')
     expect(bad({ ...good(), schemaVersion: 99 })).toThrow('版本')
   })

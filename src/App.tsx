@@ -33,6 +33,7 @@ import { RefDataProvider } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 import { DiscardHost, DiscardProvider, useCloseGuard, useDiscardAsking } from './ui/discard'
 import { anyLayerOpen } from './ui/layers'
+import { markAppReady } from './ui/Launch'
 
 type Tab = 'home' | 'list' | 'stats'
 type Route =
@@ -122,6 +123,8 @@ function Shell() {
   const asking = useDiscardAsking()
 
   useKeyboardInset(deviceRef)
+  // The home screen has its data: the launch mark may hand over (D-98).
+  useEffect(() => markAppReady(), [])
 
   // Re-render every screen when the date changes; if the user was looking at the
   // month that just ended, move to the new current month.
@@ -151,7 +154,8 @@ function Shell() {
       const i = rs.map((r) => r.closing).lastIndexOf(false)
       if (i < 0) return rs
       const key = rs[i].key
-      window.setTimeout(() => setRoutes((now) => now.filter((r) => r.key !== key)), 460)
+      // Slightly longer than the 0.32 s slide-out (D-113).
+      window.setTimeout(() => setRoutes((now) => now.filter((r) => r.key !== key)), 340)
       return rs.map((r, j) => (j === i ? { ...r, closing: true } : r))
     })
   }, [])

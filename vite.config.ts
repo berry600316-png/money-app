@@ -44,8 +44,8 @@ export default defineConfig(({ command, isPreview }) => ({
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
         id: PAGES_BASE,
-        name: 'Money',
-        short_name: 'Money',
+        name: 'Cai Jie',
+        short_name: 'Cai Jie',
         description: '只存在 iPhone 本機的個人記帳',
         lang: 'zh-Hant-TW',
         dir: 'ltr',

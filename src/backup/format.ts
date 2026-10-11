@@ -102,11 +102,11 @@ function stamp(d: Date) {
 }
 
 export function backupFileName(now = new Date()): string {
-  return `money-backup-${stamp(now)}.json`
+  return `caijie-backup-${stamp(now)}.json`
 }
 
 export function csvFileName(now = new Date()): string {
-  return `money-transactions-${stamp(now)}.csv`
+  return `caijie-transactions-${stamp(now)}.csv`
 }
 
 /* ---------------- validation ---------------- */
@@ -143,9 +143,9 @@ export function parseBackup(text: string): BackupFile {
   try {
     raw = JSON.parse(text.replace(/^﻿/, ''))
   } catch {
-    fail('這不是 Money 的備份檔（無法讀取 JSON）')
+    fail('這不是 Cai Jie 的備份檔（無法讀取 JSON）')
   }
-  if (!isObj(raw) || raw.app !== BACKUP_APP) fail('這不是 Money 的備份檔')
+  if (!isObj(raw) || raw.app !== BACKUP_APP) fail('這不是 Cai Jie 的備份檔')
   if (raw.format !== BACKUP_FORMAT) fail('這個備份檔的版本比 App 新，請先更新 App')
   if (typeof raw.schemaVersion !== 'number' || raw.schemaVersion > SCHEMA_VERSION) fail('這個備份檔的版本比 App 新，請先更新 App')
   if (!isIso(raw.exportedAt)) fail('備份檔缺少匯出時間')

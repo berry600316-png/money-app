@@ -97,7 +97,7 @@ export function SettingsPage({
       </div>
 
       <p className="colophon">
-        Money {__APP_VERSION__}
+        Cai Jie {__APP_VERSION__}
         <br />
         {count !== undefined && `共 ${count.toLocaleString('en-US')} 筆紀錄`}
       </p>
