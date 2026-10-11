@@ -1,6 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
-import type { Category, PaymentMethod, Payslip, SalaryItem, Transaction } from './types'
+import type { Category, PaymentMethod, Payslip, PlanTemplate, SalaryItem, Transaction } from './types'
+import { linkCandidates, summarizePlan, type PlanSummary } from '../lib/plan'
 import { addMonths, fromYmd, monthRangeIso, type YearMonth } from '../lib/dates'
 
 /* Live queries re-run automatically after any write, so every screen updates at once. */
@@ -74,3 +75,73 @@ export function useSetting<T>(key: string, fallback: T): T {
   const row = useLiveQuery(() => db.settings.get(key), [key])
   return row === undefined ? fallback : (row.value as T)
 }
+
+/* ---------------- monthly planning (D-105..D-113) ---------------- */
+
+export interface PlanState {
+  started: boolean
+  /** From the latest earlier plan, to say what starting a month will copy (D-106). */
+  previousIncome: number | null
+  previousSaving: number
+  activeTemplates: number
+  summary: PlanSummary
+  /** itemId → "可能已記：…" when one clear candidate exists (D-109). */
+  hints: Map<string, string>
+  /** Transactions validly linked to an item of this month. */
+  taken: Set<string>
+}
+
+export function usePlanSummary(month: string): PlanState | undefined {
+  return useLiveQuery(async () => {
+    const [y, m] = month.split('-').map(Number)
+    const [start, end] = monthRangeIso({ y, m: m - 1 })
+    const [plan, items, templates, prev, monthTx] = await Promise.all([
+      db.monthlyPlans.get(month),
+      db.plannedExpenses.where('month').equals(month).toArray(),
+      db.planTemplates.toArray(),
+      db.monthlyPlans.where('month').below(month).last(),
+      db.transactions.where('occurredAt').between(start, end, true, false).toArray(),
+    ])
+    const ids = items.map((i) => i.transactionId).filter((x): x is string => !!x)
+    const linked = new Map((await db.transactions.bulkGet(ids)).filter((t): t is Transaction => !!t).map((t) => [t.id, t]))
+    const summary = summarizePlan(month, plan ?? null, items, monthTx, linked)
+    const taken = new Set(summary.items.filter((v) => v.state === 'linked').map((v) => v.tx!.id))
+    const hints = new Map<string, string>()
+    for (const v of summary.items) {
+      if (v.state !== 'pending' || v.broken) continue
+      const { best } = linkCandidates(v.item, monthTx, taken)
+      if (best) {
+        const d = new Date(best.occurredAt)
+        hints.set(v.item.id, `可能已記：${d.getMonth() + 1}/${d.getDate()} ${best.merchant || '一筆支出'}，點一下確認`)
+      }
+    }
+    return {
+      started: !!plan,
+      previousIncome: prev?.income ?? null,
+      previousSaving: prev?.saving ?? 0,
+      activeTemplates: templates.filter((t) => t.isActive).length,
+      summary,
+      hints,
+      taken,
+    }
+  }, [month])
+}
+
+export function usePlanTemplates(): PlanTemplate[] | undefined {
+  return useLiveQuery(async () => (await db.planTemplates.toArray()).sort((a, b) => a.day - b.day || a.name.localeCompare(b.name)), [])
+}
+
+/** D-110: the latest payslip's net pay (its income record), offered as a first estimate. */
+export function useLatestPayslipNet(): number | null {
+  const v = useLiveQuery(async () => {
+    const slips = await db.payslips.orderBy('month').reverse().toArray()
+    for (const s of slips) {
+      if (!s.transactionId) continue
+      const t = await db.transactions.get(s.transactionId)
+      if (t) return t.amount
+    }
+    return null
+  }, [])
+  return v ?? null
+}
+

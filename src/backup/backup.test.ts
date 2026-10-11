@@ -90,7 +90,7 @@ describe('parseBackup rejects bad files before anything is written', () => {
     JSON.parse(
       JSON.stringify(
         buildBackup(
-          { transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [], importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [] },
+          { transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [], importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [], monthlyPlans: [], planTemplates: [], plannedExpenses: [] },
           now,
         ),
       ),

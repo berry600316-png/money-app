@@ -5,8 +5,11 @@ import type {
   Category,
   ImportBatch,
   ImportedNotification,
+  MonthlyPlan,
   PaymentMethod,
   Payslip,
+  PlannedExpense,
+  PlanTemplate,
   Reconciliation,
   SalaryItem,
   Setting,
@@ -15,7 +18,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -33,6 +36,9 @@ export class MoneyDB extends Dexie {
   cardStatements!: EntityTable<CardStatement, 'id'>
   statementEntries!: EntityTable<StatementEntry, 'id'>
   reconciliations!: EntityTable<Reconciliation, 'id'>
+  monthlyPlans!: EntityTable<MonthlyPlan, 'month'>
+  planTemplates!: EntityTable<PlanTemplate, 'id'>
+  plannedExpenses!: EntityTable<PlannedExpense, 'id'>
 
   constructor(name = DB_NAME) {
     super(name)
@@ -63,6 +69,16 @@ export class MoneyDB extends Dexie {
       })
       .upgrade(async (tx) => {
         await tx.table('settings').put({ key: 'schemaVersion', value: 3 })
+      })
+    // v4: monthly planning (D-105). New tables only; transactions are never touched (existing times stay as stored, D-99).
+    this.version(4)
+      .stores({
+        monthlyPlans: 'month',
+        planTemplates: 'id',
+        plannedExpenses: 'id, month, &[month+templateId], transactionId',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('settings').put({ key: 'schemaVersion', value: 4 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

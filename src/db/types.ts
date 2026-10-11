@@ -204,3 +204,53 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
   transfer: '轉帳',
   other: '其他',
 }
+
+/* ---------------- monthly planning (D-105..D-112) ---------------- */
+
+/** One month's plan. Never a transaction: only numbers for the estimate. */
+export interface MonthlyPlan {
+  /** "YYYY-MM", primary key. */
+  month: string
+  /** A: estimated total income of the month; null until the user sets it (D-110). */
+  income: number | null
+  /** D: amount set aside for saving (estimate only). */
+  saving: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** A fixed monthly expense the plans are built from (D-107). */
+export interface PlanTemplate {
+  id: string
+  name: string
+  amount: number
+  /** 1–31 (clamped to the month's last day, D-111). */
+  day: number
+  categoryId: string
+  paymentMethodId: string
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * One month's planned expense: a snapshot, so later template changes never rewrite past months.
+ * Recorded = `transactionId` points at an expense of the same month (checked live, D-108).
+ */
+export interface PlannedExpense {
+  id: string
+  month: string
+  /** null for an expense added for this month only. */
+  templateId: string | null
+  name: string
+  amount: number
+  day: number
+  categoryId: string
+  paymentMethodId: string
+  status: 'pending' | 'skipped'
+  transactionId: string | null
+  /** Changed by hand for this month: no longer follows its template (D-107). */
+  edited: boolean
+  createdAt: string
+  updatedAt: string
+}

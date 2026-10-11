@@ -22,6 +22,9 @@ function allTables(d: MoneyDB) {
     d.cardStatements,
     d.statementEntries,
     d.reconciliations,
+    d.monthlyPlans,
+    d.planTemplates,
+    d.plannedExpenses,
   ]
 }
 
@@ -38,6 +41,9 @@ export async function readAllData(d: MoneyDB = db): Promise<MoneyData> {
     cardStatements: await d.cardStatements.toArray(),
     statementEntries: await d.statementEntries.toArray(),
     reconciliations: await d.reconciliations.toArray(),
+    monthlyPlans: await d.monthlyPlans.toArray(),
+    planTemplates: await d.planTemplates.toArray(),
+    plannedExpenses: await d.plannedExpenses.toArray(),
   }))
 }
 
@@ -53,6 +59,9 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.reconciliations.clear()
   await d.statementEntries.clear()
   await d.cardStatements.clear()
+  await d.plannedExpenses.clear()
+  await d.planTemplates.clear()
+  await d.monthlyPlans.clear()
   const keepKeys = (await d.settings.toCollection().primaryKeys()).filter((k) => !DEVICE_SETTING_KEYS.has(String(k)))
   await d.settings.bulkDelete(keepKeys)
   await d.categories.bulkAdd(data.categories)
@@ -65,6 +74,9 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.cardStatements.bulkAdd(data.cardStatements ?? [])
   await d.statementEntries.bulkAdd(data.statementEntries ?? [])
   await d.reconciliations.bulkAdd(data.reconciliations ?? [])
+  await d.monthlyPlans.bulkAdd(data.monthlyPlans ?? [])
+  await d.planTemplates.bulkAdd(data.planTemplates ?? [])
+  await d.plannedExpenses.bulkAdd(data.plannedExpenses ?? [])
   const userSettings: Setting[] = data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key))
   if (userSettings.length) await d.settings.bulkPut(userSettings)
 }

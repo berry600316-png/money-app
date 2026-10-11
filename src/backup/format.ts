@@ -8,8 +8,11 @@ import type {
   EntryKind,
   ImportBatch,
   ImportedNotification,
+  MonthlyPlan,
   NotificationStatus,
   PaymentMethod,
+  PlannedExpense,
+  PlanTemplate,
   PaymentType,
   Payslip,
   Reconciliation,
@@ -55,6 +58,10 @@ export interface MoneyData {
   cardStatements: CardStatement[]
   statementEntries: StatementEntry[]
   reconciliations: Reconciliation[]
+  /** Schema v4 (D-114). Older backups restore with none. */
+  monthlyPlans: MonthlyPlan[]
+  planTemplates: PlanTemplate[]
+  plannedExpenses: PlannedExpense[]
 }
 
 export interface BackupFile extends MoneyData {
@@ -83,6 +90,9 @@ export function buildBackup(data: MoneyData, now = new Date()): BackupFile {
     cardStatements: data.cardStatements,
     statementEntries: data.statementEntries,
     reconciliations: data.reconciliations,
+    monthlyPlans: [...(data.monthlyPlans ?? [])].sort((a, b) => (a.month < b.month ? -1 : 1)),
+    planTemplates: data.planTemplates ?? [],
+    plannedExpenses: data.plannedExpenses ?? [],
   }
 }
 
@@ -286,6 +296,7 @@ export function parseBackup(text: string): BackupFile {
   }
 
   const card = raw.schemaVersion >= 3 ? parseCardData(raw, new Set(transactions.map((t) => t.id)), new Set(paymentMethods.map((p) => p.id))) : emptyCard()
+  const plans = raw.schemaVersion >= 4 ? parsePlanData(raw, catById, payIds) : { monthlyPlans: [], planTemplates: [], plannedExpenses: [] }
 
   return {
     app: BACKUP_APP,
@@ -299,7 +310,73 @@ export function parseBackup(text: string): BackupFile {
     salaryItems,
     payslips,
     ...card,
+    ...plans,
   }
+}
+
+const isMoney0 = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_AMOUNT
+const isDay = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 31
+
+/**
+ * D-114: monthly planning. Links to transactions may point at a record that is not in the file:
+ * they are kept and simply count as "not recorded" (D-108), like after a deletion.
+ */
+function parsePlanData(raw: Record<string, unknown>, catById: Map<string, Category>, payIds: Set<string>) {
+  for (const k of ['monthlyPlans', 'planTemplates', 'plannedExpenses']) {
+    if (!Array.isArray(raw[k])) fail('備份檔內容不完整')
+  }
+  const monthlyPlans = (raw.monthlyPlans as unknown[]).map((o, i): MonthlyPlan => {
+    const n = i + 1
+    if (!isObj(o) || !isMonthKey(o.month)) fail(`第 ${n} 個每月規劃的月份不正確`)
+    if (!(o.income === null || isMoney0(o.income)) || !isMoney0(o.saving)) fail(`第 ${n} 個每月規劃的金額不正確`)
+    if (!isIso(o.createdAt) || !isIso(o.updatedAt)) fail(`第 ${n} 個每月規劃的時間不正確`)
+    return { month: o.month, income: o.income as number | null, saving: o.saving as number, createdAt: o.createdAt, updatedAt: o.updatedAt }
+  })
+  checkUnique(monthlyPlans.map((p) => ({ id: p.month })), '每月規劃')
+
+  const fields = (o: Record<string, unknown>, what: string) => {
+    if (!isStr(o.name) || !o.name.trim()) fail(`${what}缺少名稱`)
+    if (!isValidAmount(o.amount)) fail(`${what}的金額不正確`)
+    if (!isDay(o.day)) fail(`${what}的每月日期不正確`)
+    if (!isStr(o.categoryId) || catById.get(o.categoryId)?.type !== 'expense') fail(`${what}的分類不存在`)
+    if (!isStr(o.paymentMethodId) || !payIds.has(o.paymentMethodId)) fail(`${what}的付款方式不存在`)
+    if (!isIso(o.createdAt) || !isIso(o.updatedAt)) fail(`${what}的時間不正確`)
+    return { name: o.name, amount: o.amount as number, day: o.day as number, categoryId: o.categoryId, paymentMethodId: o.paymentMethodId, createdAt: o.createdAt, updatedAt: o.updatedAt }
+  }
+
+  const planTemplates = (raw.planTemplates as unknown[]).map((o, i): PlanTemplate => {
+    const what = `第 ${i + 1} 個固定項目`
+    if (!isObj(o) || !isStr(o.id) || !o.id) fail(`${what}缺少編號`)
+    if (typeof o.isActive !== 'boolean') fail(`${what}的使用狀態不正確`)
+    return { id: o.id, ...fields(o, what), isActive: o.isActive }
+  })
+  checkUnique(planTemplates, '固定項目')
+  const tplIds = new Set(planTemplates.map((t) => t.id))
+
+  const plannedExpenses = (raw.plannedExpenses as unknown[]).map((o, i): PlannedExpense => {
+    const what = `第 ${i + 1} 筆必要支出`
+    if (!isObj(o) || !isStr(o.id) || !o.id) fail(`${what}缺少編號`)
+    if (!isMonthKey(o.month)) fail(`${what}的月份不正確`)
+    if (!(o.templateId === null || (isStr(o.templateId) && tplIds.has(o.templateId)))) fail(`${what}的固定項目不存在`)
+    if (o.status !== 'pending' && o.status !== 'skipped') fail(`${what}的狀態不正確`)
+    if (!(o.transactionId === null || (isStr(o.transactionId) && o.transactionId))) fail(`${what}的記帳關聯不正確`)
+    if (typeof o.edited !== 'boolean') fail(`${what}的內容不正確`)
+    return {
+      id: o.id,
+      month: o.month,
+      templateId: o.templateId as string | null,
+      ...fields(o, what),
+      status: o.status,
+      transactionId: o.transactionId as string | null,
+      edited: o.edited,
+    }
+  })
+  checkUnique(plannedExpenses, '必要支出')
+  checkUnique(
+    plannedExpenses.filter((x) => x.templateId).map((x) => ({ id: `${x.month}|${x.templateId}` })),
+    '同月份的固定項目',
+  )
+  return { monthlyPlans, planTemplates, plannedExpenses }
 }
 
 function emptyCard() {
