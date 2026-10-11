@@ -43,9 +43,7 @@ const BANKS = ['台新', '國泰世華', '國泰', '中國信託', '中信', '�
 
 /** Summary / heading lines: never entries. */
 const NOT_ENTRY =
-  /合計|小計|總計|總額|應繳|應付|本期新增|本期帳單|帳單金額|前期|上期|循環|額度|餘額|帳單結帳日|結帳日|繳款截止|繳款期限|繳款日|到期日|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|利率|紅利點數|帳號|戶名|統一編號|筆\s*數|件\s*數/
-/** A line ending in a date: its "tail amount" would really be the day of month. */
-const ENDS_WITH_DATE = /(\d{1,2}\s*月\s*\d{1,2}\s*日|\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{3,4}[/.-]\d{1,2}[/.-]\d{1,2}|(?<![\d,])\d{1,2}\/\d{1,2})\s*$/
+  /合計|小計|總計|總額|應繳|應付|本期新增|本期帳單|帳單金額|前期|上期|循環|額度|餘額|帳單結帳日|結帳日|繳款截止|繳款期限|繳款日|截止|到期日|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|利率|紅利點數|帳號|戶名|統一編號|筆\s*數|件\s*數|次\s*數/
 
 const KIND_RULES: [RegExp, EntryKind][] = [
   [/繳款|自動扣繳|轉帳繳|已繳|感謝您|ATM繳/, 'payment'],
@@ -55,23 +53,65 @@ const KIND_RULES: [RegExp, EntryKind][] = [
   [/調整|回饋|折抵|紅利|優惠折|現金回饋|帳務調整/, 'adjustment'],
 ]
 
-/** Currency codes and words that mean "not NTD". Upper case only: banks print codes in capitals. */
-const CURRENCY =
-  '(?:\\b(?:USD|JPY|EUR|GBP|KRW|HKD|CNY|RMB|SGD|AUD|NZD|THB|CAD|CHF|MYR|VND|PHP|IDR|INR|MOP|SEK|NOK|DKK|AED|TRY|MXN|BRL|ZAR|US)\\b|美金|美元|日圓|日元|日幣|人民幣|歐元|韓元|韓圜|港幣|港元|英鎊|澳幣|紐幣|新幣|泰銖|越南盾|外幣)'
-const FOREIGN_RE = new RegExp(CURRENCY + '\\s*-?[\\d,]+(?:\\.\\d+)?')
-/** A foreign currency right before the tail amount: that amount is the foreign one. */
-const CURRENCY_BEFORE_TAIL = new RegExp(CURRENCY + '\\s*[:：]?\\s*$')
-/** Amount at the end of the line, allowing "1,234", "-1,234", "(1,234)", "1,234-", "1,234.00". Never part of a longer number. */
-const TAIL_AMOUNT = /(?<![\d.,])(\(?-?[\d]{1,3}(?:,\d{3})+(?:\.\d{1,2})?\)?-?|\(?-?\d+(?:\.\d{1,2})?\)?-?)\s*(?:元|TWD|NTD)?\s*$/i
-/** Card digits right before the tail: "尾號1234" — the tail is not an amount. */
-const CARD_BEFORE_TAIL = /(?:尾\s*[數号號]|末\s*[四4]\s*碼|卡\s*號|[*xX•●]{2,})\s*[:：-]?\s*$/
-/** Another number right before the tail: two amount columns, or "1 234" split by a space. */
-const NUMBER_BEFORE_TAIL = /(?:^|\s)\(?-?\d[\d,]*(?:\.\d+)?\)?-?\s*$/
-/** Date-looking text the reader does not support (26/10/05, 20261005, 10-05, 10.05): never guessed. */
-const UNSUPPORTED_DATE =
-  /(?<!\d)\d{2}\/\d{1,2}\/\d{1,2}(?!\d)|(?<!\d)(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)|(?<![\d/.,-])\d{1,2}[-.]\d{1,2}(?![\d/.-])/
-/** A guessed year (month/day printed without one) further than this from the cycle start gets a warning. */
+/*
+ * STRICT LINE GRAMMAR (D-96). Without a real 台新 sample we cannot know the columns, so we only read
+ * lines shaped exactly like
+ *     <date> [<date>] <description> <one TWD amount>
+ * and only when nothing in the description could be another amount, a currency or card digits.
+ * Every other line that looks like it could be an entry goes to "unread" for the user to see.
+ * A wrong guess is worse than an unread line.
+ */
+const DATE_TOKEN = String.raw`\d{4}[/.-]\d{1,2}[/.-]\d{1,2}|\d{3}[/.-]\d{1,2}[/.-]\d{1,2}|\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\/\d{1,2}`
+const AMOUNT_TOKEN = String.raw`\(?-?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\)?-?|\(?-?\d+(?:\.\d{1,2})?\)?-?`
+const ENTRY_LINE = new RegExp(
+  String.raw`^(${DATE_TOKEN})(?![\d/.-])\s*(?:(${DATE_TOKEN})(?![\d/.-])\s*)?(.*?)(?<![\d.,:/$¥€£₩₫฿₱₹*])(${AMOUNT_TOKEN})\s*(?:元|TWD|NTD)?$`,
+  'i',
+)
+/** Dates printed without a year ("10/05", "10月5日"): the year is our guess. */
+const NO_YEAR = /^(?:\d{1,2}\/\d{1,2}|\d{1,2}\s*月)/
+/** Text that looks like a date in a form we do not read (26/10/05, 20261005, 10-05, 10.05, OCT05, 10 / 05). */
+const DATE_ISH =
+  /(?<!\d)\d{1,2}\s*[/.-]\s*\d{1,2}(?!\d)|\b(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?\s*\d{1,2}(?!\d)|(?<!\d)(?:19|20)\d{6}(?!\d)|(?<!\d)\d{1,2}\s*月/i
+/** A guessed year further than this before the cycle start gets a warning. */
 const FAR_FROM_CYCLE_DAYS = 62
+
+/** ISO 4217 codes (common English words such as ALL/TOP/CUP left out) plus US and RMB. */
+const CURRENCY_CODES = new Set(
+  ('AED AFN AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BRL BSD BTN BWP BYN BZD CAD CDF CHF ' +
+    'CLP CNY COP CRC CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GHS GIP GMD GNF GTQ GYD HKD HNL HTG ' +
+    'HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MDL ' +
+    'MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PGK PHP PKR PLN PYG QAR ' +
+    'RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SRD SSP STN SYP SZL THB TJS TMT TND TRY TTD TZS UAH UGX ' +
+    'USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL US RMB').split(' '),
+)
+/** Codes also recognised when printed in lower or mixed case ("usd"). */
+const COMMON_CODES = new Set('USD JPY EUR GBP KRW HKD CNY RMB SGD AUD NZD THB CAD CHF MYR VND PHP IDR INR MOP US'.split(' '))
+const TWD_WORD = /^(?:NT\$|NTD|TWD|新?[臺台]幣)$/i
+const CJK_CURRENCY = /^(?:外幣|美金|.{0,4}幣|[美日港澳紐加星新坡韓歐]元|日圓|韓圜|英鎊|泰銖|越南盾|.{0,3}(?:披索|比索|法郎|盧比|里拉|令吉|克朗|盧布|蘭特|第納爾|里亞爾|茲羅提))$/
+const CURRENCY_SYMBOL = /[$¥€£₩₫฿₱₹]/
+/** Card digits label at the end of the description: the "amount" after it is the card number. */
+const CARD_LABEL_END = /(?:[末後尾]\s*[四4]\s*碼|尾\s*[數号號]|卡\s*號)\s*[:：-]?$/
+
+function isNumberToken(t: string): boolean {
+  const u = t.replace(/^(?:NT\$|NTD|TWD)/i, '').replace(/(?:元|TWD|NTD)$/i, '')
+  return /^\(?[-+]?\d[\d,]*(?:\.\d+)?\)?-?$/.test(u)
+}
+
+function isCurrencyToken(t: string): boolean {
+  const u = t.replace(/[:：]$/, '')
+  if (TWD_WORD.test(u)) return false
+  if (/^[A-Z]{3}$/.test(u)) return CURRENCY_CODES.has(u)
+  if (/^[a-zA-Z]{2,3}$/.test(u)) return COMMON_CODES.has(u.toUpperCase())
+  if (CURRENCY_SYMBOL.test(u) && !/^NT\$/i.test(u)) return true
+  return CJK_CURRENCY.test(u)
+}
+
+/** "US$32.00", "¥3,200", "USD32.00": a foreign amount in one token. */
+function isGluedForeign(t: string): boolean {
+  if (/^NT\$/i.test(t)) return false
+  const m = t.match(/^([A-Za-z]{0,3}\$|[¥€£₩₫฿₱₹]|[A-Z]{3})-?[\d,]+(?:\.\d+)?$/)
+  return !!m && (CURRENCY_SYMBOL.test(m[1]) || CURRENCY_CODES.has(m[1]))
+}
 
 function signed(token: string): number | null {
   const neg = /^\(.*\)$/.test(token) || token.startsWith('-') || token.endsWith('-')
@@ -133,61 +173,74 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
   if (!periodEnd && closingDate) periodEnd = closingDate
 
   const closingYear = closingDate ? Number(closingDate.slice(0, 4)) : yearHint
+  const cycleStart = periodStart ?? closingDate
+  const cycleEnd = closingDate ?? periodEnd
   const entries: DraftEntry[] = []
   const unreadLines: string[] = []
   const singleDate: string[] = []
-  const farGuess: { raw: string; date: string }[] = []
+  const outOfCycle: { raw: string; date: string }[] = []
   for (const original of lines) {
     const line = toHalfWidth(original).trim()
     if (!line) continue
     if (NOT_ENTRY.test(line)) continue
-    const dates = findDates(line, closingYear)
-    const tail = line.match(TAIL_AMOUNT)
-    if (!dates.length || !tail || ENDS_WITH_DATE.test(line)) {
-      if (dates.length || (tail && (/,\d{3}/.test(tail[1]) || UNSUPPORTED_DATE.test(line)))) unreadLines.push(original)
+    const m = line.match(ENTRY_LINE)
+    const unread = () => unreadLines.push(original)
+    if (!m) {
+      // Not an entry shape. Anything that could still be one is shown as unread, never dropped silently.
+      if (findDates(line, closingYear).length || DATE_ISH.test(line) || /\d{1,3}(?:,\d{3})+/.test(line)) unread()
       continue
     }
-    // Never guess: cents in a TWD column, a foreign amount printed last, card digits, or two numbers at
-    // the end of the line all leave the TWD amount unclear.
-    const head = line.slice(0, tail.index)
-    const foreignMatch = line.match(FOREIGN_RE)
-    const foreignEnd = foreignMatch ? foreignMatch.index! + foreignMatch[0].length : -1
-    const cents = tail[1].match(/\.(\d{1,2})/)
-    const twoNumbers = NUMBER_BEFORE_TAIL.test(head) && foreignEnd !== head.trimEnd().length
+    const [, dateA, dateB, middle, amountToken] = m
+    const parsedA = findDates(dateA, closingYear)[0]
+    const parsedB = dateB ? findDates(dateB, closingYear)[0] : null
+    if (!parsedA || (dateB && !parsedB)) {
+      unread()
+      continue
+    }
+    // The description: a foreign amount may stand at its end ("AMAZON NZD 32.00", "US$32.00").
+    let tokens = middle.trim().split(/\s+/).filter(Boolean)
+    let foreign: string | null = null
+    const last = tokens[tokens.length - 1]
+    const prev = tokens[tokens.length - 2]
+    if (last && prev && isNumberToken(last) && isCurrencyToken(prev)) {
+      foreign = `${prev} ${last}`
+      tokens = tokens.slice(0, -2)
+    } else if (last && isGluedForeign(last)) {
+      foreign = last
+      tokens = tokens.slice(0, -1)
+    }
+    const description = tokens.join(' ')
+    const cents = amountToken.match(/\.(\d{1,2})/)
     if (
-      (cents && Number(cents[1]) !== 0) ||
-      (foreignMatch && foreignEnd >= tail.index!) ||
-      CURRENCY_BEFORE_TAIL.test(head) ||
-      CARD_BEFORE_TAIL.test(head) ||
-      twoNumbers
+      (cents && Number(cents[1]) !== 0) || // cents in a TWD column
+      tokens.some(isNumberToken) || // another amount column, or "1 234"
+      tokens.some((t) => isCurrencyToken(t) || isGluedForeign(t) || (CURRENCY_SYMBOL.test(t) && !/^NT\$/i.test(t))) || // foreign amount elsewhere
+      CARD_LABEL_END.test(description) // "尾號 1234"
     ) {
-      unreadLines.push(original)
+      unread()
       continue
     }
-    let amount = signed(tail[1])
+    let amount = signed(amountToken)
     if (amount === null || amount === 0) {
-      unreadLines.push(original)
+      unread()
       continue
     }
-    // Only "MM/DD" dates (no year printed) may belong to last year in a January statement;
-    // dates printed with a year are taken exactly as printed.
-    const printedWithYear = new Set(findDates(line))
-    const fix = (d: string) => (!printedWithYear.has(d) && closingDate && d > closingDate ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d)
-    const txDate = fix(dates[0])
-    const postDate = dates[1] ? fix(dates[1]) : null
-    if (!dates[1]) singleDate.push(original)
-    const cycleStart = periodStart ?? closingDate
-    for (const d of [txDate, postDate]) {
-      if (d && cycleStart && !printedWithYear.has(d) && dayDiff(d, cycleStart) > FAR_FROM_CYCLE_DAYS) {
-        farGuess.push({ raw: original.trim(), date: d })
+    // Month/day dates may belong to last year in a January statement; dates printed with a year stay as printed.
+    const fix = (token: string, d: string) =>
+      NO_YEAR.test(token) && closingDate && d > closingDate ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d
+    const txDate = fix(dateA, parsedA)
+    const postDate = dateB && parsedB ? fix(dateB, parsedB) : null
+    if (!postDate) singleDate.push(original)
+    for (const [token, d] of [[dateA, txDate], [dateB, postDate]] as const) {
+      if (!token || !d) continue
+      const after = cycleEnd && d > cycleEnd
+      const farGuess = NO_YEAR.test(token) && cycleStart && dayDiff(d, cycleStart) > FAR_FROM_CYCLE_DAYS
+      if (after || farGuess) {
+        outOfCycle.push({ raw: original.trim(), date: d })
         break
       }
     }
-    const foreign = foreignMatch?.[0] ?? null
-    let merchant = head
-      .replace(/(?:尾\s*[數号號]|末\s*[四4]\s*碼)\s*[:：]?\s*\d{4}/g, ' ')
-      .replace(/(?:\d{2,4}\s*年\s*)?\d{1,2}\s*月\s*\d{1,2}\s*日|\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{3,4}[/.-]\d{1,2}[/.-]\d{1,2}|(?<![\d/])\d{1,2}\/\d{1,2}(?![\d/])/g, ' ')
-    if (foreign) merchant = merchant.replace(foreign, ' ')
+    let merchant = description.replace(/(?:[末後尾]\s*[四4]\s*碼|尾\s*[數号號])\s*[:：]?\s*\d{4}/g, ' ')
     const reference = merchant.match(/\b[A-Z0-9]{10,}\b/)?.[0] ?? null
     if (reference) merchant = merchant.replace(reference, ' ')
     merchant = merchant.replace(/\s{2,}/g, ' ').replace(/^[\s|:：-]+|[\s|:：-]+$/g, '').trim()
@@ -209,9 +262,9 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
         ? '每筆明細只讀到一個日期，已當作消費日；如果帳單印的是入帳日，請逐筆修正'
         : `有 ${singleDate.length} 筆明細只讀到一個日期，已當作消費日，請確認（例：「${singleDate[0].trim()}」）`,
     )
-  if (farGuess.length)
+  if (outOfCycle.length)
     warnings.push(
-      `有 ${farGuess.length} 筆日期沒印年份，推算後離帳單週期超過兩個月，請確認年份（例：「${farGuess[0].raw}」→ ${farGuess[0].date}）`,
+      `有 ${outOfCycle.length} 筆日期落在帳單週期之後，或沒印年份且推算後離週期超過兩個月，請確認（例：「${outOfCycle[0].raw}」→ ${outOfCycle[0].date}）`,
     )
   if (unreadLines.length) warnings.push(`有 ${unreadLines.length} 行含日期或金額但無法辨識，可能是漏掉的明細`)
   if (!closingDate) warnings.push('找不到結帳日')

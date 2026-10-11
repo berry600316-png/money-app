@@ -106,7 +106,11 @@ export function planImport(input: PlanInput): PlanRow[] {
       (t) => t.type === 'expense' && sameSpend(me, { amount: t.amount, occurredAt: t.occurredAt, merchant: t.merchant, card: t.paymentMethodId }),
     )
     const dupRow = rows.find((p) => (p.status === 'new' || p.status === 'suspect') && sameSpend(me, { amount: p.amount, occurredAt: p.occurredAt, merchant: p.merchant, card: p.paymentMethodId }))
-    if (dupTx) {
+    if (r.doubt) {
+      row.status = 'suspect'
+      row.reason = r.doubt
+      row.include = false
+    } else if (dupTx) {
       row.status = 'suspect'
       row.reason = `可能和已記的「${dupTx.merchant || '一筆支出'}」是同一筆`
       row.include = false

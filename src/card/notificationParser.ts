@@ -10,7 +10,8 @@ import type { NotificationCapture } from './notificationFile'
 import { findDates, findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
 
 export type ParseResult =
-  | { kind: 'spend'; spend: ParsedSpend; adapter: string }
+  /** `doubt`: looks like a purchase but also reads like an offer or a code; not imported by default. */
+  | { kind: 'spend'; spend: ParsedSpend; adapter: string; doubt: string | null }
   | { kind: 'not_spending'; reason: string }
   | { kind: 'unparsed'; reason: string }
 
@@ -22,7 +23,8 @@ const NOT_SPENDING: [RegExp, string][] = [
   [/交易失敗|拒絕|未成功|額度不足/, '交易失敗通知'],
   // An actual one-time code ("驗證碼為 123456"): 3-D Secure messages also carry merchant + amount,
   // but the purchase itself arrives as a separate notification.
-  [/(?:驗證碼|OTP|動態密碼)\s*(?:為|是)?\s*[:：]?\s*\d{4,8}(?!\d)/i, '安全性通知'],
+  // The code must stand apart ("OTP2024 選物店" is a shop; "0800-123-456" is a phone number).
+  [/(?:驗證碼|OTP|動態密碼)(?:\s*(?:為|是)?\s*[:：]\s*|\s*(?:為|是)\s*|\s+)\d{4,8}(?![\d-])/i, '安全性通知'],
 ]
 /**
  * Wording that means "not a purchase" unless the message states a purchase outright
@@ -39,6 +41,8 @@ const WEAK_NOT_SPENDING: [RegExp, string][] = [
   [/登入|新裝置/i, '安全性通知'],
   [/優惠|活動|回饋|點數|紅利|抽獎|好禮/, '行銷或回饋通知'],
 ]
+/** Offer or code wording: a purchase that mentions these needs the user's look unless fully shaped. */
+const DOUBT = /驗證碼|OTP|動態密碼|回饋|優惠|活動|登錄|抽獎|贈|購物金|點數|紅利|折抵|滿額|利率|好禮|送\s*\d|滿\s*(?:NT\$|新?[臺台]幣)?\s*\d|限定/i
 const SPENDING = /消費|刷卡|交易|扣款|簽帳|授權|支付|付款/
 const FOREIGN = /\b(USD|JPY|EUR|GBP|KRW|HKD|CNY|SGD|AUD|THB)\b|美元|日圓|日幣|歐元|韓元|港幣|人民幣/
 
@@ -58,7 +62,7 @@ function amountsOf(t: string): AmountHit[] {
     if (hits.some((h) => at < h.end && at + m[0].length > h.at)) return
     hits.push({ at, end: at + m[0].length, hit: { value: parseAmount(token), before: t.slice(Math.max(0, at - 10), at), after: t.slice(at + m[0].length, at + m[0].length + 6) } })
   }
-  for (const m of t.matchAll(new RegExp(NTD_RE.source + '\\s*[:：]?\\s*(-?[\\d,]+(?:\\.\\d+)?)', 'gi'))) add(m, m[m.length - 1])
+  for (const m of t.matchAll(new RegExp(NTD_RE.source + '\\s*[:：]?\\s*(-?\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|-?\\d+(?:\\.\\d+)?)', 'gi'))) add(m, m[m.length - 1])
   for (const m of t.matchAll(/(-?\d{1,3}(?:,\d{3})+|-?\d+)(?:\.\d+)?\s*元/g)) add(m, m[1])
   return hits.sort((a, b) => a.at - b.at).map((h) => h.hit)
 }
@@ -67,10 +71,10 @@ function amountsOf(t: string): AmountHit[] {
  * Words directly in front of an amount that make it a threshold or a reward, not what was paid.
  * Anchored to the amount so shop names (達美樂, 每日優鮮) don't count.
  */
-const NOT_PAID_BEFORE = /(?:滿|達到?|超過|最高|上限|回饋|折抵|贈送?|享有?|獲得|累積\S{0,3})\s*[:：]?\s*$/
+const NOT_PAID_BEFORE = /(?:滿額?|達到?|超過|最高|上限|回饋|折抵|贈送?|送|享有?|獲得|累積\S{0,3})\s*[:：]?\s*$/
 /** Words directly in front of an amount that make it what was paid ("消費 NT$899", "交易金額：NT$500"). */
 const PAID_BEFORE = /(?:消費|刷卡|交易|扣款|簽帳|授權|支付|付款|金額)\s*[:：]?\s*$/
-const NOT_PAID_AFTER = /^\s*元?\s*(?:以上|起|即享|就送|即送|即贈)/
+const NOT_PAID_AFTER = /^\s*元?\s*(?:以上|起|即|就|可|享|送|贈|回饋|參加|抽|折|分\s*\d+\s*期)/
 /** ...or directly followed by one ("NT$85 刷卡成功"). */
 const PAID_AFTER = /^\s*元?\s*(?:消費|刷卡|交易|扣款|支付|付款|簽帳)/
 const notPaid = (h: AmountHit) => NOT_PAID_BEFORE.test(h.before) || NOT_PAID_AFTER.test(h.after)
@@ -142,14 +146,21 @@ export function parseNotification(c: NotificationCapture): ParseResult {
   if (amount === null) return { kind: 'unparsed', reason: '找不到金額' }
   if (!SPENDING.test(text) && !NTD_RE.test(text)) return { kind: 'unparsed', reason: '看不出是不是刷卡消費' }
   if (amount <= 0) return { kind: 'unparsed', reason: '金額不正確' }
+  const merchant = merchantOf(text)
+  const cardLast4 = findLast4(text)
+  // Only a message with the full shape of a purchase notice (shop + card digits or a time) is trusted
+  // when it also mentions offers or codes; anything less is shown for the user to decide (D-96).
+  const fullShape = !!merchant && (!!cardLast4 || findTime(text) !== null)
+  const doubt = DOUBT.test(text) && !fullShape ? '內容同時提到回饋、優惠或驗證碼，請確認是不是一筆消費' : null
   return {
     kind: 'spend',
     adapter: /richart|台新/i.test(c.sourceApp) ? 'richart-generic' : 'generic',
+    doubt,
     spend: {
       amount,
-      merchant: merchantOf(text),
+      merchant,
       occurredAt: timeOf(text, c.notificationTime ?? c.capturedAt),
-      cardLast4: findLast4(text),
+      cardLast4,
     },
   }
 }

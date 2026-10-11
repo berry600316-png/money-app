@@ -157,7 +157,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             </span>
             {count('suspect') > 0 && (
               <span>
-                <b>{count('suspect')}</b>筆疑似重複
+                <b>{count('suspect')}</b>筆需要確認
               </span>
             )}
             {skipped.length > 0 && (
@@ -193,8 +193,8 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
           {count('suspect') > 0 && (
             <>
               <div className="grp-title">
-                <b>可能已經記過</b>
-                <span>預設不匯入</span>
+                <b>需要你確認</b>
+                <span>預設不匯入，確認是新消費再勾選</span>
               </div>
               <div className="card">{importable.filter((r) => r.status === 'suspect').map(row)}</div>
             </>
