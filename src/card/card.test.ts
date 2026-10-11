@@ -93,6 +93,8 @@ describe('notification parser (simulated samples only)', () => {
     expect(p(SIM_NOTIFICATIONS.promo)).toMatchObject({ kind: 'not_spending' })
     expect(p(SIM_NOTIFICATIONS.foreign)).toMatchObject({ kind: 'unparsed' })
     expect(p(SIM_NOTIFICATIONS.noAmount)).toMatchObject({ kind: 'unparsed' })
+    expect(p('刷卡消費滿 NT$3,000 享 5% 回饋')).toMatchObject({ kind: 'not_spending' })
+    expect(p('交易驗證碼 889900，本次消費 NT$500，請勿告知他人')).toMatchObject({ kind: 'not_spending' })
   })
   it('a "12/31" read in early January belongs to last year', () => {
     const r = parseNotification(capture({ body: '於12/31 23:10在全家消費NT$50', notificationTime: new Date(2027, 0, 1, 0, 5).toISOString() }))
@@ -193,6 +195,24 @@ describe('statement parser (generic adapter, simulated layout)', () => {
     expect(missing.totalsMatch).toBe(false)
     expect(missing.warnings.join()).toContain('不同')
   })
+  it('never misreads: dates with a year stay as printed; cents, trailing foreign amounts and header lines are not entries', () => {
+    const r = parseStatementLines([
+      '帳單結帳日 2026/10/15',
+      '2026/10/14 2026/10/17 全家 500',
+      '10/01 10/03 全家 1234.5',
+      '10/02 10/04 AMAZON US 395 USD 12.50',
+      '應繳總額 2026/11/02 14,725',
+      '應繳總額 14,725 繳款到期日 2026/11/02',
+      '帳單金額 14,725 2026/10/15',
+      '115/10/05 115/10/06 誠品書店 1,200.00',
+    ])
+    expect(r.entries.map((e) => [e.txDate, e.postDate, e.amount])).toEqual([
+      ['2026-10-14', '2026-10-17', 500],
+      ['2026-10-05', '2026-10-06', 1200],
+    ])
+    expect(r.unreadLines).toHaveLength(2)
+    expect(r.warnings.join()).toContain('無法辨識')
+  })
   it('no text → no entries and a clear warning', () => {
     expect(parseStatementLines([]).warnings).toContain('沒有讀到任何交易明細')
   })
@@ -272,6 +292,14 @@ describe('reconciliation engine (spec §7, §8)', () => {
     const b = reconcile({ statement, entries, transactions: deleted, recons: [saved] }).items.find((i) => i.kind === 'broken')
     expect(b && b.kind === 'broken' && b.reason).toContain('刪除')
     expect(reconcile({ statement, entries, transactions: records, recons: [saved] }).items.find((i) => 'entry' in i && i.entry.id === 'e0')?.kind).toBe('matched')
+  })
+  it('a record held by a broken pair is not offered to another entry', () => {
+    const saved: Reconciliation = { id: 'r9', statementId: 'st', entryId: 'e0', transactionId: 'family', status: 'matched', method: 'auto', snapshot: { amount: 80, date: '2026-09-18', paymentMethodId: 'taishin' }, note: '', createdAt: '' }
+    const twin = { ...entries[0], id: 'e0b', order: 99 }
+    const res = reconcile({ statement, entries: [entries[0], twin], transactions: records, recons: [saved] })
+    expect(res.items.find((i) => 'entry' in i && i.entry.id === 'e0')?.kind).toBe('broken')
+    expect(res.items.find((i) => 'entry' in i && i.entry.id === 'e0b')?.kind).toBe('bank_only')
+    expect(res.autoPairs).toEqual([])
   })
   it('a record paired on another statement is not offered again', () => {
     const elsewhere: Reconciliation = { id: 'r2', statementId: 'other', entryId: 'x', transactionId: 'family', status: 'matched', method: 'manual', snapshot: { amount: 85, date: '2026-09-18', paymentMethodId: 'taishin' }, note: '', createdAt: '' }

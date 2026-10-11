@@ -419,13 +419,16 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
   checkUnique(statementEntries, '帳單明細')
   const entryStatement = new Map(statementEntries.map((e) => [e.id, e.statementId]))
 
-  const reconciliations = (raw.reconciliations as unknown[]).map((r, i): Reconciliation => {
+  const reconciliations = (raw.reconciliations as unknown[]).flatMap((r, i): Reconciliation[] => {
     const n = i + 1
     if (!isObj(r) || !isStr(r.id) || !isStr(r.statementId) || !stIds.has(r.statementId)) fail(`第 ${n} 筆核對紀錄沒有對應的帳單`)
     if (r.status !== 'matched' && r.status !== 'deferred' && r.status !== 'explained') fail(`第 ${n} 筆核對紀錄的狀態不正確`)
     if (r.method !== 'auto' && r.method !== 'manual' && r.method !== 'created') fail(`第 ${n} 筆核對紀錄不正確`)
     if (r.entryId !== null && (!isStr(r.entryId) || entryStatement.get(r.entryId) !== r.statementId)) fail(`第 ${n} 筆核對紀錄的帳單明細不存在`)
-    if (r.transactionId !== null && (!isStr(r.transactionId) || !txIds.has(r.transactionId))) fail(`第 ${n} 筆核對紀錄的記帳不存在`)
+    if (r.transactionId !== null && !isStr(r.transactionId)) fail(`第 ${n} 筆核對紀錄的記帳不正確`)
+    // D-92: a pair whose record was deleted is kept on purpose (it shows as "需要確認"), so a backup
+    // taken afterwards must restore. A note on a record that no longer exists is simply dropped.
+    if (isStr(r.transactionId) && !txIds.has(r.transactionId) && r.status !== 'matched') return []
     if (r.status === 'matched' && (!r.entryId || !r.transactionId)) fail(`第 ${n} 筆核對紀錄缺少配對的一方`)
     if (!r.entryId && !r.transactionId) fail(`第 ${n} 筆核對紀錄是空的`)
     let snapshot: Reconciliation['snapshot'] = null
@@ -435,17 +438,19 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
       snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId }
     }
     if (!isStr(r.note) || !isIso(r.createdAt)) fail(`第 ${n} 筆核對紀錄不正確`)
-    return {
-      id: r.id,
-      statementId: r.statementId,
-      entryId: r.entryId as string | null,
-      transactionId: r.transactionId as string | null,
-      status: r.status,
-      method: r.method,
-      snapshot,
-      note: r.note,
-      createdAt: r.createdAt,
-    }
+    return [
+      {
+        id: r.id,
+        statementId: r.statementId,
+        entryId: r.entryId as string | null,
+        transactionId: r.transactionId as string | null,
+        status: r.status,
+        method: r.method,
+        snapshot,
+        note: r.note,
+        createdAt: r.createdAt,
+      },
+    ]
   })
   checkUnique(reconciliations, '核對紀錄')
   // One-to-one (D-90): no entry or transaction in two pairs.

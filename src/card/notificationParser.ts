@@ -20,11 +20,14 @@ const NOT_SPENDING: [RegExp, string][] = [
   [/取消交易|交易取消|已取消|撤銷|沖正/, '取消交易通知'],
   [/繳款成功|已繳款|入帳成功|自動扣繳成功|繳費成功|繳款通知/, '繳款通知'],
   [/交易失敗|拒絕|未成功|額度不足/, '交易失敗通知'],
+  [/驗證碼|OTP|動態密碼/i, '安全性通知'],
+  // Offers mention spending too ("刷卡消費滿 NT$3,000 享 5% 回饋"): an amount threshold or a percentage reward.
+  [/(?:滿|達|累積)\s*(?:NT\$|新?[臺台]幣)?\s*[\d,]+\s*元?.{0,12}(?:享|送|贈|回饋|折)|享\s*\d+(?:\.\d+)?\s*%|登錄|抽獎/, '行銷或回饋通知'],
 ]
 /** Wording that means "not a purchase" only when the text doesn't also look like one (footers often say 密碼, 優惠…). */
 const WEAK_NOT_SPENDING: [RegExp, string][] = [
   [/電子帳單|帳單已|本期應繳|帳單通知/, '帳單通知'],
-  [/驗證碼|OTP|登入|新裝置/i, '安全性通知'],
+  [/登入|新裝置/i, '安全性通知'],
   [/優惠|活動|回饋|點數|紅利|抽獎|好禮/, '行銷或回饋通知'],
 ]
 const SPENDING = /消費|刷卡|交易|扣款|簽帳|授權|支付|付款/

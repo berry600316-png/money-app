@@ -78,7 +78,8 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           periodEnd: end,
           dueDate: p.dueDate ?? '',
         })
-        setConfirmed(p.totalsMatch === true)
+        // D-87: never pre-confirmed; matching totals is a hint, the user still compares with the PDF.
+        setConfirmed(false)
         setStage({ kind: 'review' })
       } catch (e) {
         if (e instanceof PdfPasswordError) setStage({ kind: 'password', data, name, hash, wrong: e.wrong })
@@ -292,7 +293,10 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
 
           <label className="check-row" htmlFor="st-ok">
             <input id="st-ok" type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-            <span>我已對照 PDF，明細正確完整{parsed.totalsMatch === true ? '（明細加總與帳單相符）' : ''}</span>
+            <span>
+              我已對照 PDF，明細正確完整
+              {parsed.totalsMatch === true && <span className="s-sub">明細加總與帳單「本期新增」相符，仍請對照逐筆內容</span>}
+            </span>
           </label>
           <p className="set-foot">沒勾選也可以先匯入，帳單會標示「解析待確認」，核對結果不會顯示為全部完成。</p>
 

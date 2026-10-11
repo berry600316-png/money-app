@@ -477,6 +477,7 @@ button.srow:disabled:active { background: transparent; }
 .recon-big small { font-size: 0.875rem; color: var(--ink-2); }
 .progress { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; margin-top: 14px; }
 .progress i { display: block; height: 100%; border-radius: 3px; background: var(--brand); transform-origin: left; transition: width 0.4s var(--ease); }
+.progress.pending i { background: var(--bar); }
 .recon-sum { margin-top: 16px; border-top: 1px solid var(--line); }
 .recon-sum > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 11px 2px; border-bottom: 1px solid var(--line); font-size: 0.9375rem; }
 .recon-sum small { display: block; font-size: 0.75rem; color: var(--ink-2); margin-top: 2px; }
@@ -529,6 +530,7 @@ button.srow:disabled:active { background: transparent; }
 .meta-grid .full { grid-column: 1 / -1; }
 .warn-list { margin: 12px 4px 0; padding: 0 0 0 18px; font-size: 0.8125rem; color: #8A6A2C; line-height: 1.6; }
 .check-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px 14px; border-radius: 16px; background: var(--card); font-size: 0.9375rem; }
+.check-row .s-sub { display: block; margin-top: 2px; }
 .check-row input { width: 22px; height: 22px; accent-color: var(--brand); flex: none; }
 .kind-tag { display: inline-block; font-size: 0.6875rem; padding: 1px 6px; border-radius: 6px; background: var(--fill); color: var(--ink-2); margin-left: 6px; vertical-align: 1px; }
 .raw-lines { margin: 8px 4px 0; padding: 10px 12px; border-radius: 12px; background: var(--fill); font-size: 0.75rem; color: var(--ink-2); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }

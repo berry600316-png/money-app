@@ -85,6 +85,10 @@ export async function commitNotificationImport(
         summary.duplicates++
       } else if (row.status === 'unparsed') {
         summary.failed++
+      } else if (row.status === 'new' || row.status === 'suspect') {
+        // Unticked by the user: not remembered, so the same file can still be imported later.
+        summary.skipped++
+        continue
       } else {
         summary.skipped++
       }
@@ -254,14 +258,33 @@ export async function saveAutoPairs(statementId: string, pairs: readonly { entry
   })
 }
 
+/** Both sides exist, belong together (same statement, same card) and the record is a purchase. */
+async function loadPair(statementId: string, entryId: string, transactionId: string, d: MoneyDB) {
+  const [tx, entry, st] = await Promise.all([d.transactions.get(transactionId), d.statementEntries.get(entryId), d.cardStatements.get(statementId)])
+  if (!tx || !entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆資料')
+  if (tx.type !== 'expense') throw new MoneyError('只能和支出配對')
+  if (tx.paymentMethodId !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
+  return { tx, entry }
+}
+
 /** User pairs an entry with a transaction (also accepts an amount difference as explained, §8.3). */
 export async function matchManually(statementId: string, entryId: string, transactionId: string, note = '', d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries], async () => {
-    const tx = await d.transactions.get(transactionId)
-    const entry = await d.statementEntries.get(entryId)
-    if (!tx || !entry) throw new MoneyError('找不到這筆資料')
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+    const { tx } = await loadPair(statementId, entryId, transactionId, d)
     await assertFree(entryId, transactionId, d)
     await pair(statementId, entryId, tx, 'manual', note, d, now)
+  })
+}
+
+/** A pair broke because the record was edited; the user says it is still the same purchase. One transaction. */
+export async function reconfirmPair(reconId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+    const old = await d.reconciliations.get(reconId)
+    if (!old || old.status !== 'matched' || !old.entryId || !old.transactionId) throw new MoneyError('找不到這筆核對紀錄')
+    const { tx } = await loadPair(old.statementId, old.entryId, old.transactionId, d)
+    await d.reconciliations.delete(reconId)
+    await assertFree(old.entryId, tx.id, d)
+    await pair(old.statementId, old.entryId, tx, 'manual', '記帳修改後重新確認', d, now)
   })
 }
 
@@ -270,12 +293,9 @@ export async function matchManually(statementId: string, entryId: string, transa
  * touched (D-92); the pair is made with the new amount in the same transaction.
  */
 export async function applyStatementAmount(statementId: string, entryId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries], async () => {
-    const tx = await d.transactions.get(transactionId)
-    const entry = await d.statementEntries.get(entryId)
-    if (!tx || !entry) throw new MoneyError('找不到這筆資料')
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+    const { tx, entry } = await loadPair(statementId, entryId, transactionId, d)
     if (!isValidAmount(entry.amount)) throw new MoneyError('帳單金額不能用於記帳')
-    if (tx.source === 'payslip') throw new MoneyError('薪資收入請到薪資單修改')
     await assertFree(entryId, transactionId, d)
     const next = { ...tx, amount: entry.amount, updatedAt: now.toISOString() }
     await d.transactions.put(next)

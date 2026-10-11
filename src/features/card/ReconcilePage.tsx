@@ -177,9 +177,9 @@ export function ReconcilePage({
         <div className="recon-big">
           <span className="num">{s.matched}</span>
           <span className="of">/ {s.entries}</span>
-          <small>筆帳單明細已核對</small>
+          <small>{st.parseStatus === 'confirmed' ? '筆帳單明細已核對' : '筆已配對（帳單解析待確認）'}</small>
         </div>
-        <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="核對進度">
+        <div className={'progress' + (st.parseStatus === 'confirmed' ? '' : ' pending')} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="核對進度">
           <i style={{ width: `${pct}%` }} />
         </div>
         <div className="recon-sum">

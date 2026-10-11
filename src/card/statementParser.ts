@@ -42,7 +42,10 @@ export interface ParsedStatement {
 const BANKS = ['台新', '國泰世華', '國泰', '中國信託', '中信', '玉山', '台北富邦', '富邦', '永豐', '聯邦', '第一銀行', '兆豐', '花旗', '星展', '滙豐', '新光', '元大', '凱基', '遠東', '華南', '彰化', '合作金庫', '土地銀行', '樂天', '將來', 'LINE Bank', '連線銀行']
 
 /** Summary / heading lines: never entries. */
-const NOT_ENTRY = /合計|小計|總計|本期應繳|最低應繳|本期新增|前期|上期|循環|額度|帳單結帳日|結帳日|繳款截止|繳款期限|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|信用額度|可用額度|預借現金額度|利率|紅利點數|帳號|戶名|統一編號/
+const NOT_ENTRY =
+  /合計|小計|總計|總額|應繳|應付|本期新增|本期帳單|帳單金額|前期|上期|循環|額度|餘額|帳單結帳日|結帳日|繳款截止|繳款期限|到期日|帳單日期|帳單週期|帳務期間|計息期間|消費期間|列印日期|頁\s*\d|第\s*\d+\s*頁|利率|紅利點數|帳號|戶名|統一編號/
+/** A line ending in a date: its "tail amount" would really be the day of month. */
+const ENDS_WITH_DATE = /(\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{3,4}[/.-]\d{1,2}[/.-]\d{1,2}|(?<![\d,])\d{1,2}\/\d{1,2})\s*$/
 
 const KIND_RULES: [RegExp, EntryKind][] = [
   [/繳款|自動扣繳|轉帳繳|已繳|感謝您|ATM繳/, 'payment'],
@@ -124,8 +127,15 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
     if (NOT_ENTRY.test(line)) continue
     const dates = findDates(line, closingYear)
     const tail = line.match(TAIL_AMOUNT)
-    if (!dates.length || !tail) {
+    if (!dates.length || !tail || ENDS_WITH_DATE.test(line)) {
       if (dates.length || (tail && /,\d{3}/.test(tail[1]))) unreadLines.push(original)
+      continue
+    }
+    // Never guess: cents in a TWD column, or a foreign amount printed last, leave the TWD amount unclear.
+    const foreignMatch = line.match(FOREIGN_RE)
+    const cents = tail[1].match(/\.(\d{1,2})/)
+    if ((cents && Number(cents[1]) !== 0) || (foreignMatch && foreignMatch.index! + foreignMatch[0].length >= tail.index!)) {
+      unreadLines.push(original)
       continue
     }
     let amount = signed(tail[1])
@@ -133,11 +143,13 @@ export function parseStatementLines(lines: readonly string[]): ParsedStatement {
       unreadLines.push(original)
       continue
     }
-    // An entry's dates come first; "MM/DD" in December statements may belong to last year.
-    const fix = (d: string) => (closingDate && d > closingDate ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d)
+    // Only "MM/DD" dates (no year printed) may belong to last year in a January statement;
+    // dates printed with a year are taken exactly as printed.
+    const printedWithYear = new Set(findDates(line))
+    const fix = (d: string) => (!printedWithYear.has(d) && closingDate && d > closingDate ? `${Number(d.slice(0, 4)) - 1}${d.slice(4)}` : d)
     const txDate = fix(dates[0])
     const postDate = dates[1] ? fix(dates[1]) : null
-    const foreign = line.match(FOREIGN_RE)?.[0] ?? null
+    const foreign = foreignMatch?.[0] ?? null
     let merchant = line
       .slice(0, tail.index)
       .replace(/\d{2,4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{3,4}[/.-]\d{1,2}[/.-]\d{1,2}|(?<![\d/])\d{1,2}\/\d{1,2}(?![\d/])/g, ' ')

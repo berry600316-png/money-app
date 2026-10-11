@@ -99,10 +99,9 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
   const payments: StatementEntry[] = []
 
   // Transactions already paired with a still-valid statement entry anywhere are unavailable.
+  // A broken pair still holds its record until the user decides, so it is never offered elsewhere.
   const used = new Set<string>()
-  for (const r of input.recons) {
-    if (r.status === 'matched' && r.transactionId && r.entryId && !pairStillValid(r, txById.get(r.transactionId))) used.add(r.transactionId)
-  }
+  for (const r of input.recons) if (r.status === 'matched' && r.transactionId && r.entryId) used.add(r.transactionId)
 
   const pending: StatementEntry[] = []
   for (const e of [...entries].sort((a, b) => a.order - b.order)) {

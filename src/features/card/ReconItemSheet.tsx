@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { suggestCategory } from '../../card/categorize'
-import { deferToNext, explain, matchManually, recordFromEntry, removeDecision, applyStatementAmount } from '../../card/cardRepo'
+import { applyStatementAmount, deferToNext, explain, matchManually, reconfirmPair, recordFromEntry, removeDecision } from '../../card/cardRepo'
 import { pairStillValid, txDate, type Item } from '../../card/reconcile'
 import { dayDiff } from '../../card/text'
 import { MoneyError } from '../../db/repo'
@@ -294,12 +294,7 @@ export function ReconItemSheet({
               <button
                 type="button"
                 className="btn-primary"
-                onClick={() =>
-                  run(async () => {
-                    await removeDecision(it.recon.id)
-                    await matchManually(statement.id, it.entry.id, it.tx!.id, '記帳修改後重新確認')
-                  }, '已重新確認配對')
-                }
+                onClick={() => run(() => reconfirmPair(it.recon.id), '已重新確認配對')}
               >
                 仍然是這筆（以目前記帳為準）
               </button>

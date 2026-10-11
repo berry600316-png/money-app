@@ -11,6 +11,7 @@ import {
   deferToNext,
   deleteStatement,
   matchManually,
+  reconfirmPair,
   recordFromEntry,
   saveAutoPairs,
   saveStatement,
@@ -157,6 +158,26 @@ describe('reconciliation decisions (Phase 3)', () => {
     await matchManually(st.id, entries[0].id, fam.id, '', d, now)
     await expect(matchManually(st.id, entries[1].id, fam.id, '', d, now)).rejects.toThrow('已經和其他')
   })
+  it('manual pairs only with an expense on the same card; re-confirming a broken pair is one step', async () => {
+    const { st, entries, fam } = await setup()
+    const income = await addTransaction({ type: 'income', amount: 85, merchant: 'x', categoryId: 'salary', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
+    await expect(matchManually(st.id, entries[0].id, income.id, '', d, now)).rejects.toThrow('支出')
+    const cash = await addTransaction({ type: 'expense', amount: 85, merchant: '全家', categoryId: 'food', paymentMethodId: 'cash', date: '2026-09-18', note: '' }, d, now)
+    await expect(matchManually(st.id, entries[0].id, cash.id, '', d, now)).rejects.toThrow('不是用這張卡')
+    await matchManually(st.id, entries[0].id, fam.id, '', d, now)
+    await updateTransaction(fam.id, { type: 'expense', amount: 86, merchant: '全家', categoryId: 'food', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
+    const broken = (await d.reconciliations.toArray()).find((r) => r.transactionId === fam.id)!
+    await reconfirmPair(broken.id, d, now)
+    expect((await run(st.id)).items.find((i) => 'entry' in i && i.entry.id === entries[0].id)?.kind).toBe('matched')
+    expect(await d.reconciliations.count()).toBe(1)
+  })
+  it('unticked suspected duplicates are not remembered, so they can be imported later', async () => {
+    const rows = (await plan([SIM_NOTIFICATIONS.convenience])).map((r) => ({ ...r, include: false }))
+    await commitNotificationImport(rows, { files: 1 }, d, now)
+    expect(await d.importedNotifications.count()).toBe(0)
+    expect((await plan([SIM_NOTIFICATIONS.convenience]))[0].status).toBe('new')
+  })
+
   it('defer to next statement keeps the record waiting, never deleted (§8.2)', async () => {
     const { st, louisa } = await setup()
     expect((await run(st.id)).items.find((i) => 'tx' in i && i.tx?.id === louisa.id)?.kind).toBe('book_only')
@@ -207,12 +228,31 @@ describe('backups with card data (D-94)', () => {
     const t = await addTransaction({ type: 'expense', amount: 85, merchant: '全家', categoryId: 'food', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
     await matchManually(st.id, entries[0].id, t.id, '', d, now)
     const b = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
-    expect(() => parseBackup(JSON.stringify({ ...b, transactions: b.transactions.filter((x: { id: string }) => x.id !== t.id) }))).toThrow('記帳不存在')
     expect(() => parseBackup(JSON.stringify({ ...b, cardStatements: [] }))).toThrow('對應的帳單')
     const dup = { ...b.reconciliations[0], id: 'dup' }
     expect(() => parseBackup(JSON.stringify({ ...b, reconciliations: [...b.reconciliations, dup] }))).toThrow('重複的核對配對')
     expect(() => parseBackup(JSON.stringify({ ...b, cardStatements: [b.cardStatements[0], { ...b.cardStatements[0], id: 'x' }] }))).toThrow('重複的帳單')
   })
+  it('a backup taken after deleting a paired record still restores; the pair shows as broken (verifier finding)', async () => {
+    const st = await saveStatement(statementInput(), {}, d, now)
+    const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
+    const base = { type: 'expense' as const, categoryId: 'food', paymentMethodId: cardId, note: '' }
+    const t = await addTransaction({ ...base, amount: 85, merchant: '全家', date: '2026-09-18' }, d, now)
+    const lou = await addTransaction({ ...base, amount: 150, merchant: '路易莎', date: '2026-09-28' }, d, now)
+    await matchManually(st.id, entries[0].id, t.id, '', d, now)
+    await deferToNext(st.id, lou.id, d, now)
+    await deleteTransaction(t.id, d)
+    await deleteTransaction(lou.id, d)
+    const parsed = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(parsed.reconciliations.map((r) => r.status)).toEqual(['matched']) // the note on a deleted record is dropped
+    const other = new MoneyDB(`card-dangling-${n++}`)
+    await other.open()
+    await restoreBackup(parsed, other, now)
+    const r = reconcile({ statement: st, entries, transactions: await other.transactions.toArray(), recons: await other.reconciliations.toArray() })
+    expect(r.items.find((i) => 'entry' in i && i.entry.id === entries[0].id)?.kind).toBe('broken')
+    other.close()
+  })
+
   it('range restore leaves card data alone; a pair whose record was replaced shows as broken; undo restores', async () => {
     const st = await saveStatement(statementInput(), {}, d, now)
     const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
