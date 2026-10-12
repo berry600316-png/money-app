@@ -1,6 +1,6 @@
 import { PAYSLIP_SOURCE } from '../db/defaults'
 import type { Transaction } from '../db/types'
-import { isCard } from '../lib/accounts'
+import { describePay, isCard } from '../lib/accounts'
 import { dayLabel, timeLabel } from '../lib/dates'
 import { fmt } from '../lib/money'
 import { groupByDay } from '../lib/stats'
@@ -10,7 +10,7 @@ import { useRefData } from './refData'
 
 /** `showTime`: the day panel (D-115) lists one day, so the time leads the second line. */
 export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpen: (id: string) => void; showTime?: boolean }) {
-  const { category, payment } = useRefData()
+  const { category, payment, payments } = useRefData()
   const reconciled = useIsReconciled(tx)
   const time = showTime ? timeLabel(new Date(tx.occurredAt)) : ''
 
@@ -35,8 +35,9 @@ export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpe
   }
 
   const c = category(tx.categoryId)
-  // D-120: paid with 轉帳 / 行動支付 — show where the money actually left.
-  const pay = payment(tx.paymentMethodId).name + (tx.sourceAccountId ? `（${payment(tx.sourceAccountId).name}）` : '')
+  // D-120 / D-125: the way to pay, with the account it draws on: "信用卡（台新 Richart）".
+  const how = tx.type === 'expense' ? describePay(tx, (id) => payments.find((p) => p.id === id)) : null
+  const pay = how ? how.name + (how.account ? `（${how.account}）` : '') : payment(tx.paymentMethodId).name
   const sub = [time, c.name, pay, tx.note].filter(Boolean).join(' · ')
   const income = tx.type === 'income'
   return (

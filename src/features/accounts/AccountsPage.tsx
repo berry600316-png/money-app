@@ -21,7 +21,8 @@ const startLabel = (iso: string) => {
 
 /**
  * D-123: 我的帳戶. The total of bank / cash / stored value on top, card 預扣 in small print under it
- * (Q88 A); each card sits under the account that pays it (Q89 A).
+ * (Q88 A). D-125: cards are ways to pay, not rows of their own; a bank shows its cards' 預扣 and what is
+ * left after paying them, with one 繳卡費 button.
  */
 export function AccountsPage({
   backLabel,
@@ -67,7 +68,38 @@ export function AccountsPage({
     )
   }
 
-  const looseCards = accounts.filter((p) => isCard(p) && shown(p) && !(p.payFromId && accounts.some((a) => a.id === p.payFromId)))
+  const looseCards = accounts.filter((p) => isCard(p) && shown(p) && !(p.payFromId && accounts.some((a) => a.id === p.payFromId && a.type === 'bank')))
+
+  /** Under a bank: its cards' 預扣, what is left after paying them, and 繳卡費 for the card owing most. */
+  const pendingLine = (a: PaymentMethod, b: number | undefined) => {
+    const { cards, pending } = cardsPaidFrom(a.id, accounts, balances ?? new Map())
+    const live = cards.filter(shown)
+    if (!live.length) return null
+    const owing = [...live].sort((x, y) => (balances?.get(y.id) ?? 0) - (balances?.get(x.id) ?? 0))[0]
+    return (
+      <div className="acc-pend">
+        <span className="acc-pend-t">
+          {pending > 0 ? (
+            <>
+              卡費預扣 <b className="num">{fmt(pending)}</b>
+              {b !== undefined && (
+                <>
+                  {' · '}扣完剩 <b className="num">{fmt(b - pending)}</b>
+                </>
+              )}
+            </>
+          ) : (
+            '信用卡已繳清'
+          )}
+        </span>
+        {pending > 0 && (
+          <button type="button" className="chip-btn" onClick={() => onPayCard(owing, balances?.get(owing.id) ?? 0)}>
+            繳卡費
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -116,7 +148,6 @@ export function AccountsPage({
             <div className="set-card">
               {list.map((a) => {
                 const b = balances?.get(a.id)
-                const { cards } = cardsPaidFrom(a.id, accounts, balances ?? new Map())
                 return (
                   <div key={a.id} className="acc-group">
                     <button type="button" className={'srow acc-row' + (a.isActive ? '' : ' off')} onClick={() => onOpen(a.id)}>
@@ -126,7 +157,7 @@ export function AccountsPage({
                       </span>
                       {b === undefined ? <span className="s-val acc-set">設定 ›</span> : <span className={'acc-v num' + (b < 0 ? ' neg' : '')}>{fmt(b)}</span>}
                     </button>
-                    {cards.filter(shown).map(cardRow)}
+                    {a.type === 'bank' && pendingLine(a, b)}
                   </div>
                 )
               })}
@@ -137,9 +168,9 @@ export function AccountsPage({
 
       {looseCards.length > 0 && (
         <div className="set-sec">
-          <h2>信用卡・未指定繳款帳戶</h2>
+          <h2>信用卡・還沒指定銀行</h2>
           <div className="set-card">{looseCards.map(cardRow)}</div>
-          <p className="set-foot">第一次繳卡費時選的帳戶會被記住，之後這張卡就掛在那個帳戶下面。</p>
+          <p className="set-foot">到設定把卡指定給一個銀行帳戶，刷卡的預扣就會算在那個帳戶；第一次從銀行繳這張卡的卡費時也會自動記住。</p>
         </div>
       )}
 
@@ -147,7 +178,7 @@ export function AccountsPage({
         <Icon name="plus" />
         新增帳戶
       </button>
-      <p className="set-foot">「轉帳」「行動支付」是付款方式，不是帳戶：記帳時選了它們，會再問錢從哪個帳戶出。</p>
+      <p className="set-foot">信用卡、行動支付、轉帳是付款方式，掛在帳戶底下：刷卡先記為那個銀行的預扣，繳卡費時才真的扣款。點銀行可看每張卡的預扣。</p>
 
       <SetupSheet open={setup} accounts={ov?.unset ?? []} onClose={() => setSetup(false)} />
     </>

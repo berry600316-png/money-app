@@ -27,6 +27,8 @@ export interface TxInput {
   toAccountId?: string
   /** Expenses paid with 轉帳 / 行動支付 / 其他: the account the money left (D-120). */
   sourceAccountId?: string
+  /** Expenses paid with a 行動支付 / 其他 bound to a card: the card charged (D-125). */
+  cardId?: string
   /** Transfers: a fee, saved as its own expense from the source account (D-121). 0 / absent = none. */
   fee?: number
 }
@@ -71,9 +73,15 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
   const [cat, pay] = await Promise.all([d.categories.get(input.categoryId), d.paymentMethods.get(input.paymentMethodId)])
   if (!cat || cat.type !== input.type) throw new MoneyError('請選擇分類')
   if (!pay) throw new MoneyError('請選擇付款方式')
+  if (input.sourceAccountId !== undefined && input.cardId !== undefined) throw new MoneyError('付款方式不正確')
   if (input.sourceAccountId !== undefined) {
     if (input.type !== 'expense' || !isMethod(pay)) throw new MoneyError('付款方式不正確')
     if (!isAsset(await d.paymentMethods.get(input.sourceAccountId))) throw new MoneyError('請選擇從哪個帳戶付')
+  }
+  // D-125: only a 行動支付 / 其他 can be charged to a card through its binding.
+  if (input.cardId !== undefined) {
+    if (input.type !== 'expense' || (pay.type !== 'mobile' && pay.type !== 'other')) throw new MoneyError('付款方式不正確')
+    if (!isCard(await d.paymentMethods.get(input.cardId))) throw new MoneyError('綁定的信用卡不存在')
   }
 }
 
@@ -115,8 +123,9 @@ async function syncFee(d: MoneyDB, transfer: Transaction | null, transferId: str
 /** D-119: the first bill paid for a card without a paying account makes that account its payer. */
 async function rememberPayer(d: MoneyDB, t: Transaction) {
   if (t.type !== 'transfer' || !t.toAccountId) return
-  const card = await d.paymentMethods.get(t.toAccountId)
-  if (card && isCard(card) && !card.payFromId) await d.paymentMethods.put({ ...card, payFromId: t.paymentMethodId })
+  const [card, from] = await Promise.all([d.paymentMethods.get(t.toAccountId), d.paymentMethods.get(t.paymentMethodId)])
+  // D-125: a card belongs to a bank, so only a bank paying it is remembered.
+  if (card && isCard(card) && !card.payFromId && from?.type === 'bank') await d.paymentMethods.put({ ...card, payFromId: t.paymentMethodId })
 }
 
 /** The stored instant for a date + time; the current minute keeps the exact current instant (stable order). */
@@ -139,9 +148,10 @@ function clean(input: TxInput) {
 }
 
 /** The optional account links: only the one that fits the type is kept (D-117, D-120). */
-function links(input: TxInput): Pick<Transaction, 'toAccountId' | 'sourceAccountId'> {
+function links(input: TxInput): Pick<Transaction, 'toAccountId' | 'sourceAccountId' | 'cardId'> {
   if (input.type === 'transfer') return { toAccountId: input.toAccountId }
   if (input.type === 'expense' && input.sourceAccountId) return { sourceAccountId: input.sourceAccountId }
+  if (input.type === 'expense' && input.cardId) return { cardId: input.cardId }
   return {}
 }
 
@@ -199,6 +209,7 @@ export async function updateTransaction(id: string, input: TxInput, d: MoneyDB =
     }
     delete next.toAccountId
     delete next.sourceAccountId
+    delete next.cardId
     Object.assign(next, links(input))
     if (!keepTime) delete next.timeSource
     // D-20 "last used" follows new entries only; correcting an old record doesn't change the default.
@@ -342,10 +353,17 @@ function checkStart(ymd: string, amount: number, now: Date) {
   if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAX_AMOUNT) throw new MoneyError(`金額需為 0 到 ${MAX_AMOUNT.toLocaleString('en-US')} 的整數`)
 }
 
-/** D-119: a card's paying account must be one that holds money. */
+/** D-119 / D-125: a card belongs to a bank account; its 預扣 shows there and its bill is paid from it. */
 async function checkPayer(d: MoneyDB, type: PaymentType, payFromId: string | undefined) {
   if (type !== 'credit_card' || !payFromId) return
-  if (!isAsset(await d.paymentMethods.get(payFromId))) throw new MoneyError('繳卡費的帳戶不正確')
+  if ((await d.paymentMethods.get(payFromId))?.type !== 'bank') throw new MoneyError('信用卡要屬於一個銀行帳戶')
+}
+
+/** D-125: a 行動支付 / 其他 is bound to a card or to an account that holds money. */
+async function checkBinding(d: MoneyDB, type: PaymentType, boundTo: string | undefined, selfId?: string) {
+  if ((type !== 'mobile' && type !== 'other') || !boundTo) return
+  const target = await d.paymentMethods.get(boundTo)
+  if (boundTo === selfId || !(isCard(target) || isAsset(target))) throw new MoneyError('綁定的卡或帳戶不正確')
 }
 
 export interface AccountInput {
@@ -353,8 +371,10 @@ export interface AccountInput {
   type: PaymentType
   bank?: string
   cardLast4?: string
-  /** Cards: the account the bill is paid from (D-119). */
+  /** Cards: the bank account it belongs to (D-119, D-125). */
   payFromId?: string
+  /** 行動支付 / 其他: the card or account it is bound to (D-125). */
+  boundTo?: string
   /** Accounts and cards: start counting from `start.date` with `start.amount` (D-118). */
   start?: { date: string; amount: number }
 }
@@ -367,6 +387,7 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
     const all = await d.paymentMethods.toArray()
     if (all.some((p) => p.name === name)) throw new MoneyError(`已經有「${name}」這個名稱`)
     await checkPayer(d, input.type, input.payFromId)
+    await checkBinding(d, input.type, input.boundTo)
     const pm: PaymentMethod = {
       id: newId(),
       name,
@@ -375,6 +396,7 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
       sortOrder: all.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1,
       ...card,
       ...(input.type === 'credit_card' && input.payFromId ? { payFromId: input.payFromId } : {}),
+      ...((input.type === 'mobile' || input.type === 'other') && input.boundTo ? { boundTo: input.boundTo } : {}),
       ...(input.start && !isMethod({ type: input.type }) ? { balanceFrom: startInstant(input.start.date, now), openingBalance: input.start.amount } : {}),
     }
     await d.paymentMethods.add(pm)
@@ -392,6 +414,8 @@ export async function updatePaymentMethod(
     cardLast4?: string
     /** '' clears it. */
     payFromId?: string
+    /** '' clears it (D-125). */
+    boundTo?: string
     /** null = stop counting ("尚未設定餘額"). */
     start?: { date: string; amount: number } | null
   },
@@ -427,6 +451,12 @@ export async function updatePaymentMethod(
       else delete next.payFromId
     }
     if (next.type !== 'credit_card') delete next.payFromId
+    if (patch.boundTo !== undefined) {
+      await checkBinding(d, next.type, patch.boundTo, id)
+      if (patch.boundTo) next.boundTo = patch.boundTo
+      else delete next.boundTo
+    }
+    if (next.type !== 'mobile' && next.type !== 'other') delete next.boundTo
     if (patch.start !== undefined) {
       if (patch.start) {
         // The same date and amount keep the stored instant; a change starts counting afresh (D-118).

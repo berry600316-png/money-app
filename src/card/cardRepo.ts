@@ -4,6 +4,7 @@
 import { db, type MoneyDB } from '../db/db'
 import { MoneyError } from '../db/repo'
 import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../db/types'
+import { chargedTo } from '../lib/accounts'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
 import { isValidAmount } from '../lib/money'
 import type { PlanRow } from './importPlan'
@@ -232,7 +233,7 @@ export async function updateStatement(
 
 /* ---------------- reconciliation decisions (Phase 3) ---------------- */
 
-const snapshotOf = (t: Transaction) => ({ amount: t.amount, date: txDate(t), paymentMethodId: t.paymentMethodId })
+const snapshotOf = (t: Transaction) => ({ amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t) })
 
 async function assertFree(entryId: string, txId: string, d: MoneyDB, ignoreReconId?: string) {
   const onEntry = (await d.reconciliations.where('entryId').equals(entryId).toArray()).filter((r) => r.status === 'matched' && r.id !== ignoreReconId)
@@ -274,7 +275,7 @@ async function loadPair(statementId: string, entryId: string, transactionId: str
   const [tx, entry, st] = await Promise.all([d.transactions.get(transactionId), d.statementEntries.get(entryId), d.cardStatements.get(statementId)])
   if (!tx || !entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆資料')
   if (tx.type !== 'expense') throw new MoneyError('只能和支出配對')
-  if (tx.paymentMethodId !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
+  if (chargedTo(tx) !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
   return { tx, entry }
 }
 

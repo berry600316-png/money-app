@@ -6,6 +6,7 @@ import './styles/app.css'
 import { App } from './App'
 import { db } from './db/db'
 import { watchTextScale } from './lib/textScale'
+import { watchFitText } from './ui/fitText'
 import { Launch, markAppReady } from './ui/Launch'
 
 /** Shown when IndexedDB cannot be opened (blocked storage, private mode, quota). Nothing is deleted. */
@@ -62,6 +63,7 @@ function Root() {
 }
 
 watchTextScale()
+watchFitText()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <Root />

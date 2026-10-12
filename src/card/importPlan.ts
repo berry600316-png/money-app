@@ -3,6 +3,7 @@
  * suggest a category. Pure: the UI shows the plan; db/cardRepo commits the user's choices.
  */
 import type { Category, PaymentMethod, TimeSource, Transaction } from '../db/types'
+import { chargedTo } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 import { suggestCategory, type MerchantHistory } from './categorize'
 import type { NotificationCapture } from './notificationFile'
@@ -116,7 +117,8 @@ export function planImport(input: PlanInput): PlanRow[] {
     }
     const me = { amount: row.amount, occurredAt, merchant: row.merchant, card }
     const dupTx = input.transactions.find(
-      (t) => t.type === 'expense' && sameSpend(me, { amount: t.amount, occurredAt: t.occurredAt, merchant: t.merchant, card: t.paymentMethodId }),
+      // A purchase already recorded through a 行動支付 charged to this card is the same spend (D-125).
+      (t) => t.type === 'expense' && sameSpend(me, { amount: t.amount, occurredAt: t.occurredAt, merchant: t.merchant, card: chargedTo(t) }),
     )
     const dupRow = rows.find((p) => (p.status === 'new' || p.status === 'suspect') && sameSpend(me, { amount: p.amount, occurredAt: p.occurredAt, merchant: p.merchant, card: p.paymentMethodId }))
     if (r.doubt) {

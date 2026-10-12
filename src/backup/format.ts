@@ -187,6 +187,7 @@ export function parseBackup(text: string): BackupFile {
     const hasStart = p.balanceFrom !== undefined || p.openingBalance !== undefined
     if (hasStart && (!isIso(p.balanceFrom) || !isMoney0(p.openingBalance))) fail(`帳戶「${p.name}」的起始餘額不正確`)
     if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`信用卡「${p.name}」的繳款帳戶不正確`)
+    if (p.boundTo !== undefined && !isStr(p.boundTo)) fail(`付款方式「${p.name}」的綁定不正確`)
     return {
       id: p.id,
       name: p.name,
@@ -197,15 +198,18 @@ export function parseBackup(text: string): BackupFile {
       ...(isStr(p.cardLast4) ? { cardLast4: p.cardLast4 } : {}),
       ...(hasStart ? { balanceFrom: p.balanceFrom as string, openingBalance: p.openingBalance as number } : {}),
       ...(isStr(p.payFromId) ? { payFromId: p.payFromId } : {}),
+      ...(isStr(p.boundTo) ? { boundTo: p.boundTo } : {}),
     }
   })
   checkUnique(paymentMethods, '付款方式')
-  // A card's paying account must be in the file and hold money; otherwise the link is dropped (D-119).
+  // A card belongs to a bank account in the file, and a 行動支付 / 其他 is bound to a card or an account
+  // in the file; otherwise the link is dropped and it simply counts in no account (D-119, D-125).
   const payById = new Map(paymentMethods.map((p) => [p.id, p]))
   for (const p of paymentMethods) {
-    if (p.payFromId === undefined) continue
-    const payer = payById.get(p.payFromId)
-    if (p.type !== 'credit_card' || !payer || !isAssetType(payer.type)) delete p.payFromId
+    if (p.payFromId !== undefined && (p.type !== 'credit_card' || payById.get(p.payFromId)?.type !== 'bank')) delete p.payFromId
+    if (p.boundTo === undefined) continue
+    const target = payById.get(p.boundTo)
+    if ((p.type !== 'mobile' && p.type !== 'other') || !target || p.boundTo === p.id || !(target.type === 'credit_card' || isAssetType(target.type))) delete p.boundTo
   }
 
   // D-15: the restored data must leave the app usable.
@@ -232,6 +236,13 @@ export function parseBackup(text: string): BackupFile {
       if (t.toAccountId !== undefined) fail(`第 ${n} 筆交易不是互轉，卻有轉入帳戶`)
     }
     if (t.sourceAccountId !== undefined && (t.type !== 'expense' || !isStr(t.sourceAccountId) || !payIds.has(t.sourceAccountId))) fail(`第 ${n} 筆交易的扣款帳戶不正確`)
+    // D-125: a card charged through a bound 行動支付 / 其他.
+    if (
+      t.cardId !== undefined &&
+      (t.type !== 'expense' || t.sourceAccountId !== undefined || !isStr(t.cardId) || payById.get(t.cardId)?.type !== 'credit_card' || !['mobile', 'other'].includes(payById.get(t.paymentMethodId as string)?.type ?? ''))
+    ) {
+      fail(`第 ${n} 筆交易的信用卡不正確`)
+    }
     if (t.feeOf !== undefined && (t.type !== 'expense' || !isStr(t.feeOf))) fail(`第 ${n} 筆手續費的互轉連結不正確`)
     if (!isIso(t.occurredAt) || !isIso(t.createdAt) || !isIso(t.updatedAt)) fail(`第 ${n} 筆交易的時間不正確`)
     if (!isStr(t.merchant) || !isStr(t.note) || !isStr(t.source)) fail(`第 ${n} 筆交易的文字欄位不正確`)
@@ -253,6 +264,7 @@ export function parseBackup(text: string): BackupFile {
       ...(t.timeSource ? { timeSource: t.timeSource as Transaction['timeSource'] } : {}),
       ...(isStr(t.toAccountId) ? { toAccountId: t.toAccountId } : {}),
       ...(isStr(t.sourceAccountId) ? { sourceAccountId: t.sourceAccountId } : {}),
+      ...(isStr(t.cardId) ? { cardId: t.cardId } : {}),
       ...(isStr(t.feeOf) ? { feeOf: t.feeOf } : {}),
     }
   })
@@ -626,8 +638,9 @@ export function toCsv(
         names.payment(t.paymentMethodId),
         t.merchant,
         t.note,
-        // The account the money actually moved in: for 轉帳 / 行動支付 the account it left (D-120).
-        names.payment(t.sourceAccountId ?? t.paymentMethodId),
+        // The account the money actually moved in: for 轉帳 / 行動支付 the account it left (D-120), or the
+        // card it was charged to through a bound 行動支付 (D-125).
+        names.payment(t.sourceAccountId ?? t.cardId ?? t.paymentMethodId),
         t.toAccountId ? names.payment(t.toAccountId) : '',
       ]
         .map(csvCell)

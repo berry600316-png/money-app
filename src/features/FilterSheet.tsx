@@ -53,6 +53,7 @@ export function FilterSheet({
     () => ({
       month,
       isCard: (id: string) => ref.payments.find((p) => p.id === id)?.type === 'credit_card',
+      homeOf: (id: string) => ref.payments.find((p) => p.id === id)?.payFromId,
       names: { category: (id: string) => ref.category(id).name, payment: (id: string) => ref.payment(id).name },
     }),
     [month, ref],

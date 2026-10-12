@@ -164,16 +164,14 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
   let nextPayOrder = pays.reduce((m, p) => Math.max(m, p.sortOrder), -1)
   const needPayment = (id: string) => {
     if (payIds.has(id) || newPayments.some((p) => p.id === id)) return
-    const p: PaymentMethod = { ...bPay.get(id)!, sortOrder: ++nextPayOrder }
-    // A card coming back keeps its paying account only if that account exists here (D-119).
-    if (p.payFromId && !payIds.has(p.payFromId)) delete p.payFromId
-    newPayments.push(p)
+    newPayments.push({ ...bPay.get(id)!, sortOrder: ++nextPayOrder })
   }
   for (const t of incoming) {
     // Every account a record touches must exist after the restore (D-124); transfers have no category.
     needPayment(t.paymentMethodId)
     if (t.toAccountId) needPayment(t.toAccountId)
     if (t.sourceAccountId) needPayment(t.sourceAccountId)
+    if (t.cardId) needPayment(t.cardId)
     if (t.type === 'transfer') continue
     const existing = catById.get(t.categoryId)
     if (existing && existing.type !== t.type) {
@@ -216,6 +214,14 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
       if (have && have.kind !== want.kind) throw new BackupError(`薪資項目「${have.name}」在備份和目前的應發／應扣不同，無法還原這段期間`)
       if (!have && !newSalaryItems.some((i) => i.id === l.itemId)) newSalaryItems.push({ ...want, sortOrder: ++nextItemOrder[want.kind] })
     }
+  }
+
+  // A card or 行動支付 coming back keeps its bank / binding only if that account or card is here after the
+  // restore, whether it already was or comes back in this same restore (D-119, D-125).
+  const after = new Set([...payIds, ...newPayments.map((p) => p.id)])
+  for (const p of newPayments) {
+    if (p.payFromId && !after.has(p.payFromId)) delete p.payFromId
+    if (p.boundTo && !after.has(p.boundTo)) delete p.boundTo
   }
 
   return {
