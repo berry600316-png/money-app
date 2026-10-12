@@ -105,7 +105,7 @@ export function searchTx(
   const asAmount = q.replace(/[,\s]/g, '')
   return list.filter((t) => {
     if (/^\d+$/.test(asAmount) && String(t.amount) === asAmount) return true
-    const accounts = [t.paymentMethodId, t.toAccountId, t.sourceAccountId].filter((x): x is string => !!x).map(names.payment)
+    const accounts = [t.paymentMethodId, t.toAccountId, t.sourceAccountId, t.cardId].filter((x): x is string => !!x).map(names.payment)
     const hay = `${t.merchant} ${t.note} ${t.type === 'transfer' ? '互轉' : names.category(t.categoryId)} ${accounts.join(' ')}`.toLowerCase()
     return hay.includes(q)
   })
@@ -151,7 +151,13 @@ export function isFiltered(f: TxFilter): boolean {
 export function filterTx(
   list: readonly Transaction[],
   f: TxFilter,
-  ctx: { month: YearMonth; isCard: (paymentId: string) => boolean; names: { category: (id: string) => string; payment: (id: string) => string } },
+  ctx: {
+    month: YearMonth
+    isCard: (paymentId: string) => boolean
+    /** D-125: the account a card belongs to, so filtering by a bank also shows its cards' spending. */
+    homeOf?: (paymentId: string) => string | undefined
+    names: { category: (id: string) => string; payment: (id: string) => string }
+  },
 ): Transaction[] {
   const mode = effectiveDateMode(f)
   let l = list.filter((t) => {
@@ -162,16 +168,24 @@ export function filterTx(
     }
     if (f.type !== 'all' && t.type !== f.type) return false
     if (f.categoryIds.length && !f.categoryIds.includes(t.categoryId)) return false
-    if (f.payment !== null && !touches(t, f.payment === ALL_CARDS ? ctx.isCard : (id) => id === f.payment)) return false
+    if (f.payment !== null && !touches(t, f.payment === ALL_CARDS ? ctx.isCard : (id) => id === f.payment, ctx.homeOf)) return false
     return true
   })
   if (f.q.trim()) l = searchTx(l, f.q, ctx.names)
   return sortDesc(l)
 }
 
-/** D-123: an account filter shows everything that moved money in that account, including transfers to it. */
-function touches(t: Transaction, match: (id: string) => boolean): boolean {
-  return match(t.paymentMethodId) || (!!t.toAccountId && match(t.toAccountId)) || (!!t.sourceAccountId && match(t.sourceAccountId))
+/**
+ * D-123 / D-125: an account filter shows everything that moved money in that account, including transfers
+ * to it, cards charged through a 行動支付, and (for a bank) the spending on its cards.
+ */
+function touches(t: Transaction, match: (id: string) => boolean, homeOf?: (id: string) => string | undefined): boolean {
+  return [t.paymentMethodId, t.toAccountId, t.sourceAccountId, t.cardId].some((id) => {
+    if (!id) return false
+    if (match(id)) return true
+    const home = homeOf?.(id)
+    return !!home && match(home)
+  })
 }
 
 /* ---------------- yearly overview (D-104) ---------------- */

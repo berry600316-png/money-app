@@ -151,8 +151,9 @@ svg { display: block; }
 .ico { flex: none; width: 36px; height: 36px; border-radius: 11px; background: var(--fill); display: grid; place-items: center; color: var(--brand); }
 .ico svg { width: 20px; height: 20px; }
 .row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.row-title { font-size: 1rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.row-sub { font-size: 0.8125rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row-title { font-size: 1rem; font-weight: 500; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
+/* Wraps to a second line instead of cutting words off (hints like 「點一下確認」 must stay readable). */
+.row-sub { font-size: 0.8125rem; line-height: 1.4; color: var(--ink-2); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 .row-amt { flex: none; font-size: 1.125rem; font-weight: 500; }
 .row-amt.income { color: var(--sky); }
 
@@ -191,7 +192,7 @@ svg { display: block; }
 .filter-btn svg { width: 18px; height: 18px; color: var(--ink-2); }
 .filter-btn.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
 .filter-btn.on svg { color: var(--brand); }
-.mode-pill { display: inline-flex; align-items: baseline; gap: 6px; border: 0; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; border-radius: 16px; min-height: 34px; padding: 0 12px; font-size: 0.875rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.mode-pill { display: inline-flex; align-items: center; gap: 6px; border: 0; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; border-radius: 16px; min-height: 34px; padding: 0 12px; font-size: 0.875rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .mode-pill small { font-weight: 400; font-size: 0.75rem; color: var(--ink-2); }
 .f-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .f-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 8px 0 11px; border: 0; border-radius: 15px; background: var(--brand-soft); color: var(--brand); font-size: 0.8125rem; font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -209,7 +210,7 @@ svg { display: block; }
 .filter-sheet .f-note { font-size: 0.75rem; color: var(--ink-2); margin: 8px 4px 0; }
 .filter-sheet .f-err { font-size: 0.75rem; color: var(--danger); margin: 8px 4px 0; }
 .opt-set { display: flex; flex-wrap: wrap; gap: 8px; }
-.opt { display: inline-flex; align-items: baseline; gap: 4px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.875rem; color: var(--ink); }
+.opt { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.875rem; color: var(--ink); }
 .opt small { font-size: 0.75rem; color: var(--ink-2); }
 .opt[aria-pressed='true'] { background: var(--brand); color: #fff; box-shadow: none; }
 .opt[aria-pressed='true'] small { color: rgba(255, 255, 255, 0.75); }
@@ -271,7 +272,7 @@ svg { display: block; }
 .toast.error { background: var(--danger); }
 .t-ic { width: 22px; height: 22px; border-radius: 11px; background: rgba(255, 255, 255, 0.16); display: grid; place-items: center; flex: none; }
 .t-ic svg { width: 14px; height: 14px; stroke-width: 2.4; }
-.t-msg { padding-right: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-msg { padding-right: 4px; min-width: 0; line-height: 1.4; overflow-wrap: anywhere; }
 .toast button { flex: none; border: 0; background: rgba(255, 255, 255, 0.16); color: #fff; border-radius: 16px; min-height: 32px; padding: 0 14px; font-size: 0.875rem; font-weight: 600; }
 
 /* ---------- pushed pages (settings and sub-pages) ---------- */
@@ -303,6 +304,9 @@ button.srow:disabled:active { background: transparent; }
 .srow .chev { width: 16px; height: 16px; color: var(--muted-ink); flex: none; }
 .srow.off .s-main { color: var(--ink-2); }
 .srow.add { color: var(--brand); font-weight: 500; }
+/* D-125: a card or 行動支付 listed under the account it belongs to. */
+.srow.sub { padding-left: 32px; font-size: 0.9375rem; }
+.srow.sub + .srow::before, .srow + .srow.sub::before { left: 32px; }
 .set-foot { font-size: 0.8125rem; line-height: 1.6; color: var(--ink-2); margin: 8px 16px 0; }
 .tag { display: inline-block; font-size: 0.6875rem; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 6px; background: var(--fill); color: var(--ink-2); margin-left: 6px; vertical-align: 1px; }
 .colophon { text-align: center; font-size: 0.75rem; color: var(--ink-2); margin-top: 28px; line-height: 1.6; }
@@ -336,13 +340,14 @@ button.srow:disabled:active { background: transparent; }
 .merchant { display: block; width: 100%; border: 0; background: none; text-align: center; font-size: 16px; height: 40px; outline: none; color: var(--ink); flex: none; }
 .merchant::placeholder { color: var(--ink-2); }
 .suggest { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 2px 0 4px; }
-.suggest button { display: inline-flex; align-items: baseline; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.875rem; }
+.suggest button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: 17px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.875rem; }
 .suggest button small { font-size: 0.75rem; color: var(--ink-2); }
+.suggest button svg { width: 16px; height: 16px; flex: none; color: var(--brand); }
 .suggest button:active { background: var(--fill); }
 .meta { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; flex: none; }
 .meta::-webkit-scrollbar { display: none; }
-.pill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 13px 0 11px; border-radius: 18px; border: 0; background: var(--card); font-size: 0.875rem; color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; cursor: pointer; overflow: hidden; }
-.pill svg { width: 16px; height: 16px; color: var(--ink-2); }
+.pill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 13px 0 11px; border-radius: 18px; border: 0; background: var(--card); font-size: 0.875rem; color: var(--ink); box-shadow: 0 0 0 1px var(--line) inset; cursor: pointer; overflow: hidden; white-space: nowrap; }
+.pill svg { width: 16px; height: 16px; color: var(--ink-2); flex: none; }
 .pill.on { box-shadow: 0 0 0 1.5px var(--brand) inset; }
 .pill small { font-size: 0.6875rem; color: var(--ink-2); margin-left: -2px; }
 .pill.approx { box-shadow: 0 0 0 1px var(--line) inset, 0 0 0 0 transparent; }
@@ -673,8 +678,9 @@ button.plan-card:active { transform: scale(0.985); }
 .lrow { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 0; border: 0; background: none; text-align: left; color: var(--ink); }
 button.lrow:active { background: var(--row-press); }
 .lrow + .lrow { border-top: 1px solid var(--line); }
-.lrow .op { font-family: var(--font-num); font-size: 1.125rem; color: var(--ink-2); text-align: center; }
-.lrow .l { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 0.9375rem; }
+/* The sign lines up with the item's name (first line), not the middle of name + note. */
+.lrow .op { align-self: start; font-family: var(--font-num); font-size: 1.125rem; line-height: calc(0.9375rem * 1.4); color: var(--ink-2); text-align: center; }
+.lrow .l { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 0.9375rem; line-height: 1.4; }
 .lrow .l small { font-size: 0.75rem; color: var(--ink-2); }
 .lrow .r { font-size: 1.1875rem; text-align: right; }
 .warn-inline { color: var(--danger) !important; }
@@ -807,23 +813,29 @@ button.lrow:active { background: var(--row-press); }
 
 /* entry sheet: three kinds, text-only categories, account pills, transfers */
 .sheet-bar .kind-seg { width: 200px; }
-.cats { display: flex; gap: 8px; overflow-x: auto; margin: 10px -16px 0; padding: 4px 16px 6px; scrollbar-width: none; flex: none; }
-.cats::-webkit-scrollbar { display: none; }
-.cat { flex: none; min-height: 38px; padding: 0 15px; border: 0; border-radius: 19px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.9375rem; color: var(--ink); transition: background 0.2s, color 0.2s, transform 0.15s; }
-.cat[aria-pressed='true'] { background: var(--brand); color: #fff; box-shadow: none; font-weight: 600; }
-.cat:active { transform: scale(0.96); }
+/* D-127: category icon tiles in 記一筆, name under the icon. The name wraps to two lines instead of
+   being cut at 60px (the old bug), and the tile keeps its size at every text size. */
+.chips { display: flex; align-items: flex-start; gap: 6px; overflow-x: auto; margin: 10px -16px 0; padding: 4px 16px 6px; scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 16px; flex: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 64px; padding: 6px 0 4px; border: 0; border-radius: 16px; background: transparent; font-size: 0.75rem; line-height: 1.25; color: var(--ink-2); scroll-snap-align: start; transition: color 0.2s; }
+.chip .name { max-width: 62px; text-align: center; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.chip .ico { width: 44px; height: 44px; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; transition: background 0.25s, color 0.25s, transform 0.2s; }
+.chip .ico svg { width: 22px; height: 22px; }
+.chip[aria-pressed='true'] { color: var(--ink); font-weight: 600; }
+.chip[aria-pressed='true'] .ico { background: var(--brand); color: #fff; box-shadow: none; }
+.chip:active .ico { transform: scale(0.92); }
 .meta { flex-wrap: wrap; overflow: visible; }
-.pill.key { box-shadow: 0 0 0 1.5px var(--brand) inset; }
-.pill.key small { margin-left: 0; color: var(--ink-2); font-size: 0.75rem; }
-.pill-in { animation: pill-in 0.3s var(--ease) both; }
-@keyframes pill-in { from { opacity: 0; transform: translateX(-6px); } }
+/* The way to pay / account pill. Not `.key`: that is the keypad button (grid, 27px digits). */
+.pill.pill-pay { box-shadow: 0 0 0 1.5px var(--brand) inset; max-width: 100%; height: auto; min-height: 36px; padding-block: 7px; white-space: normal; }
+.pill.pill-pay span { min-width: 0; line-height: 1.3; overflow-wrap: anywhere; }
+.pill.pill-pay small { margin-left: 0; color: var(--ink-2); font-size: 0.75rem; flex: none; }
 .move-cap { margin: 2px 0 0; text-align: center; font-size: 0.875rem; color: var(--ink-2); flex: none; }
 .move-tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); font-size: 0.75rem; font-weight: 600; vertical-align: 1px; }
 .move { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; margin-top: 10px; flex: none; }
 .mv { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; min-height: 66px; padding: 10px 12px; border: 0; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; text-align: left; }
 .mv:active { background: var(--row-press); }
 .mv small { font-size: 0.75rem; color: var(--ink-2); }
-.mv b { font-size: 0.9375rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv b { font-size: 0.9375rem; font-weight: 600; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 .mv span { font-size: 0.75rem; color: var(--ink-2); }
 .swap-btn { width: 36px; height: 36px; border: 0; border-radius: 18px; background: var(--fill); display: grid; place-items: center; color: var(--ink-2); }
 .swap-btn svg { width: 18px; height: 18px; }
@@ -837,6 +849,7 @@ button.lrow:active { background: var(--row-press); }
 
 /* transfers in lists: no sign, quiet colour, never in the day totals */
 .row-amt.transfer { color: var(--ink-2); }
+.row-amt.pending { color: var(--ink-2); }
 .row-amt small { display: block; font-family: var(--font-ui); font-size: 0.6875rem; font-weight: 400; color: var(--ink-2); text-align: right; }
 .sumbar-move { grid-template-columns: auto 1fr; font-size: 0.8125rem; color: var(--ink-2); }
 
@@ -844,6 +857,10 @@ button.lrow:active { background: var(--row-press); }
 .pk-body { padding: 0 0 8px; }
 .pk-g { font-size: 0.75rem; color: var(--ink-2); font-weight: 500; letter-spacing: 0.06em; margin: 16px 8px 6px; }
 .pk-g:first-child { margin-top: 4px; }
+/* D-125: a bank's name with its balance and 預扣 above the ways to pay from it. */
+.pk-gh { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.pk-gh span:first-child { color: var(--ink); font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.02em; }
+.pk-gh .num-ui { letter-spacing: 0; font-weight: 400; }
 .pk-row { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 54px; padding: 8px 16px; border: 0; background: none; text-align: left; }
 .pk-row:active { background: var(--row-press); }
 .pk-row + .pk-row::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--line); }
@@ -880,6 +897,11 @@ button.lrow:active { background: var(--row-press); }
 .acc-card-main { flex: 1; min-width: 0; display: flex; border: 0; background: none; padding: 0; text-align: left; color: var(--ink); }
 .acc-card .s-main { font-size: 0.9375rem; }
 .acc-card .s-sub .num { font-size: 0.875rem; }
+/* D-125: a bank's cards in one line under it. */
+.acc-pend { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 4px 12px 8px 16px; margin-top: -6px; }
+.acc-pend-t { flex: 1; min-width: 0; font-size: 0.8125rem; color: var(--ink-2); line-height: 1.4; }
+.acc-pend-t b { color: var(--ink); font-weight: 500; font-size: 0.875rem; }
+.acc-pend .chip-btn { flex: none; }
 .acc-link { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin-top: 12px; padding: 12px 16px; border: 0; border-radius: 16px; background: var(--sky-soft); color: var(--brand); font-size: 0.9375rem; text-align: left; }
 .acc-link small { display: block; margin-top: 2px; font-size: 0.75rem; color: var(--ink-2); }
 .acc-link b { font-weight: 500; font-size: 1.0625rem; }
@@ -892,6 +914,11 @@ button.lrow:active { background: var(--row-press); }
 .mv-btns svg { width: 18px; height: 18px; }
 .cdot { flex: none; width: 10px; height: 10px; border-radius: 5px; margin: 0 4px 0 2px; }
 .cdot.inc { background: var(--sky); }
+/* D-127: in 統計 the category icon carries its chart colour as a dot on the tile's corner. */
+.crow .ico { position: relative; }
+.crow .ico .cdot { position: absolute; right: -3px; bottom: -3px; margin: 0; width: 12px; height: 12px; border-radius: 6px; box-shadow: 0 0 0 2px var(--card); }
+/* A transfer is not a category: its tile is quiet. */
+.ico.ico-move { background: var(--fill); color: var(--ink-2); }
 .frow-sub { display: block; font-size: 0.75rem; color: var(--ink-2); margin-top: 1px; }
 .frow-val { font-size: 1.125rem; }
 .frow-val.muted { color: var(--muted-ink); }

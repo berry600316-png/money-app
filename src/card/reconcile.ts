@@ -4,6 +4,7 @@
  * what needs a person. Never writes; never changes a transaction.
  */
 import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../db/types'
+import { chargedTo } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 import { dayDiff, merchantSimilarity, SIMILAR_MERCHANT } from './text'
 
@@ -75,7 +76,7 @@ export function pairStillValid(recon: Reconciliation, tx: Transaction | undefine
   if (!s) return null
   if (s.amount !== tx.amount) return '記帳金額在核對後被修改'
   if (s.date !== txDate(tx)) return '記帳日期在核對後被修改'
-  if (s.paymentMethodId !== tx.paymentMethodId) return '記帳的付款方式在核對後被修改'
+  if (s.paymentMethodId !== chargedTo(tx)) return '記帳的付款方式在核對後被修改'
   return null
 }
 
@@ -129,8 +130,8 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     pending.push(e)
   }
 
-  // Candidates per entry: same card (input is already one card), exact amount, date within tolerance.
-  const available = input.transactions.filter((t) => t.type === 'expense' && t.paymentMethodId === statement.paymentMethodId && !used.has(t.id))
+  // Candidates per entry: same card (a 行動支付 charged to it counts too, D-125), exact amount, date within tolerance.
+  const available = input.transactions.filter((t) => t.type === 'expense' && chargedTo(t) === statement.paymentMethodId && !used.has(t.id))
   type Choice = { entry: StatementEntry; candidates: Transaction[]; pick: Transaction | null }
   const choices: Choice[] = pending.map((entry) => {
     const candidates = available.filter((t) => t.amount === entry.amount && entryDays(entry, t) !== null)

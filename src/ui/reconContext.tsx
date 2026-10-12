@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { db } from '../db/db'
 import type { Reconciliation, Transaction } from '../db/types'
+import { chargedTo } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 
 type Snap = NonNullable<Reconciliation['snapshot']>
@@ -21,5 +22,6 @@ export function ReconProvider({ children }: { children: ReactNode }) {
 /** True only while the pair still matches the record as it is now; no mark otherwise (no statement ≠ problem). */
 export function useIsReconciled(tx: Transaction): boolean {
   const s = useContext(Ctx).get(tx.id)
-  return !!s && s.amount === tx.amount && s.paymentMethodId === tx.paymentMethodId && s.date === toYmd(new Date(tx.occurredAt))
+  // D-125: compared with the card charged, so a 行動支付 bound to the card shows its mark too.
+  return !!s && s.amount === tx.amount && s.paymentMethodId === chargedTo(tx) && s.date === toYmd(new Date(tx.occurredAt))
 }

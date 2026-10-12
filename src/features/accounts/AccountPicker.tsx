@@ -1,17 +1,15 @@
 import type { PaymentMethod, PaymentType } from '../../db/types'
-import { isCard, isMethod } from '../../lib/accounts'
+import { cardsPaidFrom, isCard, isMethod, type PayGroup, type PayOption } from '../../lib/accounts'
 import { fmt } from '../../lib/money'
 import { BottomSheet } from '../../ui/BottomSheet'
 import { Icon } from '../../ui/Icon'
 import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
 
-/** Which accounts a picker offers (D-120). */
-export type PickRole = 'pay' | 'source' | 'into' | 'from' | 'to'
+/** Which accounts a picker offers (D-120). Paying an expense has its own picker (D-125). */
+export type PickRole = 'into' | 'from' | 'to'
 
 const TITLES: Record<PickRole, string> = {
-  pay: '從哪裡付',
-  source: '從哪個帳戶出',
   into: '存入哪個帳戶',
   from: '從哪個帳戶',
   to: '到哪個帳戶',
@@ -21,15 +19,133 @@ const GROUPS: { types: PaymentType[]; label: (role: PickRole) => string }[] = [
   { types: ['bank'], label: () => '銀行' },
   { types: ['cash'], label: () => '現金' },
   { types: ['stored_value'], label: () => '儲值' },
-  { types: ['credit_card'], label: (r) => (r === 'to' ? '信用卡（繳卡費）' : '信用卡（刷卡先記為預扣）') },
-  { types: ['transfer', 'mobile', 'other'], label: () => '其他付款方式' },
+  { types: ['credit_card'], label: () => '信用卡（繳卡費）' },
 ]
 
 export function allowedIn(role: PickRole, p: PaymentMethod, exclude?: string): boolean {
   if (p.id === exclude) return false
-  if (role === 'pay') return true
   if (role === 'to') return !isMethod(p)
   return !isMethod(p) && !isCard(p)
+}
+
+/**
+ * D-125: how an expense is paid, grouped by the account it draws on. One tap picks both the way to pay
+ * and the account; a card (or a 行動支付 bound to one) shows "預扣", anything else "直接扣".
+ */
+export function PayPicker({
+  open,
+  groups,
+  value,
+  recent,
+  balances,
+  onPick,
+  onClose,
+}: {
+  open: boolean
+  groups: readonly PayGroup[]
+  /** Key of the current choice (payKey). */
+  value: string
+  /** The option last used, shown first. */
+  recent: PayOption | undefined
+  balances: ReadonlyMap<string, number> | undefined
+  onPick: (o: PayOption) => void
+  onClose: () => void
+}) {
+  const ref = useRefData()
+  const note = (o: PayOption, account: PaymentMethod | null) => {
+    if (!account) return o.card ? `預扣 · ${o.card.name}，還沒指定銀行` : '不算進帳戶餘額'
+    if (o.card) return o.card.id === o.paymentMethodId ? '預扣' : `預扣 · ${o.card.name}`
+    if (o.paymentMethodId === account.id) {
+      const b = balances?.get(account.id)
+      return b === undefined ? '尚未設定餘額' : fmt(b)
+    }
+    return '直接扣'
+  }
+  const row = (o: PayOption, account: PaymentMethod | null, label = o.name) => (
+    <button
+      type="button"
+      key={o.key + label}
+      className="pk-row"
+      aria-pressed={o.key === value}
+      onClick={() => {
+        onPick(o)
+        onClose()
+      }}
+    >
+      <span className="pk-m">
+        <b>{label}</b>
+        {o.card?.cardLast4 && o.card.id === o.paymentMethodId && <small>···{o.card.cardLast4}</small>}
+      </span>
+      <span className={'pk-r ' + (account && o.paymentMethodId === account.id && balances?.has(account.id) ? 'num' : 'small')}>{note(o, account)}</span>
+      {o.key === value && <Icon name="check" className="pk-ck" />}
+    </button>
+  )
+  /** "餘額 52,300 · 預扣 8,320" beside a bank's name. */
+  const head = (a: PaymentMethod) => {
+    const b = balances?.get(a.id)
+    const { cards, pending } = cardsPaidFrom(a.id, ref.payments, balances ?? new Map())
+    if (b === undefined) return '尚未設定餘額'
+    return `餘額 ${fmt(b)}` + (cards.length && pending ? ` · 預扣 ${fmt(pending)}` : '')
+  }
+  const recentGroup = recent && groups.find((g) => g.options.some((o) => o.key === recent.key))
+  // Cash and stored value with nothing bound to them are one row each: list them together.
+  const singles = groups.filter((g) => g.account && g.account.type !== 'bank' && g.options.length === 1)
+
+  return (
+    <Overlay>
+      <BottomSheet
+        open={open}
+        onClose={onClose}
+        labelledBy="pay-picker-title"
+        className="picker-sheet"
+        head={
+          <div className="sheet-bar">
+            <button type="button" className="txt-btn" onClick={onClose}>
+              關閉
+            </button>
+            <h2 id="pay-picker-title">怎麼付</h2>
+            <span />
+          </div>
+        }
+      >
+        <div className="pk-body">
+          {recent && recentGroup && (
+            <>
+              <h3 className="pk-g">最近用過</h3>
+              <div className="set-card">
+                {row(recent, recentGroup.account, recentGroup.account && recentGroup.account.id !== recent.paymentMethodId ? `${recentGroup.account.name} · ${recent.name}` : recent.name)}
+              </div>
+            </>
+          )}
+          {groups
+            .filter((g) => g.account && !singles.includes(g))
+            .map((g) => (
+              <div key={g.account!.id}>
+                <h3 className="pk-g pk-gh">
+                  <span>{g.account!.name}</span>
+                  {g.account!.type === 'bank' && <span className="num-ui">{head(g.account!)}</span>}
+                </h3>
+                <div className="set-card">{g.options.map((o) => row(o, g.account))}</div>
+              </div>
+            ))}
+          {singles.length > 0 && (
+            <div>
+              <h3 className="pk-g">現金與儲值</h3>
+              <div className="set-card">{singles.map((g) => row(g.options[0], g.account))}</div>
+            </div>
+          )}
+          {groups
+            .filter((g) => !g.account)
+            .map((g) => (
+              <div key="loose">
+                <h3 className="pk-g">還沒指定帳戶（到設定指定後才會算進帳戶）</h3>
+                <div className="set-card">{g.options.map((o) => row(o, null))}</div>
+              </div>
+            ))}
+        </div>
+      </BottomSheet>
+    </Overlay>
+  )
 }
 
 /**
@@ -62,9 +178,7 @@ export function AccountPicker({
 
   const row = (p: PaymentMethod) => {
     const b = balances?.get(p.id)
-    const right = isMethod(p) ? (
-      <span className="pk-r small">{role === 'pay' ? '再選從哪個帳戶出' : ''}</span>
-    ) : b === undefined ? (
+    const right = b === undefined ? (
       <span className="pk-r small">尚未設定餘額</span>
     ) : (
       <span className="pk-r num">

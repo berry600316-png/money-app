@@ -16,7 +16,7 @@ import {
   type TxInput,
 } from '../db/repo'
 import type { CategoryType, PaymentMethod, TimeSource, TxType } from '../db/types'
-import { isAsset, isCard, isMethod } from '../lib/accounts'
+import { defaultPay, describePay, isAsset, isCard, isMethod, payGroups, payKey, type PayOption } from '../lib/accounts'
 import { dayLabel, fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { applyKey, fmt } from '../lib/money'
 import { requestPersistentStorage } from '../pwa/pwa'
@@ -26,7 +26,7 @@ import { useRefData } from '../ui/refData'
 import { Seg } from '../ui/Seg'
 import { useToast } from '../ui/Toast'
 import { useCloseGuard, useDirtyCheck, useDiscardAsking } from '../ui/discard'
-import { AccountPicker, allowedIn, type PickRole } from './accounts/AccountPicker'
+import { AccountPicker, allowedIn, PayPicker, type PickRole } from './accounts/AccountPicker'
 
 interface Draft {
   type: TxType
@@ -34,8 +34,10 @@ interface Draft {
   categoryId: string
   /** Expense: account or way to pay. Income: the account it went into. Transfer: the source account. */
   paymentMethodId: string
-  /** Expense paid with 轉帳 / 行動支付 / 其他: the account the money left (D-120). */
+  /** Expense paid with 轉帳 / a 行動支付 bound to an account: the account the money left (D-120, D-125). */
   sourceAccountId: string
+  /** Expense paid with a 行動支付 bound to a card: the card charged (D-125). */
+  cardId: string
   /** Transfer: the destination account (a card = paying its bill, D-119). */
   toAccountId: string
   /** Transfer fee digits (D-121). */
@@ -52,13 +54,13 @@ interface Draft {
 }
 
 /** Everything the user can change; the snapshot taken on open is compared with it (D-101). */
-const fieldsOf = (d: Draft, viaMethod: boolean) =>
+const fieldsOf = (d: Draft) =>
   JSON.stringify([
     d.type,
     d.amount,
     d.type === 'transfer' ? '' : d.categoryId,
     d.paymentMethodId,
-    viaMethod ? d.sourceAccountId : '',
+    d.type === 'expense' ? [d.sourceAccountId, d.cardId] : '',
     d.type === 'transfer' ? [d.toAccountId, d.fee] : '',
     d.date,
     d.time,
@@ -126,7 +128,7 @@ export function EntrySheet({
   const [feeRecord, setFeeRecord] = useState(false)
   const [saving, setSaving] = useState(false)
   const [typing, setTyping] = useState(false)
-  const [pick, setPick] = useState<PickRole | null>(null)
+  const [pick, setPick] = useState<PickRole | 'pay' | null>(null)
   const [merchantFocused, setMerchantFocused] = useState(false)
   const [suggestions, setSuggestions] = useState<{ merchant: string; categoryId: string }[]>([])
   const sheetRef = useRef<HTMLDivElement | null>(null)
@@ -139,8 +141,9 @@ export function EntrySheet({
   /** The stored date/time and its marker: the marker stays only while both are unchanged (D-100). */
   const openedAt = useRef<{ date: string; time: string; timeSource?: TimeSource }>({ date: '', time: '' })
   const guard = useCloseGuard('entry')
-  const viaMethod = !!draft && draft.type === 'expense' && isMethod(ref.payment(draft.paymentMethodId))
-  useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft, viaMethod) !== opened.current)
+  // D-125: ways to pay, grouped under the account each one draws on.
+  const groups = useMemo(() => payGroups(ref.payments), [ref.payments])
+  useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft) !== opened.current)
   const requestClose = () => guard(onClose)
   const asking = useDiscardAsking()
 
@@ -148,9 +151,10 @@ export function EntrySheet({
     const ok = ref.categories.find((c) => c.id === preferred && c.type === type && c.isActive)
     return ok ? ok.id : (ref.categories.find((c) => c.type === type && c.isActive)?.id ?? '')
   }
-  const activePayment = (preferred: string) => {
-    const ok = ref.payments.find((p) => p.id === preferred && p.isActive)
-    return ok ? ok.id : (ref.payments.find((p) => p.isActive)?.id ?? '')
+  /** An expense starts with the way to pay last used (D-20), with its account (D-125). */
+  const payFields = (methodId: string) => {
+    const o = defaultPay(groups, methodId, lastSource)
+    return { paymentMethodId: o?.paymentMethodId ?? '', sourceAccountId: o?.sourceAccountId ?? '', cardId: o?.cardId ?? '' }
   }
   /** The first of `preferred` allowed in `role`, else the first allowed account (D-120: remembered per role). */
   const pickFor = (role: PickRole, preferred: (string | undefined)[], exclude?: string) => {
@@ -174,7 +178,7 @@ export function EntrySheet({
     setSuggestions([])
     setFeeRecord(false)
     const start = (dr: Draft) => {
-      opened.current = fieldsOf(dr, dr.type === 'expense' && isMethod(ref.payment(dr.paymentMethodId)))
+      opened.current = fieldsOf(dr)
       openedAt.current = { date: dr.date, time: dr.time, timeSource: dr.timeSource }
       setDraft(dr)
     }
@@ -195,7 +199,8 @@ export function EntrySheet({
           amount: String(t.amount),
           categoryId: t.categoryId,
           paymentMethodId: t.paymentMethodId,
-          sourceAccountId: t.sourceAccountId ?? pickFor('source', [lastSource]),
+          sourceAccountId: t.sourceAccountId ?? '',
+          cardId: t.cardId ?? '',
           toAccountId: t.toAccountId ?? '',
           fee: fee ? String(fee) : '',
           showFee: fee > 0,
@@ -220,8 +225,8 @@ export function EntrySheet({
         type,
         amount: prefill?.amount ? String(prefill.amount) : '',
         categoryId: type === 'transfer' ? '' : activeCategory(type, prefill?.categoryId ?? DEFAULT_CATEGORY_ID[type]),
-        paymentMethodId: type === 'transfer' ? from : type === 'income' ? pickFor('into', [lastInto]) : activePayment(prefill?.paymentMethodId ?? lastPay),
-        sourceAccountId: pickFor('source', [lastSource]),
+        ...payFields(prefill?.paymentMethodId ?? lastPay),
+        ...(type === 'transfer' ? { paymentMethodId: from } : type === 'income' ? { paymentMethodId: pickFor('into', [lastInto]) } : {}),
         toAccountId: to,
         fee: '',
         showFee: false,
@@ -278,7 +283,7 @@ export function EntrySheet({
     } else if (type === 'income') {
       patch({ type, categoryId: activeCategory('income', DEFAULT_CATEGORY_ID.income), paymentMethodId: pickFor('into', [lastInto, draft.paymentMethodId]) })
     } else {
-      patch({ type, categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense), paymentMethodId: activePayment(lastPay) })
+      patch({ type, categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense), ...payFields(lastPay) })
     }
   }
 
@@ -324,7 +329,8 @@ export function EntrySheet({
       time: draft.time,
       note: draft.note,
       ...(draft.type === 'transfer' ? { toAccountId: draft.toAccountId, fee: draft.showFee ? fee : 0 } : {}),
-      ...(viaMethod ? { sourceAccountId: draft.sourceAccountId } : {}),
+      ...(draft.type === 'expense' && draft.sourceAccountId ? { sourceAccountId: draft.sourceAccountId } : {}),
+      ...(draft.type === 'expense' && draft.cardId ? { cardId: draft.cardId } : {}),
     }
     try {
       if (editId) {
@@ -427,7 +433,6 @@ export function EntrySheet({
 
   const onPick = (id: string) => {
     if (!draft || !pick) return
-    if (pick === 'source') return patch({ sourceAccountId: id })
     if (pick === 'to') {
       const card = ref.payment(id)
       const pending = balances?.get(id) ?? 0
@@ -440,8 +445,11 @@ export function EntrySheet({
 
   const today = toYmd(new Date())
   const title = editId ? '編輯紀錄' : '記一筆'
-  const pickValue = !draft || !pick ? '' : pick === 'source' ? draft.sourceAccountId : pick === 'to' ? draft.toAccountId : draft.paymentMethodId
-  const recent = { pay: [lastPay], source: [lastSource], into: [lastInto], from: [lastFrom], to: [lastTo] }
+  const pickValue = !draft || !pick ? '' : pick === 'to' ? draft.toAccountId : draft.paymentMethodId
+  const recent = { into: [lastInto], from: [lastFrom], to: [lastTo] }
+  const payChoice = draft ? { paymentMethodId: draft.paymentMethodId, sourceAccountId: draft.sourceAccountId || undefined, cardId: draft.cardId || undefined } : null
+  const pay = payChoice ? describePay(payChoice, (id) => ref.payments.find((p) => p.id === id)) : null
+  const onPay = (o: PayOption) => patch({ paymentMethodId: o.paymentMethodId, sourceAccountId: o.sourceAccountId ?? '', cardId: o.cardId ?? '' })
 
   const dateTimePills = draft && (
     <>
@@ -693,6 +701,7 @@ export function EntrySheet({
                         merchantRef.current?.blur()
                       }}
                     >
+                      <Icon name={ref.category(s.categoryId).icon} />
                       {s.merchant}
                       <small>{ref.category(s.categoryId).name}</small>
                     </button>
@@ -700,11 +709,14 @@ export function EntrySheet({
                 </div>
               )}
 
-              {/* D-122: categories are words only. */}
-              <div className="cats" role="group" aria-label="分類">
+              {/* D-127: icon tiles with the name under them (the name wraps rather than being cut). */}
+              <div className="chips" role="group" aria-label="分類">
                 {chips.map((c) => (
-                  <button type="button" key={c.id} className="cat" aria-pressed={c.id === draft.categoryId} onClick={() => patch({ categoryId: c.id })}>
-                    {c.name}
+                  <button type="button" key={c.id} className="chip" aria-pressed={c.id === draft.categoryId} onClick={() => patch({ categoryId: c.id })}>
+                    <span className="ico">
+                      <Icon name={c.icon} />
+                    </span>
+                    <span className="name">{c.name}</span>
                   </button>
                 ))}
               </div>
@@ -720,16 +732,10 @@ export function EntrySheet({
               <div className="meta">
                 {/* D-121: a fee is dated with its transfer, so its date is changed there. */}
                 {!feeRecord && dateTimePills}
-                <button type="button" className="pill key" onClick={() => setPick(draft.type === 'income' ? 'into' : 'pay')}>
+                <button type="button" className="pill pill-pay" onClick={() => setPick(draft.type === 'income' ? 'into' : 'pay')}>
                   {draft.type === 'income' ? <small>存入</small> : <Icon name={payIcon(ref.payment(draft.paymentMethodId))} />}
-                  <span>{ref.payment(draft.paymentMethodId).name}</span>
+                  <span>{draft.type === 'income' || !pay ? ref.payment(draft.paymentMethodId).name : pay.label}</span>
                 </button>
-                {viaMethod && (
-                  <button type="button" className="pill key pill-in" onClick={() => setPick('source')}>
-                    <small>從</small>
-                    <span>{ref.payment(draft.sourceAccountId).name}</span>
-                  </button>
-                )}
                 {notePill}
               </div>
             </>
@@ -784,11 +790,20 @@ export function EntrySheet({
           </button>
         </>
       )}
+      <PayPicker
+        open={pick === 'pay'}
+        groups={groups}
+        value={payChoice ? payKey(payChoice) : ''}
+        recent={defaultPay(groups, lastPay, lastSource)}
+        balances={balances}
+        onPick={onPay}
+        onClose={() => setPick(null)}
+      />
       <AccountPicker
-        open={pick !== null}
-        role={pick ?? 'pay'}
+        open={pick !== null && pick !== 'pay'}
+        role={pick === null || pick === 'pay' ? 'into' : pick}
         value={pickValue}
-        recent={pick ? recent[pick] : []}
+        recent={pick && pick !== 'pay' ? recent[pick] : []}
         exclude={pick === 'to' ? draft?.paymentMethodId : undefined}
         balances={balances}
         onPick={onPick}

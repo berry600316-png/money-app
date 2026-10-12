@@ -148,7 +148,9 @@ export function useAccountFlow(id: string): FlowRow[] | undefined {
     const accounts = await db.paymentMethods.toArray()
     const acc = accounts.find((a) => a.id === id)
     if (!acc || !isTracked(acc)) return []
-    const since = acc.balanceFrom!
+    // A bank's page also lists its cards' charges (D-125), each counted from its card's own start.
+    const cardStarts = accounts.filter((c) => c.type === 'credit_card' && c.payFromId === id && isTracked(c)).map((c) => c.balanceFrom!)
+    const since = [acc.balanceFrom!, ...cardStarts].sort()[0]
     const [txs, adjs] = await Promise.all([
       db.transactions.where('occurredAt').aboveOrEqual(since).toArray(),
       db.adjustments.where('accountId').equals(id).toArray(),
