@@ -10,8 +10,8 @@ import { Icon } from '../ui/Icon'
 import { MonthSwitch } from '../ui/MonthSwitch'
 import { useRefData } from '../ui/refData'
 
-/* Category colours: one tonal family derived from the brand green and a warm sand. */
-const PALETTE = ['#284E43', '#5A8475', '#93B1A4', '#B49C70', '#D6C8A8', '#5F665A', '#B7C2BB', '#D9DCD5', '#7C9A8C', '#A88F63']
+/* Category colours (D-116): one tonal family derived from the brand cobalt, with amber as the second hue. */
+const PALETTE = ['#0B3B8C', '#3D6FC4', '#86A6DA', '#E0901F', '#F2C67A', '#1E2E55', '#B4C4DA', '#DCE4F0', '#5B83C8', '#B0782A']
 
 export function StatsScreen({
   active,

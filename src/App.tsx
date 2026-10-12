@@ -248,7 +248,7 @@ function Shell() {
     <div ref={deviceRef} className={'device' + (pushed ? ' pushed' : '')}>
       <OverlayContext.Provider value={overlayEl}>
       <ToastProvider>
-        <div className="top-mask" aria-hidden="true" />
+        <div className={'top-mask' + (tab === 'home' ? ' on-band' : '')} aria-hidden="true" />
         <div className="main" inert={pushed}>
           <HomeScreen
             active={tab === 'home'}

@@ -6,8 +6,8 @@ export default defineConfig({
   preset: {
     ...preset,
     transparent: { ...preset.transparent, padding: 0, favicons: [] },
-    maskable: { ...preset.maskable, padding: 0, resizeOptions: { background: '#284E43' } },
-    apple: { ...preset.apple, padding: 0, resizeOptions: { background: '#284E43' } },
+    maskable: { ...preset.maskable, padding: 0, resizeOptions: { background: '#0B3B8C' } },
+    apple: { ...preset.apple, padding: 0, resizeOptions: { background: '#0B3B8C' } },
   },
   images: ['public/logo.svg'],
 })
