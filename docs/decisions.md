@@ -63,7 +63,7 @@
 
 | # | 決策 |
 |---|---|
-| D-50 | 公開 repo `basd0123/money-app`，網址 `https://basd0123.github.io/money-app/`。repo 由 User 建立；第一次 push 前先問 User。 |
+| D-50 | 公開 repo `berry600316-png/money-app`，網址 `https://berry600316-png.github.io/money-app/`。repo 由 User 建立；第一次 push 前先問 User。 |
 | D-51 | 分支：`main`＝正式（push 即部署），`branch`＝開發；User 說可以上線才 merge。 |
 | D-52 | 先做第 1–3 階段給 User 看，再繼續第 4–6 階段。每階段完成後由獨立驗收員驗收。 |
 
