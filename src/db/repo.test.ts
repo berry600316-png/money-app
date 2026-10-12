@@ -122,7 +122,7 @@ describe('categories & payment methods', () => {
     await updatePaymentMethod(p.id, { name: 'Richart 卡' }, d)
     expect((await d.paymentMethods.get(p.id))?.name).toBe('Richart 卡')
     for (const id of ['cash', 'card', 'easycard', 'mobile', 'transfer']) await updatePaymentMethod(id, { isActive: false }, d)
-    await expect(updatePaymentMethod(p.id, { isActive: false }, d)).rejects.toThrow('至少要保留一個付款方式')
+    await expect(updatePaymentMethod(p.id, { isActive: false }, d)).rejects.toThrow('至少要保留一個帳戶或付款方式')
   })
 })
 

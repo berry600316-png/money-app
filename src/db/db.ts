@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
 import type {
+  BalanceAdjustment,
   CardStatement,
   Category,
   ImportBatch,
@@ -18,7 +19,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -39,6 +40,7 @@ export class MoneyDB extends Dexie {
   monthlyPlans!: EntityTable<MonthlyPlan, 'month'>
   planTemplates!: EntityTable<PlanTemplate, 'id'>
   plannedExpenses!: EntityTable<PlannedExpense, 'id'>
+  adjustments!: EntityTable<BalanceAdjustment, 'id'>
 
   constructor(name = DB_NAME) {
     super(name)
@@ -79,6 +81,16 @@ export class MoneyDB extends Dexie {
       })
       .upgrade(async (tx) => {
         await tx.table('settings').put({ key: 'schemaVersion', value: 4 })
+      })
+    // v5: accounts (D-117..D-121). Transfers and account links are new optional fields; existing rows are
+    // untouched, and no account gets a balance until the user sets one (D-118: never guess old data).
+    this.version(5)
+      .stores({
+        transactions: 'id, occurredAt, type, categoryId, paymentMethodId, toAccountId, sourceAccountId, feeOf, [source+externalId]',
+        adjustments: 'id, accountId, occurredAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('settings').put({ key: 'schemaVersion', value: 5 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

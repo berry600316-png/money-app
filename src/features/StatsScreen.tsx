@@ -10,8 +10,8 @@ import { Icon } from '../ui/Icon'
 import { MonthSwitch } from '../ui/MonthSwitch'
 import { useRefData } from '../ui/refData'
 
-/* Category colours: one tonal family derived from the brand green and a warm sand. */
-const PALETTE = ['#284E43', '#5A8475', '#93B1A4', '#B49C70', '#D6C8A8', '#5F665A', '#B7C2BB', '#D9DCD5', '#7C9A8C', '#A88F63']
+/* Category colours (D-116): navy and sky blue, from deep to pale, so neighbours always differ. */
+const PALETTE = ['#1A3A6B', '#3B8BEB', '#7FB2F0', '#2F5E9E', '#A9C8EE', '#5B7FB5', '#C9DCF5', '#123058', '#6AA6EC', '#90A6C6']
 
 export function StatsScreen({
   active,
@@ -135,9 +135,8 @@ export function StatsScreen({
             const pct = Math.round((e.amount / v.s.expense) * 100)
             return (
               <button type="button" className="crow" key={e.categoryId} onClick={() => onCategory(e.categoryId)}>
-                <span className="ico">
-                  <Icon name={c.icon} />
-                </span>
+                {/* D-122: no category icons; the dot matches the bar above. */}
+                <span className="cdot" style={{ background: e.color }} aria-hidden="true" />
                 <span className="crow-main">
                   <span className="crow-top">
                     <span className="crow-name">
@@ -168,9 +167,7 @@ export function StatsScreen({
             const c = ref.category(e.categoryId)
             return (
               <button type="button" className="crow" key={e.categoryId} onClick={() => onCategory(e.categoryId)}>
-                <span className="ico">
-                  <Icon name={c.icon} />
-                </span>
+                <span className="cdot inc" aria-hidden="true" />
                 <span className="crow-main">
                   <span className="crow-top">
                     <span className="crow-name">{c.name}</span>

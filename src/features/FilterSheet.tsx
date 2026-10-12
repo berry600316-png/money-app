@@ -16,6 +16,7 @@ const TYPE_OPTIONS = [
   { value: 'all', label: '全部' },
   { value: 'expense', label: '支出' },
   { value: 'income', label: '收入' },
+  { value: 'transfer', label: '互轉' },
 ] as const
 
 /** D-103: every list filter in one sheet; nothing changes until 「顯示 N 筆」. */
@@ -108,13 +109,13 @@ export function FilterSheet({
             options={TYPE_OPTIONS}
             value={d.type}
             onChange={(type) => {
-              // Keep only the chosen categories that still fit the type.
+              // Keep only the chosen categories that still fit the type (transfers have none).
               const keep = d.categoryIds.filter((id) => type === 'all' || ref.category(id).type === type)
               set({ type, categoryIds: keep })
             }}
           />
 
-          <h3 className="f-sec">付款方式</h3>
+          <h3 className="f-sec">帳戶與付款方式</h3>
           <div className="opt-set">
             <button type="button" className="opt" aria-pressed={d.payment === null} onClick={() => set({ payment: null })}>
               不限
@@ -133,7 +134,7 @@ export function FilterSheet({
             ))}
           </div>
 
-          <h3 className="f-sec">分類（可複選，不選＝全部）</h3>
+          {d.type !== 'transfer' && <h3 className="f-sec">分類（可複選，不選＝全部）</h3>}
           <div className="opt-set">
             {cats.map((c) => {
               const on = d.categoryIds.includes(c.id)

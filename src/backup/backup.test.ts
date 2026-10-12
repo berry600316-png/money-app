@@ -90,7 +90,7 @@ describe('parseBackup rejects bad files before anything is written', () => {
     JSON.parse(
       JSON.stringify(
         buildBackup(
-          { transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [], importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [], monthlyPlans: [], planTemplates: [], plannedExpenses: [] },
+          { transactions: [], categories: [], paymentMethods: [], settings: [], salaryItems: [], payslips: [], importedNotifications: [], importBatches: [], cardStatements: [], statementEntries: [], reconciliations: [], monthlyPlans: [], planTemplates: [], plannedExpenses: [], adjustments: [] },
           now,
         ),
       ),
@@ -177,7 +177,8 @@ describe('CSV export (D-42)', () => {
     expect(rows[0]).toEqual(CSV_HEADER)
     expect(rows).toHaveLength(1 + 4)
     const pet = rows.find((r) => r[4] === '寵物')!
-    expect(pet).toEqual(['2026-10-01', '12:00', '支出', '420', '寵物', '信用卡', '飼料, "大包"', ''])
+    // D-124: 帳戶 and 轉入帳戶 are appended after the original eight columns.
+    expect(pet).toEqual(['2026-10-01', '12:00', '支出', '420', '寵物', '信用卡', '飼料, "大包"', '', '信用卡', ''])
     const income = rows.find((r) => r[2] === '收入')!
     expect(income[3]).toBe('52000')
     const formula = rows.find((r) => r[6].includes('SUM'))!

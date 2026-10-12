@@ -37,7 +37,7 @@ export function calendarMonth(list: readonly Transaction[], ym: YearMonth, now =
     const i = d.getDate() - 1
     count[i]++
     if (t.type === 'income') income[i] += t.amount
-    else expense[i] += t.amount
+    else if (t.type === 'expense') expense[i] += t.amount
   }
   const todayYmd = toYmd(now)
   const isCurrent = now.getFullYear() === ym.y && now.getMonth() === ym.m

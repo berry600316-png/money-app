@@ -3,7 +3,9 @@
  * so every rule here is covered by unit tests.
  */
 import type {
+  BalanceAdjustment,
   CardStatement,
+  CategoryType,
   Category,
   EntryKind,
   ImportBatch,
@@ -24,7 +26,7 @@ import type {
   Transaction,
   TxType,
 } from '../db/types'
-import { PAYMENT_TYPE_LABELS } from '../db/types'
+import { isAssetType, PAYMENT_TYPE_LABELS } from '../db/types'
 import { SCHEMA_VERSION } from '../db/db'
 import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
@@ -62,6 +64,8 @@ export interface MoneyData {
   monthlyPlans: MonthlyPlan[]
   planTemplates: PlanTemplate[]
   plannedExpenses: PlannedExpense[]
+  /** Schema v5 (D-124): balance corrections. Older backups restore with none. */
+  adjustments: BalanceAdjustment[]
 }
 
 export interface BackupFile extends MoneyData {
@@ -93,6 +97,7 @@ export function buildBackup(data: MoneyData, now = new Date()): BackupFile {
     monthlyPlans: [...(data.monthlyPlans ?? [])].sort((a, b) => (a.month < b.month ? -1 : 1)),
     planTemplates: data.planTemplates ?? [],
     plannedExpenses: data.plannedExpenses ?? [],
+    adjustments: [...(data.adjustments ?? [])].sort((a, b) => (a.occurredAt < b.occurredAt ? -1 : 1)),
   }
 }
 
@@ -119,8 +124,12 @@ const isIso = (v: unknown): v is string => {
   const t = Date.parse(v)
   return !Number.isNaN(t) && new Date(t).toISOString() === v
 }
-const TX_TYPES: TxType[] = ['expense', 'income']
+const CAT_TYPES: CategoryType[] = ['expense', 'income']
+const TX_TYPES: TxType[] = ['expense', 'income', 'transfer']
 const PAY_TYPES = Object.keys(PAYMENT_TYPE_LABELS) as PaymentType[]
+
+const isMoney0 = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_AMOUNT
+const isYmdStr = (v: unknown): v is string => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v) && toYmd(fromYmd(v)) === v
 
 function fail(msg: string): never {
   throw new BackupError(msg)
@@ -157,11 +166,11 @@ export function parseBackup(text: string): BackupFile {
     const n = i + 1
     if (!isObj(c) || !isStr(c.id) || !c.id) fail(`第 ${n} 個分類缺少編號`)
     if (!isStr(c.name) || !c.name.trim()) fail(`第 ${n} 個分類缺少名稱`)
-    if (!TX_TYPES.includes(c.type as TxType)) fail(`分類「${c.name}」的類型不正確`)
+    if (!CAT_TYPES.includes(c.type as CategoryType)) fail(`分類「${c.name}」的類型不正確`)
     if (!isStr(c.icon)) fail(`分類「${c.name}」缺少圖示`)
     if (typeof c.isActive !== 'boolean') fail(`分類「${c.name}」缺少啟用狀態`)
     if (typeof c.sortOrder !== 'number' || !Number.isFinite(c.sortOrder)) fail(`分類「${c.name}」缺少排序`)
-    return { id: c.id, name: c.name, type: c.type as TxType, icon: c.icon, isActive: c.isActive, sortOrder: c.sortOrder }
+    return { id: c.id, name: c.name, type: c.type as CategoryType, icon: c.icon, isActive: c.isActive, sortOrder: c.sortOrder }
   })
   checkUnique(categories, '分類')
 
@@ -174,6 +183,10 @@ export function parseBackup(text: string): BackupFile {
     if (typeof p.sortOrder !== 'number' || !Number.isFinite(p.sortOrder)) fail(`付款方式「${p.name}」缺少排序`)
     if (p.bank !== undefined && !isStr(p.bank)) fail(`付款方式「${p.name}」的銀行不正確`)
     if (p.cardLast4 !== undefined && (!isStr(p.cardLast4) || !/^\d{4}$/.test(p.cardLast4))) fail(`付款方式「${p.name}」的末四碼不正確`)
+    // D-118: a start date and an opening balance come together, or neither.
+    const hasStart = p.balanceFrom !== undefined || p.openingBalance !== undefined
+    if (hasStart && (!isIso(p.balanceFrom) || !isMoney0(p.openingBalance))) fail(`帳戶「${p.name}」的起始餘額不正確`)
+    if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`信用卡「${p.name}」的繳款帳戶不正確`)
     return {
       id: p.id,
       name: p.name,
@@ -182,12 +195,21 @@ export function parseBackup(text: string): BackupFile {
       sortOrder: p.sortOrder,
       ...(isStr(p.bank) ? { bank: p.bank } : {}),
       ...(isStr(p.cardLast4) ? { cardLast4: p.cardLast4 } : {}),
+      ...(hasStart ? { balanceFrom: p.balanceFrom as string, openingBalance: p.openingBalance as number } : {}),
+      ...(isStr(p.payFromId) ? { payFromId: p.payFromId } : {}),
     }
   })
   checkUnique(paymentMethods, '付款方式')
+  // A card's paying account must be in the file and hold money; otherwise the link is dropped (D-119).
+  const payById = new Map(paymentMethods.map((p) => [p.id, p]))
+  for (const p of paymentMethods) {
+    if (p.payFromId === undefined) continue
+    const payer = payById.get(p.payFromId)
+    if (p.type !== 'credit_card' || !payer || !isAssetType(payer.type)) delete p.payFromId
+  }
 
   // D-15: the restored data must leave the app usable.
-  for (const t of TX_TYPES) {
+  for (const t of CAT_TYPES) {
     if (!categories.some((c) => c.type === t && c.isActive)) fail(`備份檔沒有可用的${t === 'expense' ? '支出' : '收入'}分類`)
   }
   if (!paymentMethods.some((p) => p.isActive)) fail('備份檔沒有可用的付款方式')
@@ -200,8 +222,17 @@ export function parseBackup(text: string): BackupFile {
     if (!isObj(t) || !isStr(t.id) || !t.id) fail(`第 ${n} 筆交易缺少編號`)
     if (!TX_TYPES.includes(t.type as TxType)) fail(`第 ${n} 筆交易的類型不正確`)
     if (!isValidAmount(t.amount)) fail(`第 ${n} 筆交易的金額不正確`)
-    if (!isStr(t.categoryId) || catById.get(t.categoryId)?.type !== t.type) fail(`第 ${n} 筆交易的分類不存在`)
     if (!isStr(t.paymentMethodId) || !payIds.has(t.paymentMethodId)) fail(`第 ${n} 筆交易的付款方式不存在`)
+    if (t.type === 'transfer') {
+      // D-117: a transfer is one record holding both sides, so it can never be restored half-way.
+      if (t.categoryId !== '') fail(`第 ${n} 筆互轉不應該有分類`)
+      if (!isStr(t.toAccountId) || !payIds.has(t.toAccountId) || t.toAccountId === t.paymentMethodId) fail(`第 ${n} 筆互轉的轉入帳戶不正確`)
+    } else {
+      if (!isStr(t.categoryId) || catById.get(t.categoryId)?.type !== t.type) fail(`第 ${n} 筆交易的分類不存在`)
+      if (t.toAccountId !== undefined) fail(`第 ${n} 筆交易不是互轉，卻有轉入帳戶`)
+    }
+    if (t.sourceAccountId !== undefined && (t.type !== 'expense' || !isStr(t.sourceAccountId) || !payIds.has(t.sourceAccountId))) fail(`第 ${n} 筆交易的扣款帳戶不正確`)
+    if (t.feeOf !== undefined && (t.type !== 'expense' || !isStr(t.feeOf))) fail(`第 ${n} 筆手續費的互轉連結不正確`)
     if (!isIso(t.occurredAt) || !isIso(t.createdAt) || !isIso(t.updatedAt)) fail(`第 ${n} 筆交易的時間不正確`)
     if (!isStr(t.merchant) || !isStr(t.note) || !isStr(t.source)) fail(`第 ${n} 筆交易的文字欄位不正確`)
     if (t.externalId !== null && !isStr(t.externalId)) fail(`第 ${n} 筆交易的外部編號不正確`)
@@ -220,9 +251,15 @@ export function parseBackup(text: string): BackupFile {
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
       ...(t.timeSource ? { timeSource: t.timeSource as Transaction['timeSource'] } : {}),
+      ...(isStr(t.toAccountId) ? { toAccountId: t.toAccountId } : {}),
+      ...(isStr(t.sourceAccountId) ? { sourceAccountId: t.sourceAccountId } : {}),
+      ...(isStr(t.feeOf) ? { feeOf: t.feeOf } : {}),
     }
   })
   checkUnique(transactions, '交易')
+  // A fee whose transfer is not in the file stays as an ordinary expense rather than pointing nowhere (D-121).
+  const transferIds = new Set(transactions.filter((t) => t.type === 'transfer').map((t) => t.id))
+  for (const t of transactions) if (t.feeOf && !transferIds.has(t.feeOf)) delete t.feeOf
 
   const settings = (raw.settings as unknown[]).map((s, i): Setting => {
     if (!isObj(s) || !isStr(s.key) || !('value' in s)) fail(`第 ${i + 1} 個設定不正確`)
@@ -297,6 +334,7 @@ export function parseBackup(text: string): BackupFile {
 
   const card = raw.schemaVersion >= 3 ? parseCardData(raw, new Set(transactions.map((t) => t.id)), new Set(paymentMethods.map((p) => p.id))) : emptyCard()
   const plans = raw.schemaVersion >= 4 ? parsePlanData(raw, catById, payIds) : { monthlyPlans: [], planTemplates: [], plannedExpenses: [] }
+  const adjustments = raw.schemaVersion >= 5 ? parseAdjustments(raw, payIds) : []
 
   return {
     app: BACKUP_APP,
@@ -311,10 +349,27 @@ export function parseBackup(text: string): BackupFile {
     payslips,
     ...card,
     ...plans,
+    adjustments,
   }
 }
 
-const isMoney0 = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MAX_AMOUNT
+/** D-124: balance corrections; each must belong to an account in the same file. */
+function parseAdjustments(raw: Record<string, unknown>, payIds: Set<string>): BalanceAdjustment[] {
+  if (!Array.isArray(raw.adjustments)) fail('備份檔內容不完整')
+  const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && Math.abs(v) <= MAX_AMOUNT
+  const list = (raw.adjustments as unknown[]).map((o, i): BalanceAdjustment => {
+    const what = `第 ${i + 1} 筆餘額調整`
+    if (!isObj(o) || !isStr(o.id) || !o.id) fail(`${what}缺少編號`)
+    if (!isStr(o.accountId) || !payIds.has(o.accountId)) fail(`${what}的帳戶不存在`)
+    if (!isIso(o.occurredAt) || !isIso(o.createdAt)) fail(`${what}的時間不正確`)
+    if (!isInt(o.before) || !isInt(o.after) || !isInt(o.delta) || o.after - o.before !== o.delta) fail(`${what}的金額不正確`)
+    if (!isStr(o.note)) fail(`${what}的備註不正確`)
+    return { id: o.id, accountId: o.accountId, occurredAt: o.occurredAt, before: o.before, after: o.after, delta: o.delta, note: o.note, createdAt: o.createdAt }
+  })
+  checkUnique(list, '餘額調整')
+  return list
+}
+
 const isDay = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 31
 
 /**
@@ -386,7 +441,6 @@ function emptyCard() {
 const isNullStr = (v: unknown): v is string | null => v === null || isStr(v)
 const ENTRY_KINDS: EntryKind[] = ['purchase', 'refund', 'fee', 'installment', 'payment', 'adjustment', 'other']
 const NOTIF_STATUS: NotificationStatus[] = ['imported', 'duplicate', 'skipped', 'not_spending', 'unparsed']
-const isYmdStr = (v: unknown): v is string => isStr(v) && /^\d{4}-\d{2}-\d{2}$/.test(v) && toYmd(fromYmd(v)) === v
 
 /** D-94: credit card data. Every link must point at something in the same file. */
 function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds: Set<string>) {
@@ -546,7 +600,8 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
 
 /* ---------------- CSV (D-42) ---------------- */
 
-export const CSV_HEADER = ['日期', '時間', '類型', '金額', '分類', '付款方式', '商家', '備註']
+/** D-124: 帳戶 and 轉入帳戶 are appended, so older spreadsheets keep working. */
+export const CSV_HEADER = ['日期', '時間', '類型', '金額', '分類', '付款方式', '商家', '備註', '帳戶', '轉入帳戶']
 
 function csvCell(v: string): string {
   // Spreadsheet apps run cells that start with = + - @ as formulas; keep them as text.
@@ -565,12 +620,15 @@ export function toCsv(
       return [
         toYmd(d),
         timeLabel(d),
-        t.type === 'income' ? '收入' : '支出',
+        t.type === 'income' ? '收入' : t.type === 'transfer' ? '互轉' : '支出',
         String(t.amount),
-        names.category(t.categoryId),
+        t.type === 'transfer' ? '' : names.category(t.categoryId),
         names.payment(t.paymentMethodId),
         t.merchant,
         t.note,
+        // The account the money actually moved in: for 轉帳 / 行動支付 the account it left (D-120).
+        names.payment(t.sourceAccountId ?? t.paymentMethodId),
+        t.toAccountId ? names.payment(t.toAccountId) : '',
       ]
         .map(csvCell)
         .join(',')

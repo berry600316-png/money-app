@@ -76,7 +76,7 @@ export function SettingsPage({
       <BackupSection backupRequest={backupRequest} />
 
       <div className="set-sec">
-        <h2>分類、付款方式與薪資項目</h2>
+        <h2>分類、帳戶與薪資項目</h2>
         <div className="set-card">
           <button type="button" className="srow" onClick={onCategories}>
             <span className="s-main">分類</span>
@@ -84,7 +84,7 @@ export function SettingsPage({
             <Icon name="chev" className="chev" />
           </button>
           <button type="button" className="srow" onClick={onPayments}>
-            <span className="s-main">付款方式</span>
+            <span className="s-main">帳戶與付款方式</span>
             <span className="s-val">{activePays} 個使用中</span>
             <Icon name="chev" className="chev" />
           </button>

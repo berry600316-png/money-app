@@ -4,7 +4,8 @@ import { deleteStatement, saveAutoPairs, updateStatement } from '../../card/card
 import { reconcile, txDate, type Item } from '../../card/reconcile'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
-import type { StatementEntry } from '../../db/types'
+import type { PaymentMethod, StatementEntry } from '../../db/types'
+import { useBalances } from '../../db/hooks'
 import { fromYmd } from '../../lib/dates'
 import { fmt } from '../../lib/money'
 import { monthKeyLabel } from '../../lib/months'
@@ -35,14 +36,18 @@ export function ReconcilePage({
   backLabel,
   onImportStatement,
   onEditTx,
+  onPayCard,
 }: {
   statementId: string | null
   onBack: () => void
   backLabel: string
   onImportStatement: () => void
   onEditTx: (id: string) => void
+  /** D-119: pay this card's bill (a transfer from its paying account; never a new expense). */
+  onPayCard: (card: PaymentMethod, pending: number) => void
 }) {
   const ref = useRefData()
+  const balances = useBalances()
   const toast = useToast()
   const [chosen, setChosen] = useState<string | null>(statementId)
   const [selected, setSelected] = useState<Item | null>(null)
@@ -201,6 +206,22 @@ export function ReconcilePage({
           </div>
         </div>
       </section>
+
+      {/* D-119: paying the bill moves money from the paying account; the purchases were already counted. */}
+      <button type="button" className="acc-link" onClick={() => onPayCard(card, balances?.get(card.id) ?? 0)}>
+        <span>
+          繳這期卡費
+          <small>{card.payFromId ? `從 ${ref.payment(card.payFromId).name} 扣，` : ''}不算支出</small>
+        </span>
+        <span>
+          {balances?.has(card.id) && (
+            <>
+              預扣 <b className="num">{fmt(balances.get(card.id)!)}</b>{' '}
+            </>
+          )}
+          ›
+        </span>
+      </button>
 
       {st.parseStatus === 'needs_review' && (
         <div className="notice">
