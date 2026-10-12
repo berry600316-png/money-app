@@ -17,8 +17,7 @@ export function markAppReady(): void {
 const reduceMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 /**
- * Cold-start brand mark (D-98 option C, reshaped by D-116: a notched square drawn around "CJ", a short rule,
- * "CAI JIE"). Mounted once per page load,
+ * Cold-start brand mark (option C: drawn ring with "CJ", a hairline, "CAI JIE"). Mounted once per page load,
  * so returning from the background never replays it. A tap skips it once data is ready.
  */
 export function Launch() {
@@ -68,7 +67,7 @@ export function Launch() {
       <div className="mark">
         <div className="mono">
           <svg viewBox="0 0 80 80" aria-hidden="true">
-            <path d="M1 1H65L79 15V79H15L1 65Z" pathLength="100" />
+            <circle cx="40" cy="40" r="38.5" />
           </svg>
           <b>CJ</b>
         </div>

@@ -75,9 +75,6 @@ export function HomeCalendar({
           <span key={'pad' + i} className="cday pad" aria-hidden="true" />
         ))}
         {cal.days.map(cell)}
-        {Array.from({ length: (7 - ((cal.lead + cal.days.length) % 7)) % 7 }, (_, i) => (
-          <span key={'tail' + i} className="cday pad" aria-hidden="true" />
-        ))}
       </div>
       <div className="hcal-legend" aria-hidden="true">
         少<i style={{ opacity: 0.15 }} />

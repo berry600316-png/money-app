@@ -12,17 +12,6 @@ import { HomePlanCard } from './plan/HomePlanCard'
 
 const WEEK = '日一二三四五六'
 
-/** D-116: a numbered rule between the home screen's sections (decoration only). */
-function SecRule({ n, label }: { n: string; label: string }) {
-  return (
-    <div className="sec-rule" aria-hidden="true">
-      <b>{n}</b>
-      {label}
-      <i />
-    </div>
-  )
-}
-
 /** The day a month opens on: today in the current month, else that month's last day. */
 function defaultDay(ym: YearMonth, today: string): string {
   const t = fromYmd(today)
@@ -94,49 +83,42 @@ export function HomeScreen({
 
   return (
     <section ref={scrollRef} className={'screen' + (active ? ' active' : '')} aria-label="首頁" aria-hidden={!active} inert={!active}>
-      {/* D-116: the header and the month overview sit on the blue band. */}
-      <div className="home-top">
-        <header className="home-head">
-          <span className="home-date">
-            <small>Cai Jie</small>
-            {ym.y} 年 {ym.m + 1} 月
-          </span>
-          <button type="button" className="icon-btn" aria-label="設定" onClick={onSettings}>
-            <Icon name="gear" />
-          </button>
-        </header>
-        <BackupBanner onBackup={onBackup} />
+      <header className="home-head">
+        <span className="home-date">
+          {ym.y} 年 {ym.m + 1} 月
+        </span>
+        <button type="button" className="icon-btn" aria-label="設定" onClick={onSettings}>
+          <Icon name="gear" />
+        </button>
+      </header>
+      <BackupBanner onBackup={onBackup} />
 
-        <section className="hero">
-          <div className="eyebrow">本月支出</div>
-          <div className="hero-amt num">
-            <span className="cur">NT$</span>
-            <span>{fmt(view.expense)}</span>
+      <section className="hero">
+        <div className="eyebrow">本月支出</div>
+        <div className="hero-amt num">
+          <span className="cur">NT$</span>
+          <span>{fmt(view.expense)}</span>
+        </div>
+        <dl className="trio">
+          <div>
+            <dt>今天</dt>
+            <dd className="num">{fmt(view.today)}</dd>
           </div>
-          <dl className="trio">
-            <div>
-              <dt>今天</dt>
-              <dd className="num">{fmt(view.today)}</dd>
-            </div>
-            <div>
-              <dt>收入</dt>
-              <dd className="num pos">{fmt(view.income)}</dd>
-            </div>
-            <div>
-              <dt>結餘</dt>
-              <dd className={'num' + (view.balance < 0 ? ' neg' : '')}>{fmt(view.balance)}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
+          <div>
+            <dt>收入</dt>
+            <dd className="num pos">{fmt(view.income)}</dd>
+          </div>
+          <div>
+            <dt>結餘</dt>
+            <dd className={'num' + (view.balance < 0 ? ' neg' : '')}>{fmt(view.balance)}</dd>
+          </div>
+        </dl>
+      </section>
 
-      <SecRule n="01" label="PLAN" />
       <HomePlanCard onOpen={onPlan} />
 
-      <SecRule n="02" label="CALENDAR" />
       <HomeCalendar ym={calYm} onYm={changeMonth} list={calTx ?? []} selected={selected} onSelect={setSelected} />
 
-      <SecRule n="03" label="RECORDS" />
       <section className="dayp" aria-label={`${title}的紀錄`}>
         <div className="dayp-head">
           <div className="dayp-title">
