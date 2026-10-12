@@ -1,14 +1,28 @@
-export type TxType = 'expense' | 'income'
+/** Income and expense: the two kinds that count in totals and have categories. */
+export type CategoryType = 'expense' | 'income'
+/** D-117: 'transfer' (互轉) moves money between the user's own accounts; never income or expense. */
+export type TxType = CategoryType | 'transfer'
 
-/** Fields follow spec 0.8 exactly. Timestamps are UTC ISO 8601 strings. */
+/** Fields follow spec 0.8, plus the account links of D-117. Timestamps are UTC ISO 8601 strings. */
 export interface Transaction {
   id: string
   type: TxType
   /** Positive integer NTD. */
   amount: number
   merchant: string
+  /** '' for transfers (they have no category). */
   categoryId: string
+  /**
+   * The account or payment method: where an expense was paid from, where income went, or the
+   * transfer's source account (D-117).
+   */
   paymentMethodId: string
+  /** Transfers only: the account the money went to (a credit card here = paying its bill, D-119). */
+  toAccountId?: string
+  /** Expenses paid with 轉帳 / 行動支付 / 其他: the account the money actually left (D-120). */
+  sourceAccountId?: string
+  /** A transfer's fee, recorded as its own expense: the transfer it belongs to (D-121). */
+  feeOf?: string
   occurredAt: string
   note: string
   /** 'manual' for entries typed in the app; reserved for future imports. */
@@ -29,15 +43,21 @@ export type TimeSource = 'notification' | 'date'
 export interface Category {
   id: string
   name: string
-  type: TxType
+  type: CategoryType
+  /** Kept for backups and older versions; not shown since D-122. */
   icon: string
   isActive: boolean
   /** Display order within its type (decisions.md, 資料模型補充). */
   sortOrder: number
 }
 
-export type PaymentType = 'cash' | 'credit_card' | 'stored_value' | 'mobile' | 'transfer' | 'other'
+export type PaymentType = 'bank' | 'cash' | 'credit_card' | 'stored_value' | 'mobile' | 'transfer' | 'other'
 
+/**
+ * D-117: one list for accounts and payment methods. bank / cash / stored_value are accounts that hold
+ * money; credit_card is an account whose spending waits as 預扣 until the bill is paid; mobile / transfer
+ * / other are ways to pay that ask which account the money left (D-120).
+ */
 export interface PaymentMethod {
   id: string
   name: string
@@ -48,6 +68,29 @@ export interface PaymentMethod {
   bank?: string
   /** Credit cards only (D-80): last four digits, used to match notifications and statements. */
   cardLast4?: string
+  /**
+   * D-118: the instant (UTC ISO) from which records count, with `openingBalance` the balance at that
+   * instant (a card: 預扣 still unpaid). "Today's balance" starts at the moment it was entered, so records
+   * already reflected in it are never counted twice; an earlier date starts at that day's local
+   * midnight. Both absent = "尚未設定餘額": nothing is counted.
+   */
+  balanceFrom?: string
+  openingBalance?: number
+  /** Credit cards only (D-119): the account its bill is paid from. */
+  payFromId?: string
+}
+
+/** D-118: a correction of one account's balance; never income, expense or a transfer. */
+export interface BalanceAdjustment {
+  id: string
+  accountId: string
+  occurredAt: string
+  /** The computed balance before, the real one after, and after − before. */
+  before: number
+  after: number
+  delta: number
+  note: string
+  createdAt: string
 }
 
 export interface Setting {
@@ -197,13 +240,19 @@ export interface Reconciliation {
 }
 
 export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
+  bank: '銀行',
   cash: '現金',
+  stored_value: '儲值',
   credit_card: '信用卡',
-  stored_value: '電子票證',
   mobile: '行動支付',
   transfer: '轉帳',
   other: '其他',
 }
+
+/** Accounts that hold money (D-117). */
+export const isAssetType = (t: PaymentType) => t === 'bank' || t === 'cash' || t === 'stored_value'
+/** Ways to pay that are not themselves an account; an expense asks where the money left (D-120). */
+export const isMethodType = (t: PaymentType) => t === 'mobile' || t === 'transfer' || t === 'other'
 
 /* ---------------- monthly planning (D-105..D-112) ---------------- */
 

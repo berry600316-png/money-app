@@ -41,7 +41,7 @@ export default defineConfig(({ command, isPreview }) => ({
       // We register manually (src/pwa/pwa.ts) so updates never reload mid-entry (D-43).
       registerType: 'prompt',
       injectRegister: false,
-      includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
+      includeAssets: ['apple-touch-icon-180x180.png'],
       manifest: {
         id: PAGES_BASE,
         name: 'Cai Jie',
@@ -53,8 +53,8 @@ export default defineConfig(({ command, isPreview }) => ({
         scope: PAGES_BASE,
         display: 'standalone',
         orientation: 'portrait',
-        background_color: '#F7F6F2',
-        theme_color: '#F7F6F2',
+        background_color: '#EEF4FB',
+        theme_color: '#EEF4FB',
         icons: [
           { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },

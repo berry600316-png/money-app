@@ -17,6 +17,7 @@ export function emptyFilters(patch: Partial<TxFilter> = {}): TxFilter {
 }
 
 const RENDER_LIMIT = 300
+const TYPE_LABEL = { expense: '支出', income: '收入', transfer: '互轉' } as const
 
 /** "2026/9/15" (year only when it differs from this year, or the range spans two years). */
 function rangeLabel(from: string, to: string): string {
@@ -73,10 +74,10 @@ export function ListScreen({
   const totals = list && isFiltered(filters) ? summarize(list) : null
 
   const chips: { key: string; label: string; clear: () => void }[] = []
-  if (filters.type !== 'all') chips.push({ key: 'type', label: filters.type === 'expense' ? '支出' : '收入', clear: () => onFilters({ ...filters, type: 'all' }) })
+  if (filters.type !== 'all') chips.push({ key: 'type', label: TYPE_LABEL[filters.type], clear: () => onFilters({ ...filters, type: 'all' }) })
   if (filters.payment) {
     const p = ref.payments.find((x) => x.id === filters.payment)
-    const label = filters.payment === ALL_CARDS ? '所有信用卡' : p ? p.name + (p.cardLast4 ? ` ${p.cardLast4}` : '') : '付款方式'
+    const label = filters.payment === ALL_CARDS ? '所有信用卡' : p ? p.name + (p.cardLast4 ? ` ${p.cardLast4}` : '') : '帳戶'
     chips.push({ key: 'pay', label, clear: () => onFilters({ ...filters, payment: null }) })
   }
   for (const id of filters.categoryIds) {
@@ -162,7 +163,13 @@ export function ListScreen({
         )}
       </div>
 
-      {totals && list && (
+      {totals && list && filters.type === 'transfer' && (
+        <div className="sumbar sumbar-move" aria-label="篩選結果小計">
+          <span className="sum-n">{list.length} 筆</span>
+          <span>互轉只是帳戶之間搬錢，不算收入也不算支出</span>
+        </div>
+      )}
+      {totals && list && filters.type !== 'transfer' && (
         <div className="sumbar" aria-label="篩選結果小計">
           <span className="sum-n">{list.length} 筆</span>
           <span>

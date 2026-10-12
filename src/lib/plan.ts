@@ -88,7 +88,7 @@ export function summarizePlan(
   for (const t of monthTx) {
     if (monthOfIso(t.occurredAt) !== month) continue
     if (t.type === 'income') actualIncome += t.amount
-    else if (!inB.has(t.id)) otherSpending += t.amount
+    else if (t.type === 'expense' && !inB.has(t.id)) otherSpending += t.amount
   }
   const necessary = views.reduce((s, v) => s + v.value, 0)
   const recorded = views.filter((v) => v.state === 'linked').reduce((s, v) => s + v.value, 0)

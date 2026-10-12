@@ -27,7 +27,10 @@ export function HomeScreen({
   onSettings,
   onBackup,
   onPlan,
+  onAccounts,
 }: {
+  /** D-123 / Q79: 我的帳戶, from the button beside settings. */
+  onAccounts: () => void
   onBackup: () => void
   /** D-113: the month plan, under the month overview. */
   onPlan: () => void
@@ -87,9 +90,14 @@ export function HomeScreen({
         <span className="home-date">
           {ym.y} 年 {ym.m + 1} 月
         </span>
-        <button type="button" className="icon-btn" aria-label="設定" onClick={onSettings}>
-          <Icon name="gear" />
-        </button>
+        <span className="head-btns">
+          <button type="button" className="icon-btn" aria-label="我的帳戶" onClick={onAccounts}>
+            <Icon name="wallet" />
+          </button>
+          <button type="button" className="icon-btn" aria-label="設定" onClick={onSettings}>
+            <Icon name="gear" />
+          </button>
+        </span>
       </header>
       <BackupBanner onBackup={onBackup} />
 

@@ -1,5 +1,6 @@
 import { PAYSLIP_SOURCE } from '../db/defaults'
 import type { Transaction } from '../db/types'
+import { isCard } from '../lib/accounts'
 import { dayLabel, timeLabel } from '../lib/dates'
 import { fmt } from '../lib/money'
 import { groupByDay } from '../lib/stats'
@@ -11,14 +12,35 @@ import { useRefData } from './refData'
 export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpen: (id: string) => void; showTime?: boolean }) {
   const { category, payment } = useRefData()
   const reconciled = useIsReconciled(tx)
+  const time = showTime ? timeLabel(new Date(tx.occurredAt)) : ''
+
+  // D-117: a transfer reads "from → to", has no sign and is never counted as income or expense.
+  if (tx.type === 'transfer') {
+    const to = payment(tx.toAccountId ?? '')
+    const sub = [time, isCard(to) ? '繳卡費' : '互轉', tx.note].filter(Boolean).join(' · ')
+    return (
+      <button type="button" className="row" onClick={() => onOpen(tx.id)}>
+        <span className="row-main">
+          <span className="row-title">
+            {payment(tx.paymentMethodId).name} → {to.name}
+          </span>
+          <span className="row-sub">{sub}</span>
+        </span>
+        <span className="row-amt num transfer">
+          <span className="sr">互轉，不算收支</span>
+          {fmt(tx.amount)}
+        </span>
+      </button>
+    )
+  }
+
   const c = category(tx.categoryId)
-  const sub = [showTime ? timeLabel(new Date(tx.occurredAt)) : '', c.name, payment(tx.paymentMethodId).name, tx.note].filter(Boolean).join(' · ')
+  // D-120: paid with 轉帳 / 行動支付 — show where the money actually left.
+  const pay = payment(tx.paymentMethodId).name + (tx.sourceAccountId ? `（${payment(tx.sourceAccountId).name}）` : '')
+  const sub = [time, c.name, pay, tx.note].filter(Boolean).join(' · ')
   const income = tx.type === 'income'
   return (
     <button type="button" className="row" onClick={() => onOpen(tx.id)}>
-      <span className="ico">
-        <Icon name={c.icon} />
-      </span>
       <span className="row-main">
         <span className="row-title">
           {tx.merchant || c.name}

@@ -9,6 +9,7 @@ import { fmt } from '../../lib/money'
 import { currentMonthKey, monthKeyLabel } from '../../lib/months'
 import { draftToLines, editPayslipDraft, newPayslipDraft, payDateFor, payMonthOffset, type PayslipDraft } from '../../lib/salaryHistory'
 import { useRefData } from '../../ui/refData'
+import { isAsset } from '../../lib/accounts'
 import { useToast } from '../../ui/Toast'
 import { useCloseGuard, useDirtyCheck } from '../../ui/discard'
 
@@ -42,9 +43,13 @@ export function PayslipEditor({
   const guard = useCloseGuard('payslipEditor')
   const requestClose = () => guard(onClose)
 
+  // D-117 / Q85: a new payslip goes into the account the latest one used; else the first bank, then any account.
   const fallbackPayment = () => {
-    const t = ref.payments.find((p) => p.id === 'transfer' && p.isActive)
-    return t?.id ?? ref.payments.find((p) => p.isActive)?.id ?? 'cash'
+    const latest = [...(slips ?? [])].sort((a, b) => (a.month < b.month ? 1 : -1))[0]
+    const ok = (id?: string) => !!id && ref.payments.some((p) => p.id === id && p.isActive && isAsset(p))
+    if (latest && ok(latest.paymentMethodId)) return latest.paymentMethodId
+    const bank = ref.payments.find((p) => p.isActive && p.type === 'bank')
+    return bank?.id ?? ref.payments.find((p) => p.isActive && isAsset(p))?.id ?? ref.payments.find((p) => p.isActive)?.id ?? 'cash'
   }
 
   // Build the draft each time the editor opens.
@@ -60,7 +65,9 @@ export function PayslipEditor({
       setDraft(dr)
     } else {
       setEditId(null)
-      const dr = newPayslipDraft(target.month, slips, items, fallbackPayment())
+      const base = newPayslipDraft(target.month, slips, items, fallbackPayment())
+      // An older payslip may have used 轉帳 (a way to pay, not an account): start in a real account instead.
+      const dr = ref.payments.some((p) => p.id === base.paymentMethodId && p.isActive && isAsset(p)) ? base : { ...base, paymentMethodId: fallbackPayment() }
       opened.current = JSON.stringify(dr)
       setDraft(dr)
     }
@@ -82,7 +89,8 @@ export function PayslipEditor({
   const isNew = editId === null
   const kindOf = (id: string) => items.find((i) => i.id === id)?.kind
   const totals = draft ? payslipTotals(draftToLines(draft, true), kindOf) : { earning: 0, deduction: 0, net: 0 }
-  const payOptions = ref.payments.filter((p) => p.isActive || p.id === draft?.paymentMethodId)
+  // Income goes into an account that holds money (D-117); an older payslip's choice still shows.
+  const payOptions = ref.payments.filter((p) => (p.isActive && isAsset(p)) || p.id === draft?.paymentMethodId)
   const today = toYmd(new Date())
 
   const patch = (p: Partial<PayslipDraft>) => setDraft((d) => (d ? { ...d, ...p } : d))
@@ -210,7 +218,7 @@ export function PayslipEditor({
                 />
               </div>
               <div className="frow">
-                <label htmlFor="slip-pay">入帳方式</label>
+                <label htmlFor="slip-pay">存入帳戶</label>
                 <select id="slip-pay" value={draft.paymentMethodId} onChange={(e) => patch({ paymentMethodId: e.target.value })}>
                   {payOptions.map((p) => (
                     <option key={p.id} value={p.id}>

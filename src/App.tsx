@@ -34,6 +34,9 @@ import { ToastProvider } from './ui/Toast'
 import { DiscardHost, DiscardProvider, useCloseGuard, useDiscardAsking } from './ui/discard'
 import { anyLayerOpen } from './ui/layers'
 import { markAppReady } from './ui/Launch'
+import { AccountsPage } from './features/accounts/AccountsPage'
+import { AccountPage } from './features/accounts/AccountPage'
+import type { PaymentMethod } from './db/types'
 
 type Tab = 'home' | 'list' | 'stats'
 type Route =
@@ -45,6 +48,8 @@ type Route =
   | { kind: 'statementImport' }
   | { kind: 'plan'; month: string }
   | { kind: 'planTemplates' }
+  | { kind: 'accounts' }
+  | { kind: 'account'; id: string }
 
 const ROUTE_LABEL: Record<Route['kind'], string> = {
   payslips: '薪資單',
@@ -55,6 +60,8 @@ const ROUTE_LABEL: Record<Route['kind'], string> = {
   statementImport: '帳單',
   plan: '規劃',
   planTemplates: '固定項目',
+  accounts: '我的帳戶',
+  account: '帳戶',
 }
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -109,6 +116,8 @@ function Shell() {
   const [planEntry, setPlanEntry] = useState<{ itemId: string; name: string; prefill: EntryPrefill } | null>(null)
   // D-115: a new entry started from a calendar day.
   const [entryDay, setEntryDay] = useState<string | null>(null)
+  // D-123: a transfer or card payment started from the accounts pages or reconciliation.
+  const [moveEntry, setMoveEntry] = useState<EntryPrefill | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [manage, setManage] = useState<ManageKind | null>(null)
   const [manageShown, setManageShown] = useState<ManageKind>('category')
@@ -193,13 +202,26 @@ function Shell() {
   const addTx = useCallback(() => {
     setPlanEntry(null)
     setEntryDay(null)
+    setMoveEntry(null)
     setEntry({ open: true, id: null })
   }, [])
   const addTxOn = useCallback((ymd: string) => {
     setPlanEntry(null)
+    setMoveEntry(null)
     setEntryDay(ymd)
     setEntry({ open: true, id: null })
   }, [])
+  /** D-123: 互轉 from an account, or 繳卡費 for a card (its 預扣 filled in, D-119). */
+  const startMove = useCallback((p: EntryPrefill) => {
+    setPlanEntry(null)
+    setEntryDay(null)
+    setMoveEntry({ type: 'transfer', ...p })
+    setEntry({ open: true, id: null })
+  }, [])
+  const payCard = useCallback(
+    (card: PaymentMethod, pending: number) => startMove({ toAccountId: card.id, fromAccountId: card.payFromId, amount: pending > 0 ? pending : undefined }),
+    [startMove],
+  )
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), [])
   const setRouteMonth = (key: number, month: string) =>
     setRoutes((rs) => rs.map((r) => (r.key === key && r.route.kind === 'plan' ? { ...r, route: { kind: 'plan', month } } : r)))
@@ -267,6 +289,7 @@ function Shell() {
               setBackupRequest((n) => n + 1)
             }}
             onPlan={() => push({ kind: 'plan', month: currentMonthKey() })}
+            onAccounts={() => push({ kind: 'accounts' })}
           />
           <ListScreen
             active={tab === 'list'}
@@ -367,6 +390,7 @@ function Shell() {
                   onBack={pop}
                   onRecord={(v) => {
                     setEntryDay(null)
+                    setMoveEntry(null)
                     setPlanEntry({
                       itemId: v.item.id,
                       name: v.item.name,
@@ -382,6 +406,28 @@ function Shell() {
                 />
               )}
               {r.route.kind === 'planTemplates' && <PlanTemplatesPage backLabel={back} onBack={pop} />}
+              {r.route.kind === 'accounts' && (
+                <AccountsPage
+                  backLabel={back}
+                  onBack={pop}
+                  onOpen={(id) => push({ kind: 'account', id })}
+                  onTransfer={() => startMove({})}
+                  onPayCard={payCard}
+                  onAdd={() => setEditor({ kind: 'payment', id: null, newType: 'bank' })}
+                />
+              )}
+              {r.route.kind === 'account' && (
+                <AccountPage
+                  id={r.route.id}
+                  backLabel={back}
+                  onBack={pop}
+                  onEdit={(id) => setEditor({ kind: 'payment', id })}
+                  onOpenTx={openTx}
+                  onTransferFrom={(id) => startMove({ fromAccountId: id })}
+                  onPayCard={payCard}
+                  onOpenAccount={(id) => push({ kind: 'account', id })}
+                />
+              )}
               {r.route.kind === 'reconcile' && (
                 <ReconcilePage
                   key={r.route.statementId ?? 'latest'}
@@ -390,6 +436,7 @@ function Shell() {
                   onBack={pop}
                   onImportStatement={() => push({ kind: 'statementImport' })}
                   onEditTx={(id) => setEntry({ open: true, id })}
+                  onPayCard={payCard}
                 />
               )}
             </StackPage>
@@ -399,7 +446,7 @@ function Shell() {
         <EntrySheet
           open={entry.open}
           editId={entry.id}
-          prefill={entry.id ? null : planEntry ? planEntry.prefill : entryDay ? { date: entryDay } : null}
+          prefill={entry.id ? null : planEntry ? planEntry.prefill : moveEntry ? moveEntry : entryDay ? { date: entryDay } : null}
           banner={planEntry && !entry.id ? `儲存後會自動對應「${planEntry.name}」，不會多記一筆。` : null}
           saveNew={planEntry && !entry.id ? (input: TxInput) => recordPlannedExpense(planEntry.itemId, input).then(() => undefined) : null}
           onClose={closeEntry}

@@ -87,8 +87,9 @@ export function groupByDay(list: readonly Transaction[]): DayGroup[] {
       groups.push(cur)
     }
     cur.items.push(t)
+    // Transfers are listed but are neither income nor expense (D-117).
     if (t.type === 'income') cur.income += t.amount
-    else cur.expense += t.amount
+    else if (t.type === 'expense') cur.expense += t.amount
   }
   return groups
 }
@@ -104,7 +105,8 @@ export function searchTx(
   const asAmount = q.replace(/[,\s]/g, '')
   return list.filter((t) => {
     if (/^\d+$/.test(asAmount) && String(t.amount) === asAmount) return true
-    const hay = `${t.merchant} ${t.note} ${names.category(t.categoryId)} ${names.payment(t.paymentMethodId)}`.toLowerCase()
+    const accounts = [t.paymentMethodId, t.toAccountId, t.sourceAccountId].filter((x): x is string => !!x).map(names.payment)
+    const hay = `${t.merchant} ${t.note} ${t.type === 'transfer' ? '互轉' : names.category(t.categoryId)} ${accounts.join(' ')}`.toLowerCase()
     return hay.includes(q)
   })
 }
@@ -160,11 +162,16 @@ export function filterTx(
     }
     if (f.type !== 'all' && t.type !== f.type) return false
     if (f.categoryIds.length && !f.categoryIds.includes(t.categoryId)) return false
-    if (f.payment === ALL_CARDS ? !ctx.isCard(t.paymentMethodId) : f.payment !== null && t.paymentMethodId !== f.payment) return false
+    if (f.payment !== null && !touches(t, f.payment === ALL_CARDS ? ctx.isCard : (id) => id === f.payment)) return false
     return true
   })
   if (f.q.trim()) l = searchTx(l, f.q, ctx.names)
   return sortDesc(l)
+}
+
+/** D-123: an account filter shows everything that moved money in that account, including transfers to it. */
+function touches(t: Transaction, match: (id: string) => boolean): boolean {
+  return match(t.paymentMethodId) || (!!t.toAccountId && match(t.toAccountId)) || (!!t.sourceAccountId && match(t.sourceAccountId))
 }
 
 /* ---------------- yearly overview (D-104) ---------------- */

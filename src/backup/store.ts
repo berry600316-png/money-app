@@ -1,6 +1,6 @@
 import { db, type MoneyDB } from '../db/db'
 import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
-import type { Category, PaymentMethod, Payslip, SalaryItem, Setting } from '../db/types'
+import type { Category, PaymentMethod, Payslip, SalaryItem, Setting, Transaction } from '../db/types'
 import { fromYmd, toYmd } from '../lib/dates'
 import { BackupError, DEVICE_SETTING_KEYS, type BackupFile, type MoneyData } from './format'
 
@@ -25,6 +25,7 @@ function allTables(d: MoneyDB) {
     d.monthlyPlans,
     d.planTemplates,
     d.plannedExpenses,
+    d.adjustments,
   ]
 }
 
@@ -44,6 +45,7 @@ export async function readAllData(d: MoneyDB = db): Promise<MoneyData> {
     monthlyPlans: await d.monthlyPlans.toArray(),
     planTemplates: await d.planTemplates.toArray(),
     plannedExpenses: await d.plannedExpenses.toArray(),
+    adjustments: await d.adjustments.toArray(),
   }))
 }
 
@@ -62,6 +64,7 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.plannedExpenses.clear()
   await d.planTemplates.clear()
   await d.monthlyPlans.clear()
+  await d.adjustments.clear()
   const keepKeys = (await d.settings.toCollection().primaryKeys()).filter((k) => !DEVICE_SETTING_KEYS.has(String(k)))
   await d.settings.bulkDelete(keepKeys)
   await d.categories.bulkAdd(data.categories)
@@ -77,6 +80,7 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.monthlyPlans.bulkAdd(data.monthlyPlans ?? [])
   await d.planTemplates.bulkAdd(data.planTemplates ?? [])
   await d.plannedExpenses.bulkAdd(data.plannedExpenses ?? [])
+  await d.adjustments.bulkAdd(data.adjustments ?? [])
   const userSettings: Setting[] = data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key))
   if (userSettings.length) await d.settings.bulkPut(userSettings)
 }
@@ -110,6 +114,9 @@ export interface RangePreview {
   /** Current payslips that will be replaced: pay date inside the range, or same month as an incoming one. */
   payslipsReplaced: number
   newSalaryItems: SalaryItem[]
+  /** Balance corrections dated inside the range: from the backup, and current ones replaced (D-124). */
+  adjustmentsFromBackup: number
+  adjustmentsReplaced: number
 }
 
 /** Local-midnight bounds of [from, to] inclusive, as ISO strings for comparison with occurredAt. */
@@ -129,8 +136,19 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
   if (from > to) throw new BackupError('開始日期不能晚於結束日期')
   const [start, end] = rangeBounds(from, to)
   const inRange = (iso: string) => iso >= start && iso < end
-  const incoming = backup.transactions.filter((t) => inRange(t.occurredAt))
-  const current = await d.transactions.where('occurredAt').between(start, end, true, false).toArray()
+  // D-124: a transfer and its fee are one unit, placed by the transfer's date, so a range restore never
+  // leaves a fee without its transfer (or brings a fee back without it).
+  const bById = new Map(backup.transactions.map((t) => [t.id, t]))
+  const incoming = backup.transactions.filter((t) => inRange((t.feeOf && bById.get(t.feeOf)?.occurredAt) || t.occurredAt))
+  const dated = await d.transactions.where('occurredAt').between(start, end, true, false).toArray()
+  const feeIds = dated.filter((t) => t.feeOf).map((t) => t.feeOf!)
+  const parents = new Map((await d.transactions.bulkGet(feeIds)).filter((p): p is Transaction => !!p).map((p) => [p.id, p]))
+  // A fee dated here whose transfer stays outside the range stays too.
+  const own = dated.filter((t) => !t.feeOf || !parents.has(t.feeOf) || inRange(parents.get(t.feeOf)!.occurredAt))
+  // Fees of the transfers being replaced or brought back go with them, wherever they are dated.
+  const moving = [...own, ...incoming].filter((t) => t.type === 'transfer').map((t) => t.id)
+  const fees = moving.length ? await d.transactions.where('feeOf').anyOf(moving).toArray() : []
+  const current = [...new Map([...own, ...fees].map((t) => [t.id, t])).values()]
   const currentIds = new Set(current.map((t) => t.id))
   const outside = await d.transactions.bulkGet(incoming.map((t) => t.id).filter((id) => !currentIds.has(id)))
   const movedIn = outside.filter(Boolean).length
@@ -145,9 +163,18 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
   const nextOrder = { expense: maxOrder(cats, 'expense'), income: maxOrder(cats, 'income') }
   let nextPayOrder = pays.reduce((m, p) => Math.max(m, p.sortOrder), -1)
   const needPayment = (id: string) => {
-    if (!payIds.has(id) && !newPayments.some((p) => p.id === id)) newPayments.push({ ...bPay.get(id)!, sortOrder: ++nextPayOrder })
+    if (payIds.has(id) || newPayments.some((p) => p.id === id)) return
+    const p: PaymentMethod = { ...bPay.get(id)!, sortOrder: ++nextPayOrder }
+    // A card coming back keeps its paying account only if that account exists here (D-119).
+    if (p.payFromId && !payIds.has(p.payFromId)) delete p.payFromId
+    newPayments.push(p)
   }
   for (const t of incoming) {
+    // Every account a record touches must exist after the restore (D-124); transfers have no category.
+    needPayment(t.paymentMethodId)
+    if (t.toAccountId) needPayment(t.toAccountId)
+    if (t.sourceAccountId) needPayment(t.sourceAccountId)
+    if (t.type === 'transfer') continue
     const existing = catById.get(t.categoryId)
     if (existing && existing.type !== t.type) {
       throw new BackupError(`分類「${existing.name}」在備份和目前的收支類型不同，無法還原這段期間`)
@@ -156,8 +183,11 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
       const c = bCat.get(t.categoryId)! // parseBackup guarantees every transaction's category exists in the file
       newCategories.push({ ...c, sortOrder: ++nextOrder[c.type] })
     }
-    needPayment(t.paymentMethodId)
   }
+  // D-124: balance corrections follow their date, like transactions.
+  const incomingAdj = (backup.adjustments ?? []).filter((a) => inRange(a.occurredAt))
+  for (const a of incomingAdj) needPayment(a.accountId)
+  const currentAdj = await d.adjustments.where('occurredAt').between(start, end, true, false).toArray()
 
   // D-74: payslips follow their income, judged by pay date (same local date as the income).
   const incomingTxIds = new Set(incoming.map((t) => t.id))
@@ -193,6 +223,8 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
     current,
     incomingSlips,
     slipsToDelete,
+    incomingAdj,
+    currentAdj,
     preview: {
       fromBackup: incoming.length,
       replaced: current.length,
@@ -202,6 +234,8 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
       payslipsFromBackup: incomingSlips.length,
       payslipsReplaced: slipsToDelete.length,
       newSalaryItems,
+      adjustmentsFromBackup: incomingAdj.length,
+      adjustmentsReplaced: currentAdj.length,
     },
   }
 }
@@ -231,6 +265,8 @@ export async function restoreRange(backup: BackupFile, from: string, to: string,
     // bulkPut: a record the user later moved outside the range comes back as its backup version (D-47).
     await d.transactions.bulkPut(plan.incoming)
     await d.payslips.bulkPut(plan.incomingSlips)
+    await d.adjustments.bulkDelete(plan.currentAdj.map((a) => a.id))
+    await d.adjustments.bulkPut(plan.incomingAdj)
     return plan.preview
   })
 }

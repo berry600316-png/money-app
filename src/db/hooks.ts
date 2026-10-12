@@ -3,6 +3,7 @@ import { db } from './db'
 import type { Category, PaymentMethod, Payslip, PlanTemplate, SalaryItem, Transaction } from './types'
 import { linkCandidates, summarizePlan, type PlanSummary } from '../lib/plan'
 import { addMonths, fromYmd, monthRangeIso, type YearMonth } from '../lib/dates'
+import { accountFlow, computeBalances, isMethod, isTracked, type FlowRow } from '../lib/accounts'
 
 /* Live queries re-run automatically after any write, so every screen updates at once. */
 
@@ -125,6 +126,35 @@ export function usePlanSummary(month: string): PlanState | undefined {
       taken,
     }
   }, [month])
+}
+
+/* ---------------- accounts (D-117..D-123) ---------------- */
+
+/** Balance of every tracked account (cards: 預扣), re-derived from the records on every change. */
+export function useBalances(): Map<string, number> | undefined {
+  return useLiveQuery(async () => {
+    const accounts = await db.paymentMethods.toArray()
+    const starts = accounts.filter((a) => isTracked(a) && !isMethod(a)).map((a) => a.balanceFrom!)
+    if (!starts.length) return new Map<string, number>()
+    const since = starts.sort()[0]
+    const [txs, adjs] = await Promise.all([db.transactions.where('occurredAt').aboveOrEqual(since).toArray(), db.adjustments.toArray()])
+    return computeBalances(accounts, txs, adjs)
+  }, [])
+}
+
+/** One account's history since its start date, newest first (D-123). */
+export function useAccountFlow(id: string): FlowRow[] | undefined {
+  return useLiveQuery(async () => {
+    const accounts = await db.paymentMethods.toArray()
+    const acc = accounts.find((a) => a.id === id)
+    if (!acc || !isTracked(acc)) return []
+    const since = acc.balanceFrom!
+    const [txs, adjs] = await Promise.all([
+      db.transactions.where('occurredAt').aboveOrEqual(since).toArray(),
+      db.adjustments.where('accountId').equals(id).toArray(),
+    ])
+    return accountFlow(acc, accounts, txs, adjs)
+  }, [id])
 }
 
 export function usePlanTemplates(): PlanTemplate[] | undefined {

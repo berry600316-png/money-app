@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { db } from '../db/db'
 import { DEFAULT_CATEGORY_ID, DEFAULT_PAYMENT_METHOD_ID, SALARY_CATEGORY_ID } from '../db/defaults'
-import { useSetting } from '../db/hooks'
+import { useBalances, useSetting } from '../db/hooks'
 import {
   addTransaction,
-  deleteTransaction,
+  deleteEntry,
+  LAST_KEYS,
   MERCHANT_MAX,
   MoneyError,
   NOTE_MAX,
   recentMerchants,
   restoreTransaction,
+  transferFee,
   updateTransaction,
   type TxInput,
 } from '../db/repo'
-import type { TimeSource, TxType } from '../db/types'
+import type { CategoryType, PaymentMethod, TimeSource, TxType } from '../db/types'
+import { isAsset, isCard, isMethod } from '../lib/accounts'
 import { dayLabel, fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { applyKey, fmt } from '../lib/money'
 import { requestPersistentStorage } from '../pwa/pwa'
@@ -23,12 +26,21 @@ import { useRefData } from '../ui/refData'
 import { Seg } from '../ui/Seg'
 import { useToast } from '../ui/Toast'
 import { useCloseGuard, useDirtyCheck, useDiscardAsking } from '../ui/discard'
+import { AccountPicker, allowedIn, type PickRole } from './accounts/AccountPicker'
 
 interface Draft {
   type: TxType
   amount: string
   categoryId: string
+  /** Expense: account or way to pay. Income: the account it went into. Transfer: the source account. */
   paymentMethodId: string
+  /** Expense paid with 轉帳 / 行動支付 / 其他: the account the money left (D-120). */
+  sourceAccountId: string
+  /** Transfer: the destination account (a card = paying its bill, D-119). */
+  toAccountId: string
+  /** Transfer fee digits (D-121). */
+  fee: string
+  showFee: boolean
   date: string
   /** "HH:MM" (D-99). */
   time: string
@@ -40,7 +52,19 @@ interface Draft {
 }
 
 /** Everything the user can change; the snapshot taken on open is compared with it (D-101). */
-const fieldsOf = (d: Draft) => JSON.stringify([d.type, d.amount, d.categoryId, d.paymentMethodId, d.date, d.time, d.merchant.trim(), d.note.trim()])
+const fieldsOf = (d: Draft, viaMethod: boolean) =>
+  JSON.stringify([
+    d.type,
+    d.amount,
+    d.type === 'transfer' ? '' : d.categoryId,
+    d.paymentMethodId,
+    viaMethod ? d.sourceAccountId : '',
+    d.type === 'transfer' ? [d.toAccountId, d.fee] : '',
+    d.date,
+    d.time,
+    d.type === 'transfer' ? '' : d.merchant.trim(),
+    d.note.trim(),
+  ])
 
 export interface EntryPrefill {
   /** D-115: a new entry on this day; the time defaults to the current clock time. */
@@ -49,11 +73,16 @@ export interface EntryPrefill {
   merchant?: string
   categoryId?: string
   paymentMethodId?: string
+  /** D-123: start as a transfer (互轉 / 繳卡費) between these accounts. */
+  type?: TxType
+  fromAccountId?: string
+  toAccountId?: string
 }
 
 const KIND_OPTIONS = [
   { value: 'expense', label: '支出' },
   { value: 'income', label: '收入' },
+  { value: 'transfer', label: '互轉' },
 ] as const
 
 const KEYS: { k: string; label?: string; cls?: string }[] = [
@@ -62,6 +91,8 @@ const KEYS: { k: string; label?: string; cls?: string }[] = [
   { k: '7' }, { k: '8' }, { k: '9' },
   { k: '00' }, { k: '0', cls: 'zero' },
 ]
+
+const payIcon = (p: PaymentMethod) => (isCard(p) ? 'card' : p.type === 'bank' ? 'bank' : isMethod(p) ? 'out' : 'wallet')
 
 export function EntrySheet({
   open,
@@ -76,7 +107,7 @@ export function EntrySheet({
   editId: string | null
   onClose: () => void
   onUsePayslip: () => void
-  /** New entry pre-filled from elsewhere (D-109: a planned expense). */
+  /** New entry pre-filled from elsewhere (D-109: a planned expense; D-123: a transfer or bill payment). */
   prefill?: EntryPrefill | null
   /** One line shown above the amount (D-109). */
   banner?: string | null
@@ -85,10 +116,17 @@ export function EntrySheet({
 }) {
   const ref = useRefData()
   const toast = useToast()
-  const lastPay = useSetting<string>('lastPaymentMethodId', DEFAULT_PAYMENT_METHOD_ID)
+  const balances = useBalances()
+  const lastPay = useSetting<string>(LAST_KEYS.expense, DEFAULT_PAYMENT_METHOD_ID)
+  const lastInto = useSetting<string>(LAST_KEYS.income, '')
+  const lastSource = useSetting<string>(LAST_KEYS.source, '')
+  const lastFrom = useSetting<string>(LAST_KEYS.from, '')
+  const lastTo = useSetting<string>(LAST_KEYS.to, '')
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [feeRecord, setFeeRecord] = useState(false)
   const [saving, setSaving] = useState(false)
   const [typing, setTyping] = useState(false)
+  const [pick, setPick] = useState<PickRole | null>(null)
   const [merchantFocused, setMerchantFocused] = useState(false)
   const [suggestions, setSuggestions] = useState<{ merchant: string; categoryId: string }[]>([])
   const sheetRef = useRef<HTMLDivElement | null>(null)
@@ -96,21 +134,33 @@ export function EntrySheet({
   const amtWrapRef = useRef<HTMLDivElement | null>(null)
   const merchantRef = useRef<HTMLInputElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
+  const feeRef = useRef<HTMLInputElement | null>(null)
   const opened = useRef('')
   /** The stored date/time and its marker: the marker stays only while both are unchanged (D-100). */
   const openedAt = useRef<{ date: string; time: string; timeSource?: TimeSource }>({ date: '', time: '' })
   const guard = useCloseGuard('entry')
-  useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft) !== opened.current)
+  const viaMethod = !!draft && draft.type === 'expense' && isMethod(ref.payment(draft.paymentMethodId))
+  useDirtyCheck('entry', open, () => !!draft && !saving && fieldsOf(draft, viaMethod) !== opened.current)
   const requestClose = () => guard(onClose)
   const asking = useDiscardAsking()
 
-  const activeCategory = (type: TxType, preferred: string) => {
+  const activeCategory = (type: CategoryType, preferred: string) => {
     const ok = ref.categories.find((c) => c.id === preferred && c.type === type && c.isActive)
     return ok ? ok.id : (ref.categories.find((c) => c.type === type && c.isActive)?.id ?? '')
   }
   const activePayment = (preferred: string) => {
     const ok = ref.payments.find((p) => p.id === preferred && p.isActive)
     return ok ? ok.id : (ref.payments.find((p) => p.isActive)?.id ?? '')
+  }
+  /** The first of `preferred` allowed in `role`, else the first allowed account (D-120: remembered per role). */
+  const pickFor = (role: PickRole, preferred: (string | undefined)[], exclude?: string) => {
+    for (const id of preferred) {
+      const p = id ? ref.payments.find((x) => x.id === id) : undefined
+      if (p && p.isActive && allowedIn(role, p, exclude)) return p.id
+    }
+    // Nothing remembered yet: money usually moves from (or into) a bank account first.
+    const ok = ref.payments.filter((p) => p.isActive && allowedIn(role, p, exclude))
+    return (ok.find((p) => p.type === 'bank') ?? ok[0])?.id ?? ''
   }
 
   // Build a fresh draft every time the sheet opens.
@@ -120,16 +170,18 @@ export function EntrySheet({
     keyed.current = false
     setSaving(false)
     setTyping(false)
+    setPick(null)
     setSuggestions([])
+    setFeeRecord(false)
     const start = (dr: Draft) => {
-      opened.current = fieldsOf(dr)
+      opened.current = fieldsOf(dr, dr.type === 'expense' && isMethod(ref.payment(dr.paymentMethodId)))
       openedAt.current = { date: dr.date, time: dr.time, timeSource: dr.timeSource }
       setDraft(dr)
     }
     if (editId) {
       // Clear first so a quick tap on save can never write the previous draft into this record.
       setDraft(null)
-      db.transactions.get(editId).then((t) => {
+      Promise.all([db.transactions.get(editId), transferFee(editId)]).then(([t, fee]) => {
         if (cancelled) return
         if (!t) {
           toast('這筆紀錄已不存在', { kind: 'error' })
@@ -137,11 +189,16 @@ export function EntrySheet({
           return
         }
         const at = new Date(t.occurredAt)
+        setFeeRecord(!!t.feeOf)
         start({
           type: t.type,
           amount: String(t.amount),
           categoryId: t.categoryId,
           paymentMethodId: t.paymentMethodId,
+          sourceAccountId: t.sourceAccountId ?? pickFor('source', [lastSource]),
+          toAccountId: t.toAccountId ?? '',
+          fee: fee ? String(fee) : '',
+          showFee: fee > 0,
           date: toYmd(at),
           time: timeLabel(at),
           timeSource: t.timeSource,
@@ -156,11 +213,18 @@ export function EntrySheet({
       })
     } else {
       const now = new Date()
+      const type: TxType = prefill?.type ?? 'expense'
+      const from = pickFor('from', [prefill?.fromAccountId, lastFrom])
+      const to = pickFor('to', [prefill?.toAccountId, lastTo], from)
       start({
-        type: 'expense',
+        type,
         amount: prefill?.amount ? String(prefill.amount) : '',
-        categoryId: activeCategory('expense', prefill?.categoryId ?? DEFAULT_CATEGORY_ID.expense),
-        paymentMethodId: activePayment(prefill?.paymentMethodId ?? lastPay),
+        categoryId: type === 'transfer' ? '' : activeCategory(type, prefill?.categoryId ?? DEFAULT_CATEGORY_ID[type]),
+        paymentMethodId: type === 'transfer' ? from : type === 'income' ? pickFor('into', [lastInto]) : activePayment(prefill?.paymentMethodId ?? lastPay),
+        sourceAccountId: pickFor('source', [lastSource]),
+        toAccountId: to,
+        fee: '',
+        showFee: false,
         // A day chosen on the calendar (never later than today), at the current clock time (D-115).
         date: prefill?.date && prefill.date <= toYmd(now) ? prefill.date : toYmd(now),
         time: timeLabel(now),
@@ -178,7 +242,7 @@ export function EntrySheet({
 
   // D-23: recent merchants while typing in the merchant field.
   useEffect(() => {
-    if (!draft || !merchantFocused || !draft.merchant.trim()) {
+    if (!draft || draft.type === 'transfer' || !merchantFocused || !draft.merchant.trim()) {
       setSuggestions([])
       return
     }
@@ -196,18 +260,27 @@ export function EntrySheet({
   }, [draft?.merchant, draft?.type, merchantFocused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const amount = draft ? parseInt(draft.amount || '0', 10) : 0
+  const fee = draft ? parseInt(draft.fee || '0', 10) : 0
 
   const chips = useMemo(() => {
-    if (!draft) return []
+    if (!draft || draft.type === 'transfer') return []
     return ref.categories.filter((c) => c.type === draft.type && (c.isActive || c.id === draft.categoryId))
   }, [ref.categories, draft])
 
-  const payOptions = useMemo(() => {
-    if (!draft) return []
-    return ref.payments.filter((p) => p.isActive || p.id === draft.paymentMethodId)
-  }, [ref.payments, draft])
-
   const patch = (p: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...p } : d))
+
+  /** Switching kind starts each kind where the last entry of that kind did (D-120). */
+  const switchType = (type: TxType) => {
+    if (!draft || type === draft.type) return
+    if (type === 'transfer') {
+      const from = pickFor('from', [isAsset(ref.payment(draft.paymentMethodId)) ? draft.paymentMethodId : undefined, lastFrom])
+      patch({ type, paymentMethodId: from, toAccountId: pickFor('to', [draft.toAccountId, lastTo], from) })
+    } else if (type === 'income') {
+      patch({ type, categoryId: activeCategory('income', DEFAULT_CATEGORY_ID.income), paymentMethodId: pickFor('into', [lastInto, draft.paymentMethodId]) })
+    } else {
+      patch({ type, categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense), paymentMethodId: activePayment(lastPay) })
+    }
+  }
 
   const replay = (el: HTMLElement | null, cls: string) => {
     if (!el) return
@@ -232,6 +305,8 @@ export function EntrySheet({
     keyed.current = false
   }, [draft?.amount])
 
+  const toCard = !!draft && draft.type === 'transfer' && isCard(ref.payment(draft.toAccountId))
+
   const save = async () => {
     if (!draft || saving) return
     if (!amount) {
@@ -239,15 +314,17 @@ export function EntrySheet({
       return
     }
     setSaving(true)
-    const input = {
+    const input: TxInput = {
       type: draft.type,
       amount,
       merchant: draft.merchant,
-      categoryId: draft.categoryId,
+      categoryId: draft.type === 'transfer' ? '' : draft.categoryId,
       paymentMethodId: draft.paymentMethodId,
       date: draft.date,
       time: draft.time,
       note: draft.note,
+      ...(draft.type === 'transfer' ? { toAccountId: draft.toAccountId, fee: draft.showFee ? fee : 0 } : {}),
+      ...(viaMethod ? { sourceAccountId: draft.sourceAccountId } : {}),
     }
     try {
       if (editId) {
@@ -258,7 +335,13 @@ export function EntrySheet({
         toast(`已記下 NT$ ${fmt(amount)}，並對應必要支出`)
       } else {
         await addTransaction(input)
-        toast(`已記下${draft.type === 'income' ? '收入' : ''} NT$ ${fmt(amount)}`)
+        toast(
+          draft.type === 'transfer'
+            ? toCard
+              ? `已繳卡費 NT$ ${fmt(amount)}，不算支出`
+              : `已互轉 NT$ ${fmt(amount)}，不算收支`
+            : `已記下${draft.type === 'income' ? '收入' : ''} NT$ ${fmt(amount)}`,
+        )
         void requestPersistentStorage()
       }
       onClose()
@@ -273,9 +356,9 @@ export function EntrySheet({
     if (!editId || saving) return
     setSaving(true)
     try {
-      const deleted = await deleteTransaction(editId)
+      const deleted = await deleteEntry(editId)
       onClose()
-      toast('已刪除 1 筆', {
+      toast(`已刪除 ${deleted.length > 1 ? '互轉和手續費' : '1 筆'}`, {
         undo: () => {
           restoreTransaction(deleted).then(
             () => toast('已復原'),
@@ -293,7 +376,7 @@ export function EntrySheet({
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (asking) return
+      if (asking || pick) return
       const tag = (document.activeElement?.tagName ?? '').toUpperCase()
       const inField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA'
       if (e.key === 'Escape') {
@@ -329,12 +412,108 @@ export function EntrySheet({
     if (isMerchant) setMerchantFocused(false)
     window.setTimeout(() => {
       const a = document.activeElement
-      if (a !== merchantRef.current && a !== noteRef.current) setTyping(false)
+      if (a !== merchantRef.current && a !== noteRef.current && a !== feeRef.current) setTyping(false)
     }, 60)
+  }
+
+  /** "餘額 52,300" / "預扣 8,320" / "尚未設定餘額" under an account's name. */
+  const balanceLine = (id: string) => {
+    const p = ref.payment(id)
+    if (isMethod(p)) return ''
+    const b = balances?.get(id)
+    if (b === undefined) return '尚未設定餘額'
+    return `${isCard(p) ? '預扣' : '餘額'} ${fmt(b)}`
+  }
+
+  const onPick = (id: string) => {
+    if (!draft || !pick) return
+    if (pick === 'source') return patch({ sourceAccountId: id })
+    if (pick === 'to') {
+      const card = ref.payment(id)
+      const pending = balances?.get(id) ?? 0
+      // D-119: paying a card bill starts with the whole 預扣 (when nothing is typed yet).
+      return patch({ toAccountId: id, ...(isCard(card) && !amount && pending > 0 ? { amount: String(pending) } : {}) })
+    }
+    if (pick === 'from') return patch({ paymentMethodId: id, ...(id === draft.toAccountId ? { toAccountId: pickFor('to', [lastTo], id) } : {}) })
+    patch({ paymentMethodId: id })
   }
 
   const today = toYmd(new Date())
   const title = editId ? '編輯紀錄' : '記一筆'
+  const pickValue = !draft || !pick ? '' : pick === 'source' ? draft.sourceAccountId : pick === 'to' ? draft.toAccountId : draft.paymentMethodId
+  const recent = { pay: [lastPay], source: [lastSource], into: [lastInto], from: [lastFrom], to: [lastTo] }
+
+  const dateTimePills = draft && (
+    <>
+      <label className={'pill' + (draft.date !== today ? ' on' : '')} htmlFor="f-date">
+        <Icon name="cal" />
+        <span>{dayLabel(fromYmd(draft.date), { short: true })}</span>
+        <input
+          id="f-date"
+          type="date"
+          className="pill-input"
+          max={today}
+          value={draft.date}
+          aria-label="日期"
+          onClick={(e) => {
+            try {
+              e.currentTarget.showPicker()
+            } catch {
+              /* not supported: native tap still opens the picker */
+            }
+          }}
+          onChange={(e) => {
+            const v = e.target.value
+            if (!v) return
+            const date = v > today ? today : v
+            // D-99: the chosen time stays; on today it can't be later than now.
+            const nowHm = timeLabel(new Date())
+            // A new date makes the time the user's own, as the save does (D-100).
+            patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date, timeSource: date === openedAt.current.date && draft.time === openedAt.current.time ? openedAt.current.timeSource : undefined })
+          }}
+        />
+      </label>
+      <label className={'pill' + (draft.timeSource ? ' approx' : '')} htmlFor="f-time">
+        <Icon name="clock" />
+        <span className="num-ui">{draft.time}</span>
+        {draft.timeSource && <small>{draft.timeSource === 'notification' ? '通知時間' : '時間未知'}</small>}
+        <input
+          id="f-time"
+          type="time"
+          className="pill-input"
+          value={draft.time}
+          aria-label="時間"
+          onClick={(e) => {
+            try {
+              e.currentTarget.showPicker()
+            } catch {
+              /* not supported: native tap still opens the picker */
+            }
+          }}
+          onChange={(e) => {
+            const v = e.target.value
+            if (!/^\d{2}:\d{2}$/.test(v)) return
+            const nowHm = timeLabel(new Date())
+            patch({ time: draft.date === today && v > nowHm ? nowHm : v, timeSource: undefined })
+          }}
+        />
+      </label>
+    </>
+  )
+
+  const notePill = draft && (
+    <button
+      type="button"
+      className={'pill' + (draft.note.trim() ? ' on' : '')}
+      onClick={() => {
+        patch({ showNote: true })
+        window.setTimeout(() => noteRef.current?.focus(), 0)
+      }}
+    >
+      <Icon name="note" />
+      <span>備註</span>
+    </button>
+  )
 
   return (
     <BottomSheet
@@ -352,19 +531,7 @@ export function EntrySheet({
           <h2 className="sr" id="entry-title">
             {title}
           </h2>
-          {draft ? (
-            <Seg
-              label="收支類型"
-              options={KIND_OPTIONS}
-              value={draft.type}
-              onChange={(type) => {
-                if (type === draft.type) return
-                patch({ type, categoryId: activeCategory(type, DEFAULT_CATEGORY_ID[type]) })
-              }}
-            />
-          ) : (
-            <span />
-          )}
+          {draft && !feeRecord ? <Seg label="類型" className="kind-seg" options={KIND_OPTIONS} value={draft.type} onChange={switchType} /> : <span />}
           {editId ? (
             <button type="button" className="del-btn" aria-label="刪除這筆" onClick={remove} disabled={saving}>
               <Icon name="trash" />
@@ -383,6 +550,12 @@ export function EntrySheet({
               {banner}
             </p>
           )}
+          {feeRecord && (
+            <p className="entry-banner">
+              <Icon name="swap" />
+              這是一筆互轉的手續費，日期跟著那筆互轉；刪除那筆互轉時會一起刪除。
+            </p>
+          )}
           <div className="amt-wrap" ref={amtWrapRef}>
             <span className="cur">NT$</span>
             <span
@@ -395,151 +568,172 @@ export function EntrySheet({
             </span>
           </div>
 
-          <label htmlFor="f-merchant" className="sr">
-            商家
-          </label>
-          <input
-            ref={merchantRef}
-            id="f-merchant"
-            className="merchant"
-            placeholder="商家（選填）"
-            autoComplete="off"
-            enterKeyHint="done"
-            maxLength={MERCHANT_MAX}
-            value={draft.merchant}
-            onChange={(e) => patch({ merchant: e.target.value })}
-            onFocus={() => onFieldFocus(true)}
-            onBlur={() => onFieldBlur(true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                e.currentTarget.blur()
-              }
-            }}
-          />
-          {suggestions.length > 0 && (
-            <div className="suggest" aria-label="最近用過的商家">
-              {suggestions.map((s) => (
+          {draft.type === 'transfer' ? (
+            <>
+              {/* D-117 / D-119: a transfer is never income or expense; to a card it pays the bill. */}
+              <p className="move-cap">
+                {toCard ? (
+                  <>
+                    繳卡費<span className="move-tag">不算支出</span>
+                  </>
+                ) : (
+                  '帳戶之間互轉，不算收入也不算支出'
+                )}
+              </p>
+              <div className="move">
+                <button type="button" className="mv" onClick={() => setPick('from')}>
+                  <small>從</small>
+                  <b>{ref.payment(draft.paymentMethodId).name}</b>
+                  <span className="num-ui">{balanceLine(draft.paymentMethodId)}</span>
+                </button>
                 <button
                   type="button"
-                  key={s.merchant}
-                  onPointerDown={(e) => e.preventDefault()}
+                  className="swap-btn"
+                  aria-label="對調轉出和轉入"
+                  disabled={toCard}
+                  onClick={() => patch({ paymentMethodId: draft.toAccountId, toAccountId: draft.paymentMethodId })}
+                >
+                  <Icon name="swap" />
+                </button>
+                <button type="button" className="mv" onClick={() => setPick('to')}>
+                  <small>到</small>
+                  <b>{ref.payment(draft.toAccountId).name}</b>
+                  <span className="num-ui">{balanceLine(draft.toAccountId)}</span>
+                </button>
+              </div>
+              {toCard && (balances?.get(draft.toAccountId) ?? 0) > 0 && (
+                <div className="paycard">
+                  <span>
+                    目前預扣 <b className="num">{fmt(balances!.get(draft.toAccountId)!)}</b>
+                  </span>
+                  {amount !== balances!.get(draft.toAccountId) && (
+                    <button type="button" onClick={() => patch({ amount: String(balances!.get(draft.toAccountId)) })}>
+                      帶入全額
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="meta">
+                {dateTimePills}
+                <button
+                  type="button"
+                  className={'pill' + (draft.showFee ? ' on' : '')}
                   onClick={() => {
-                    const cat = ref.categories.find((c) => c.id === s.categoryId && c.isActive && c.type === draft.type)
-                    patch({ merchant: s.merchant, ...(cat ? { categoryId: cat.id } : {}) })
-                    setSuggestions([])
-                    merchantRef.current?.blur()
+                    patch({ showFee: !draft.showFee })
+                    if (!draft.showFee) window.setTimeout(() => feeRef.current?.focus(), 0)
                   }}
                 >
-                  <Icon name={ref.category(s.categoryId).icon} />
-                  {s.merchant}
+                  <Icon name="coin" />
+                  <span>手續費{draft.showFee && fee ? ` ${fmt(fee)}` : ''}</span>
                 </button>
-              ))}
-            </div>
-          )}
-
-          <div className="chips" role="group" aria-label="分類">
-            {chips.map((c) => (
-              <button type="button" key={c.id} className="chip" aria-pressed={c.id === draft.categoryId} onClick={() => patch({ categoryId: c.id })}>
-                <span className="ico">
-                  <Icon name={c.icon} />
-                </span>
-                <span className="name">{c.name}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* D-65: salary can be recorded with its full payslip instead. */}
-          {!editId && draft.type === 'income' && draft.categoryId === SALARY_CATEGORY_ID && (
-            <button type="button" className="payslip-hint" onClick={onUsePayslip}>
-              <Icon name="receipt" />
-              用薪資單記錄明細 ›
-            </button>
-          )}
-
-          <div className="meta">
-            <label className={'pill' + (draft.date !== today ? ' on' : '')} htmlFor="f-date">
-              <Icon name="cal" />
-              <span>{dayLabel(fromYmd(draft.date), { short: true })}</span>
+                {notePill}
+              </div>
+              {draft.showFee && (
+                <label className="fee-row" htmlFor="f-fee">
+                  <span>手續費</span>
+                  <small>另記一筆「其他」支出，從 {ref.payment(draft.paymentMethodId).name} 扣</small>
+                  <input
+                    ref={feeRef}
+                    id="f-fee"
+                    className="num"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0"
+                    autoComplete="off"
+                    enterKeyHint="done"
+                    value={draft.fee}
+                    onChange={(e) => patch({ fee: e.target.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 8) })}
+                    onFocus={() => onFieldFocus(false)}
+                    onBlur={() => onFieldBlur(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        e.currentTarget.blur()
+                      }
+                    }}
+                  />
+                </label>
+              )}
+            </>
+          ) : (
+            <>
+              <label htmlFor="f-merchant" className="sr">
+                {draft.type === 'income' ? '來源' : '商家'}
+              </label>
               <input
-                id="f-date"
-                type="date"
-                className="pill-input"
-                max={today}
-                value={draft.date}
-                aria-label="日期"
-                onClick={(e) => {
-                  try {
-                    e.currentTarget.showPicker()
-                  } catch {
-                    /* not supported: native tap still opens the picker */
+                ref={merchantRef}
+                id="f-merchant"
+                className="merchant"
+                placeholder={draft.type === 'income' ? '來源（選填）' : '商家（選填）'}
+                autoComplete="off"
+                enterKeyHint="done"
+                maxLength={MERCHANT_MAX}
+                value={draft.merchant}
+                onChange={(e) => patch({ merchant: e.target.value })}
+                onFocus={() => onFieldFocus(true)}
+                onBlur={() => onFieldBlur(true)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    e.currentTarget.blur()
                   }
                 }}
-                onChange={(e) => {
-                  const v = e.target.value
-                  if (!v) return
-                  const date = v > today ? today : v
-                  // D-99: the chosen time stays; on today it can't be later than now.
-                  const nowHm = timeLabel(new Date())
-                  // A new date makes the time the user's own, as the save does (D-100).
-                  patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date, timeSource: date === openedAt.current.date && draft.time === openedAt.current.time ? openedAt.current.timeSource : undefined })
-                }}
               />
-            </label>
-            <label className={'pill' + (draft.timeSource ? ' approx' : '')} htmlFor="f-time">
-              <Icon name="clock" />
-              <span className="num-ui">{draft.time}</span>
-              {draft.timeSource && <small>{draft.timeSource === 'notification' ? '通知時間' : '時間未知'}</small>}
-              <input
-                id="f-time"
-                type="time"
-                className="pill-input"
-                value={draft.time}
-                aria-label="時間"
-                onClick={(e) => {
-                  try {
-                    e.currentTarget.showPicker()
-                  } catch {
-                    /* not supported: native tap still opens the picker */
-                  }
-                }}
-                onChange={(e) => {
-                  const v = e.target.value
-                  if (!/^\d{2}:\d{2}$/.test(v)) return
-                  const nowHm = timeLabel(new Date())
-                  patch({ time: draft.date === today && v > nowHm ? nowHm : v, timeSource: undefined })
-                }}
-              />
-            </label>
-            <label className="pill" htmlFor="f-pay">
-              <Icon name="card" />
-              <span>{ref.payment(draft.paymentMethodId).name}</span>
-              <select
-                id="f-pay"
-                className="pill-input"
-                aria-label="付款方式"
-                value={draft.paymentMethodId}
-                onChange={(e) => patch({ paymentMethodId: e.target.value })}
-              >
-                {payOptions.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
+              {suggestions.length > 0 && (
+                <div className="suggest" aria-label="最近用過的商家">
+                  {suggestions.map((s) => (
+                    <button
+                      type="button"
+                      key={s.merchant}
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        const cat = ref.categories.find((c) => c.id === s.categoryId && c.isActive && c.type === draft.type)
+                        patch({ merchant: s.merchant, ...(cat ? { categoryId: cat.id } : {}) })
+                        setSuggestions([])
+                        merchantRef.current?.blur()
+                      }}
+                    >
+                      {s.merchant}
+                      <small>{ref.category(s.categoryId).name}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* D-122: categories are words only. */}
+              <div className="cats" role="group" aria-label="分類">
+                {chips.map((c) => (
+                  <button type="button" key={c.id} className="cat" aria-pressed={c.id === draft.categoryId} onClick={() => patch({ categoryId: c.id })}>
+                    {c.name}
+                  </button>
                 ))}
-              </select>
-            </label>
-            <button
-              type="button"
-              className={'pill' + (draft.note.trim() ? ' on' : '')}
-              onClick={() => {
-                patch({ showNote: true })
-                window.setTimeout(() => noteRef.current?.focus(), 0)
-              }}
-            >
-              <Icon name="note" />
-              <span>備註</span>
-            </button>
-          </div>
+              </div>
+
+              {/* D-65: salary can be recorded with its full payslip instead. */}
+              {!editId && draft.type === 'income' && draft.categoryId === SALARY_CATEGORY_ID && (
+                <button type="button" className="payslip-hint" onClick={onUsePayslip}>
+                  <Icon name="receipt" />
+                  用薪資單記錄明細 ›
+                </button>
+              )}
+
+              <div className="meta">
+                {/* D-121: a fee is dated with its transfer, so its date is changed there. */}
+                {!feeRecord && dateTimePills}
+                <button type="button" className="pill key" onClick={() => setPick(draft.type === 'income' ? 'into' : 'pay')}>
+                  {draft.type === 'income' ? <small>存入</small> : <Icon name={payIcon(ref.payment(draft.paymentMethodId))} />}
+                  <span>{ref.payment(draft.paymentMethodId).name}</span>
+                </button>
+                {viaMethod && (
+                  <button type="button" className="pill key pill-in" onClick={() => setPick('source')}>
+                    <small>從</small>
+                    <span>{ref.payment(draft.sourceAccountId).name}</span>
+                  </button>
+                )}
+                {notePill}
+              </div>
+            </>
+          )}
 
           {draft.showNote && (
             <div className="note-row">
@@ -590,6 +784,16 @@ export function EntrySheet({
           </button>
         </>
       )}
+      <AccountPicker
+        open={pick !== null}
+        role={pick ?? 'pay'}
+        value={pickValue}
+        recent={pick ? recent[pick] : []}
+        exclude={pick === 'to' ? draft?.paymentMethodId : undefined}
+        balances={balances}
+        onPick={onPick}
+        onClose={() => setPick(null)}
+      />
     </BottomSheet>
   )
 }

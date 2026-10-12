@@ -46,6 +46,15 @@ const PATHS: Record<string, string> = {
   reconcile: '<rect x="3.5" y="6" width="17" height="12" rx="2.5"/><path d="M3.5 10h17M8 14.5l1.8 1.8 3.4-3.6"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   receipt: '<path d="M6 3.5h12v17l-2.5-1.5-2 1.5-1.5-1.5-1.5 1.5-2-1.5L6 20.5Z"/><path d="M9 8h6M9 11.5h6M9 15h4"/>',
+  // accounts (D-123)
+  wallet: '<path d="M4.5 7.5A2.5 2.5 0 0 1 7 5h11v3"/><rect x="4.5" y="8" width="15" height="11" rx="2.5"/><path d="M15.5 13.5H17"/>',
+  swap: '<path d="M7 7.5h11l-3-3M17 16.5H6l3 3"/>',
+  bank: '<path d="m4 10 8-5 8 5M6 10v7M10 10v7M14 10v7M18 10v7M4 19.5h16"/>',
+  coin: '<circle cx="12" cy="12" r="8.5"/><path d="M14.5 9.5c-.5-.9-1.4-1.3-2.5-1.3-1.5 0-2.5.8-2.5 1.9 0 2.6 5 1.3 5 3.9 0 1.1-1 1.9-2.5 1.9-1.2 0-2.1-.5-2.6-1.4M12 7v1.2M12 15.8V17"/>',
+  adjust: '<path d="M5 7h9M18 7h1M5 17h3M12 17h7"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  up: '<path d="m6 14.5 6-6 6 6"/>',
+  down: '<path d="m6 9.5 6 6 6-6"/>',
+  out: '<path d="M12 19V7M7 12l5-5 5 5"/>',
 }
 
 /** D-12: icons offered when creating a category. */
