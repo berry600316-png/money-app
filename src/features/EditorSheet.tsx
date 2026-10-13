@@ -34,9 +34,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const [last4, setLast4] = useState('')
   const [payFrom, setPayFrom] = useState('')
   /** D-125: the card or account a 行動支付 / 其他 is bound to; '' = not bound. */
-  /** D-132: the cards a 行動支付 / 其他 holds; D-133: the one its payment notices go to ('' = automatic). */
+  /** D-132: the cards a 行動支付 / 其他 holds. */
   const [held, setHeld] = useState<string[]>([])
-  const [notifyCard, setNotifyCard] = useState('')
   /** D-118: start date and the balance (a card: unpaid 預扣) on it; '' amount = not counted. */
   const [startDate, setStartDate] = useState('')
   const [startAmount, setStartAmount] = useState('')
@@ -47,7 +46,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const [shown, setShown] = useState<EditorTarget | null>(null)
 
   // D-101: snapshot the fields once they are loaded, compare on close.
-  const fields = JSON.stringify([name.trim(), icon, payType, active, nature, bank.trim(), last4, payFrom, held.join(','), notifyCard, startDate, startAmount])
+  const fields = JSON.stringify([name.trim(), icon, payType, active, nature, bank.trim(), last4, payFrom, held.join(','), startDate, startAmount])
   const opened = useRef<string | null>(null)
   const snapNext = useRef(false)
   // Declared before the loading effect so it sees the loaded values one commit later.
@@ -83,7 +82,6 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
       setLast4(p?.cardLast4 ?? '')
       setPayFrom(p?.payFromId ?? (p ? '' : (target.under ?? '')))
       setHeld(p?.cards ?? [])
-      setNotifyCard(p?.notifyCardId ?? '')
       setStartDate(p?.balanceFrom ? toYmd(new Date(p.balanceFrom)) : today)
       setStartAmount(p?.openingBalance !== undefined ? String(p.openingBalance) : '')
     } else {
@@ -109,7 +107,6 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const bindCards = ref.payments.filter((p) => (isCard(p) || p.type === 'debit_card') && p.id !== t?.id && (p.isActive || held.includes(p.id)))
   const toggleCard = (id: string) => {
     setHeld((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]))
-    if (notifyCard === id) setNotifyCard('')
   }
   const noun =
     t?.kind === 'payment'
@@ -143,7 +140,6 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             cardLast4: last4,
             payFromId: isCardType || isDebit ? payFrom : '',
             cards: isBindable ? held : [],
-            notifyCardId: isBindable && held.includes(notifyCard) ? notifyCard : '',
             start: tracksBalance ? (amount === null ? null : { date: startDate || today, amount }) : null,
           })
         } else {
@@ -154,7 +150,6 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             cardLast4: last4,
             ...((isCardType || isDebit) && payFrom ? { payFromId: payFrom } : {}),
             ...(isBindable && held.length ? { cards: held } : {}),
-            ...(isBindable && held.includes(notifyCard) ? { notifyCardId: notifyCard } : {}),
             ...(tracksBalance && amount !== null ? { start: { date: today, amount } } : {}),
           })
         }
@@ -197,7 +192,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
         >
           {t.kind === 'payment' && (
             <div>
-              <span className="lbl" id="editor-type-label">
+              <span className="lbl field-head" id="editor-type-label">
                 類型
               </span>
               <div className="opt-set" role="group" aria-labelledby="editor-type-label">
@@ -235,7 +230,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
 
           {t.kind === 'category' && (
             <div>
-              <span className="lbl" id="icon-label">
+              <span className="lbl field-head" id="icon-label">
                 圖示
               </span>
               <div className="icon-grid" role="group" aria-labelledby="icon-label">
@@ -312,7 +307,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
 
           {t.kind === 'payment' && isBindable && (
             <div>
-              <span className="lbl" id="editor-cards-label">
+              <span className="lbl field-head" id="editor-cards-label">
                 綁定的卡片（可以多張）
               </span>
               {bindCards.length ? (
@@ -327,24 +322,9 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
               ) : (
                 <p className="range-help">還沒有信用卡或金融卡，請先新增一張卡。</p>
               )}
-              {held.length > 1 && (
-                <div style={{ marginTop: 14 }}>
-                  <label className="lbl" htmlFor="editor-notify-card">
-                    付款通知記到哪張卡
-                  </label>
-                  <select id="editor-notify-card" className="select" value={held.includes(notifyCard) ? notifyCard : ''} onChange={(e) => setNotifyCard(e.target.value)}>
-                    <option value="">還沒選（匯入時要逐筆選）</option>
-                    {held.map((id) => (
-                      <option key={id} value={id}>
-                        {ref.payment(id).name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
               <p className="range-help" style={{ marginTop: 8 }}>
                 記帳時用這個付款方式，會用上次刷的那張卡，要換再點一下。信用卡記為預扣；金融卡直接從它的帳號扣。
-                {held.length === 1 ? '只綁一張卡時，付款通知就記到這張。' : ''}
+                匯入的付款通知要記到哪張卡，在「明細 › 匯入刷卡紀錄 › 通知類型」設定。
               </p>
             </div>
           )}
@@ -382,7 +362,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
 
           {t.kind === 'salary' && (
             <div>
-              <span className="lbl">每月金額</span>
+              <span className="lbl field-head">每月金額</span>
               <Seg
                 label="固定或變動"
                 options={[

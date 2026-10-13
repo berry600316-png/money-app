@@ -10,7 +10,7 @@
 import type { NotificationCapture } from './notificationFile'
 import { purchaseTime } from './purchaseTime'
 import { parseAmount, toHalfWidth } from './text'
-import type { TimeSource } from '../db/types'
+import type { PaymentMethod, TimeSource } from '../db/types'
 
 export interface NotificationTemplate {
   /** What this wording means. */
@@ -44,7 +44,7 @@ export interface NotificationAdapter {
    * user's payment method of this name, and the money's source (a card or an account) is its binding,
    * shown to the user before import and changeable per row.
    */
-  channel?: { label: string; name: RegExp }
+  channel?: { key: string; label: string; name: RegExp }
 }
 
 /**
@@ -63,7 +63,8 @@ export const LINE_PAY_ADAPTER: NotificationAdapter = {
   id: 'linepay-v1',
   bank: '',
   sourceApps: /^LINE(?:\s*錢包)?$/i,
-  channel: { label: 'LINE Pay', name: /^LINE\s*Pay$/i },
+  // `key` links this kind of notice to the user's payment method once found (D-135), whatever it is renamed to.
+  channel: { key: 'linepay', label: 'LINE Pay', name: /^LINE\s*Pay$/i },
   templates: [
     {
       kind: 'spend',
@@ -76,6 +77,26 @@ export const LINE_PAY_ADAPTER: NotificationAdapter = {
 
 /** Registered adapters (D-97, D-128). */
 export const NOTIFICATION_ADAPTERS: NotificationAdapter[] = [LINE_PAY_ADAPTER]
+
+/**
+ * D-135: data from before the link existed. A kind of notice not linked yet is linked to the 行動支付 /
+ * 其他 named like it ("LINE Pay") when there is exactly one, so renaming it later keeps it. Returns only
+ * the links to add.
+ */
+export function linksByName(
+  methods: readonly Pick<PaymentMethod, 'id' | 'name' | 'type'>[],
+  current: Readonly<Record<string, string>>,
+  adapters: readonly NotificationAdapter[] = NOTIFICATION_ADAPTERS,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const a of adapters) {
+    const ch = a.channel
+    if (!ch || current[ch.key] || out[ch.key]) continue
+    const named = methods.filter((p) => (p.type === 'mobile' || p.type === 'other') && ch.name.test(p.name.trim()))
+    if (named.length === 1) out[ch.key] = named[0].id
+  }
+  return out
+}
 
 export type TemplateMatch =
   | { kind: 'spend'; amount: number; merchant: string; last4: string | null; occurredAt: string | null; timeSource?: TimeSource }

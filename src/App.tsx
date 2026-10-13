@@ -25,6 +25,7 @@ import { currentMonthKey } from './lib/months'
 import { defaultNewMonth } from './lib/salaryHistory'
 import { StackPage } from './ui/StackPage'
 import { CardImportPage } from './features/card/CardImportPage'
+import { NoticeTypesPage } from './features/card/NoticeTypesPage'
 import { ReconcilePage } from './features/card/ReconcilePage'
 import { StatementImportPage } from './features/card/StatementImportPage'
 import { ReconProvider } from './ui/reconContext'
@@ -44,6 +45,7 @@ type Route =
   | { kind: 'payslip'; id: string }
   | { kind: 'history'; itemId: string }
   | { kind: 'cardImport' }
+  | { kind: 'noticeTypes' }
   | { kind: 'reconcile'; statementId: string | null }
   | { kind: 'statementImport' }
   | { kind: 'plan'; month: string }
@@ -56,6 +58,7 @@ const ROUTE_LABEL: Record<Route['kind'], string> = {
   payslip: '薪資單',
   history: '項目歷史',
   cardImport: '匯入',
+  noticeTypes: '通知類型',
   reconcile: '核對',
   statementImport: '帳單',
   plan: '規劃',
@@ -380,7 +383,8 @@ function Shell() {
                 />
               )}
               {r.route.kind === 'history' && <ItemHistoryPage itemId={r.route.itemId} backLabel={back} onBack={pop} />}
-              {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} />}
+              {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} onNoticeTypes={() => push({ kind: 'noticeTypes' })} />}
+              {r.route.kind === 'noticeTypes' && <NoticeTypesPage backLabel={back} onBack={pop} />}
               {r.route.kind === 'statementImport' && <StatementImportPage backLabel={back} onBack={pop} onSaved={showStatement} />}
               {r.route.kind === 'plan' && (
                 <PlanPage

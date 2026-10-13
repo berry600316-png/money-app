@@ -4,9 +4,9 @@
  * user's choices.
  */
 import type { Category, PaymentMethod, TimeSource, Transaction } from '../db/types'
-import { isCard } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 import { isValidAmount } from '../lib/money'
+import { routeNotice, type NoticeType } from './noticeTypes'
 import { suggestCategory, type MerchantHistory } from './categorize'
 import type { NotificationCapture } from './notificationFile'
 import type { NotificationAdapter } from './notificationAdapters'
@@ -51,6 +51,18 @@ export interface PlanRow {
   sourceIsDefault: boolean
   /** No source yet: the user must pick one before this row can be imported. */
   needsSource: boolean
+  /** D-136: why the card could not be chosen ('' when it was). Shown with the row; cleared once picked. */
+  sourceNote: string
+  /** D-136: the notice types that chose the card ("LINE Pay 全聯"), shown next to it. */
+  typeNames: string[]
+  /** The card chosen by the notice type, offered first when changing it. */
+  autoSource: PaySource | null
+  /** The 行動支付 of that notice type (it records under it while its card is kept). */
+  autoMethodId: string | null
+  /** D-135: the user's payment method for this kind of notice ("LINE Pay"); null = created when imported. */
+  channelMethodId: string | null
+  /** D-135: the kind of notice ('linepay'), to remember which payment method takes it. */
+  channelKey: string | null
   /** Looks like a purchase already recorded (D-83, Q97). */
   duplicate: boolean
 }
@@ -81,6 +93,10 @@ export interface PlanInput {
   adapters?: readonly NotificationAdapter[]
   /** D-128: guess from unknown wording (off in production). */
   generic?: boolean
+  /** D-135: { 'linepay': paymentMethodId }, the payment method each kind of notice was recorded to. */
+  noticeMethods?: Readonly<Record<string, string>>
+  /** D-136: the user's notice types. */
+  noticeTypes?: readonly NoticeType[]
   now?: Date
 }
 
@@ -109,22 +125,19 @@ const md = (iso: string) => {
   return `${t.getMonth() + 1}/${t.getDate()}`
 }
 
-/** D-130: the user's payment method for a 行動支付 (an active one first). */
-export function channelMethod(name: RegExp, methods: readonly PaymentMethod[]): PaymentMethod | undefined {
-  const all = methods.filter((p) => (p.type === 'mobile' || p.type === 'other') && name.test(p.name.trim()))
-  return all.find((p) => p.isActive) ?? all[0]
-}
+const isWalletType = (p: PaymentMethod) => p.type === 'mobile' || p.type === 'other'
 
 /**
- * D-130 / D-133: the card its notices are recorded to (one kind of notice = one card, Q111): the card set
- * for notices, else its only card. A credit card waits as 預扣, a debit card is taken from its bank. None
- * when it holds no usable card, or several and none is set for notices.
+ * D-130 / D-135: the user's payment method for a kind of notice: the one it was recorded to before
+ * (remembered by id, so renaming it does not break the link), else one named like it ("LINE Pay"; an
+ * active one first). None = created when the first one is imported.
  */
-export function defaultSource(method: PaymentMethod | undefined, methods: readonly PaymentMethod[]): PaySource | null {
-  const usable = (id?: string) => methods.find((p) => p.id === id && p.isActive && (isCard(p) || p.type === 'debit_card'))
-  const held = (method?.cards ?? []).filter((id) => usable(id))
-  const id = method?.notifyCardId && held.includes(method.notifyCardId) ? method.notifyCardId : held.length === 1 ? held[0] : undefined
-  return id ? { cardId: id } : null
+export function channelMethod(name: RegExp, methods: readonly PaymentMethod[], linkedId?: string): PaymentMethod | undefined {
+  const linked = linkedId ? methods.find((p) => p.id === linkedId && isWalletType(p)) : undefined
+  if (linked?.isActive) return linked
+  // The remembered one was disabled: an active one named like it takes over, else it stays.
+  const all = methods.filter((p) => isWalletType(p) && name.test(p.name.trim()))
+  return all.find((p) => p.isActive) ?? linked ?? all[0]
 }
 
 export function planImport(input: PlanInput): PlanRow[] {
@@ -146,6 +159,12 @@ export function planImport(input: PlanInput): PlanRow[] {
       source: null,
       sourceIsDefault: false,
       needsSource: false,
+      sourceNote: '',
+      typeNames: [] as string[],
+      autoSource: null,
+      autoMethodId: null,
+      channelMethodId: null,
+      channelKey: null,
       duplicate: false,
     }
     const known = input.knownCaptureIds
@@ -178,9 +197,11 @@ export function planImport(input: PlanInput): PlanRow[] {
     let occurredAt = r.spend.occurredAt ?? now.toISOString()
     const timeSource: TimeSource | undefined = r.spend.occurredAt ? r.spend.timeSource : 'date'
     if (Date.parse(occurredAt) > now.getTime()) occurredAt = now.toISOString()
-    // D-130: a 行動支付 notice takes its source from the payment method's binding; a card notice is its card.
-    const method = r.channel ? channelMethod(r.channel.name, input.paymentMethods) : undefined
-    const source = r.channel ? defaultSource(method, input.paymentMethods) : null
+    // D-136: a 行動支付 notice goes where its notice type says; a card notice is its card.
+    const method = r.channel ? channelMethod(r.channel.name, input.paymentMethods, input.noticeMethods?.[r.channel.key]) : undefined
+    const routed = r.channel ? routeNotice(c, input.noticeTypes ?? [], input.paymentMethods) : null
+    const source = routed?.source ?? null
+    const methodId = routed?.paymentMethodId ?? method?.id ?? null
     const card = r.channel ? null : cardFor(r.spend.cardLast4, r.bank, c.sourceApp, input)
     const row: PlanRow = {
       ...base,
@@ -191,13 +212,19 @@ export function planImport(input: PlanInput): PlanRow[] {
       occurredAt,
       ...(timeSource ? { timeSource } : {}),
       cardLast4: r.spend.cardLast4,
-      paymentMethodId: r.channel ? (method?.id ?? null) : card,
+      paymentMethodId: r.channel ? methodId : card,
       categoryId: suggestCategory(r.spend.merchant, input.history, input.categories),
       include: true,
       channel: r.channel?.label ?? null,
       source,
       sourceIsDefault: !!source,
       needsSource: !!r.channel && !source,
+      sourceNote: routed?.note ?? '',
+      typeNames: routed?.typeNames ?? [],
+      autoSource: source,
+      autoMethodId: routed?.paymentMethodId ?? null,
+      channelMethodId: method?.id ?? null,
+      channelKey: r.channel?.key ?? null,
     }
     const me = { amount: row.amount, occurredAt }
     const dupTx = input.transactions.find((t) => t.type === 'expense' && sameSpend(me, t))
@@ -206,9 +233,8 @@ export function planImport(input: PlanInput): PlanRow[] {
     if (r.doubt) reasons.push(r.doubt)
     if (dupTx) reasons.push(`可能與 ${md(dupTx.occurredAt)} 的既有交易「${dupTx.merchant || '一筆支出'}」重複`)
     else if (dupRow) reasons.push(`和這次另一則通知同一天、同金額（「${dupRow.merchant || '一筆支出'}」），可能是同一筆`)
-    if (row.needsSource) reasons.push(`還沒設定 ${row.channel} 的付款通知記到哪張卡，請選一張卡`)
     row.duplicate = !!dupTx || !!dupRow
-    if (reasons.length) {
+    if (reasons.length || row.needsSource) {
       row.status = 'suspect'
       row.reason = reasons.join('；')
       row.include = false

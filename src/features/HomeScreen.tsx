@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useMonthTx } from '../db/hooks'
 import { dayLabel, fromYmd, sameLocalDay, sameYm, toYmd, ymOf, type YearMonth } from '../lib/dates'
 import { fmt } from '../lib/money'
+import { cashSpent } from '../lib/accounts'
 import { sortDesc, summarize } from '../lib/stats'
 import { useToday } from '../lib/useToday'
 import { Icon } from '../ui/Icon'
 import { TxRow } from '../ui/TxRows'
+import { useRefData } from '../ui/refData'
 import { BackupBanner } from './BackupBanner'
 import { HomeCalendar } from './HomeCalendar'
 import { HomePlanCard } from './plan/HomePlanCard'
@@ -45,6 +47,7 @@ export function HomeScreen({
 }) {
   const today = useToday()
   const now = new Date()
+  const ref = useRefData()
   const ym = ymOf(now)
   const monthTx = useMonthTx(ym)
 
@@ -53,9 +56,11 @@ export function HomeScreen({
     const list = monthTx ?? []
     const s = summarize(list)
     const todayOut = summarize(list.filter((t) => sameLocalDay(new Date(t.occurredAt), now))).expense
-    return { ...s, today: todayOut }
+    return { ...s, today: todayOut, cash: cashSpent(list, ref.payments) }
     // `now` changes every render; only the calendar day it represents matters.
-  }, [monthTx, today]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthTx, today, ref.payments]) // eslint-disable-line react-hooks/exhaustive-deps
+  // D-138: shown while the user has a 現金 account in use, or spent cash this month.
+  const hasCash = view.cash > 0 || ref.payments.some((p) => p.type === 'cash' && p.isActive)
 
   const [calYm, setCalYm] = useState<YearMonth>(ym)
   const [selected, setSelected] = useState(today)
@@ -103,9 +108,18 @@ export function HomeScreen({
 
       <section className="hero">
         <div className="eyebrow">本月支出</div>
-        <div className="hero-amt num">
-          <span className="cur">NT$</span>
-          <span>{fmt(view.expense)}</span>
+        <div className="hero-row">
+          <div className="hero-amt num">
+            <span className="cur">NT$</span>
+            <span>{fmt(view.expense)}</span>
+          </div>
+          {/* D-138: this month's cash spending, beside the figure behind a hairline. */}
+          {hasCash && (
+            <div className="hero-side">
+              <div className="k">現金</div>
+              <div className="v num">{fmt(view.cash)}</div>
+            </div>
+          )}
         </div>
         <dl className="trio">
           <div>

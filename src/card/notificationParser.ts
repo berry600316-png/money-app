@@ -18,7 +18,7 @@ import { findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
 export type ParseResult =
   /** `doubt`: looks like a purchase but also reads like an offer or a code; not imported by default. */
   /** `bank`: from the adapter, null for generic guesses. `channel`: the 行動支付 it went through (D-130). */
-  | { kind: 'spend'; spend: ParsedSpend; adapter: string; bank: string | null; doubt: string | null; channel?: { label: string; name: RegExp } }
+  | { kind: 'spend'; spend: ParsedSpend; adapter: string; bank: string | null; doubt: string | null; channel?: { key: string; label: string; name: RegExp } }
   | { kind: 'not_spending'; reason: string }
   | { kind: 'unparsed'; reason: string }
 

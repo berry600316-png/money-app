@@ -94,8 +94,6 @@ export interface PaymentMethod {
    * holds no card yet (counts in no account).
    */
   cards?: string[]
-  /** D-133: which of the `cards` its payment notifications are recorded to (one card per kind of notice). */
-  notifyCardId?: string
 }
 
 /** D-118: a correction of one account's balance; never income, expense or a transfer. */
