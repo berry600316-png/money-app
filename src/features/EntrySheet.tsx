@@ -124,6 +124,8 @@ export function EntrySheet({
   const lastSource = useSetting<string>(LAST_KEYS.source, '')
   const lastFrom = useSetting<string>(LAST_KEYS.from, '')
   const lastTo = useSetting<string>(LAST_KEYS.to, '')
+  /** Q109 B: the card each 行動支付 used last time. */
+  const walletCards = useSetting<Record<string, string>>(LAST_KEYS.walletCards, {})
   const [draft, setDraft] = useState<Draft | null>(null)
   const [feeRecord, setFeeRecord] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -153,7 +155,7 @@ export function EntrySheet({
   }
   /** An expense starts with the way to pay last used (D-20), with its account (D-125). */
   const payFields = (methodId: string) => {
-    const o = defaultPay(groups, methodId, lastSource)
+    const o = defaultPay(groups, methodId, lastSource, walletCards?.[methodId])
     return { paymentMethodId: o?.paymentMethodId ?? '', sourceAccountId: o?.sourceAccountId ?? '', cardId: o?.cardId ?? '' }
   }
   /** The first of `preferred` allowed in `role`, else the first allowed account (D-120: remembered per role). */
@@ -794,7 +796,7 @@ export function EntrySheet({
         open={pick === 'pay'}
         groups={groups}
         value={payChoice ? payKey(payChoice) : ''}
-        recent={defaultPay(groups, lastPay, lastSource)}
+        recent={defaultPay(groups, lastPay, lastSource, walletCards?.[lastPay])}
         balances={balances}
         onPick={onPay}
         onClose={() => setPick(null)}

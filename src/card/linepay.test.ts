@@ -169,7 +169,8 @@ beforeEach(async () => {
 })
 afterEach(() => d.close())
 
-async function setup(bind: 'card' | 'bank' | 'stored' | 'none' = 'card') {
+/** LINE Pay holds: 'card' = 台新信用卡; 'debit' = 台新金融卡; 'both' = both, notices to 台新信用卡; 'none' = nothing. */
+async function setup(bind: 'card' | 'debit' | 'both' | 'none' = 'card') {
   const start = { date: '2026-10-01', amount: 20000 }
   const taishin = (await addPaymentMethod({ name: '台新 Richart', type: 'bank', start }, d, now)).id
   const cathay = (await addPaymentMethod({ name: '國泰世華', type: 'bank', start: { ...start, amount: 5000 } }, d, now)).id
@@ -177,8 +178,8 @@ async function setup(bind: 'card' | 'bank' | 'stored' | 'none' = 'card') {
   const cbCard = (await addPaymentMethod({ name: '國泰信用卡', type: 'credit_card', payFromId: cathay, start: { ...start, amount: 0 } }, d, now)).id
   const debit = (await addPaymentMethod({ name: '台新金融卡', type: 'debit_card', payFromId: taishin }, d, now)).id
   await setStartBalances([{ id: 'easycard', amount: 500 }], '2026-10-01', d, now)
-  const target = { card: tsCard, bank: taishin, stored: 'easycard', none: undefined }[bind]
-  const linePay = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', ...(target ? { boundTo: target } : {}) }, d, now)).id
+  const cards = { card: [tsCard], debit: [debit], both: [tsCard, debit], none: [] }[bind]
+  const linePay = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards, ...(bind === 'both' ? { notifyCardId: tsCard } : {}) }, d, now)).id
   return { taishin, cathay, tsCard, cbCard, debit, linePay }
 }
 
@@ -221,40 +222,43 @@ describe('C. where the money came from (D-130)', () => {
     await commitNotificationImport(again, { files: 1 }, d, now)
     expect(await d.transactions.count()).toBe(1)
   })
-  it('bound to a bank account or stored value: the account goes down at once; never both a card and an account', async () => {
-    for (const bind of ['bank', 'stored'] as const) {
-      d.close()
-      d = new MoneyDB(`linepay-${n++}`)
-      await d.open()
-      const a = await setup(bind)
-      const rows = await plan([line(typed('120', '早餐店'))])
-      await commitNotificationImport(rows, { files: 1 }, d, now)
-      const [t] = await d.transactions.toArray()
-      const account = bind === 'bank' ? a.taishin : 'easycard'
-      expect(t).toMatchObject({ sourceAccountId: account })
-      expect(t.cardId).toBeUndefined()
-      const b = await balances()
-      expect(b.get(account)).toBe((bind === 'bank' ? 20000 : 500) - 120)
-      expect(b.get(a.tsCard)).toBe(0)
-    }
+  it('LINE Pay holding the debit card: the bank goes down at once; never both a card and an account', async () => {
+    const a = await setup('debit')
+    const rows = await plan([line(typed('120', '早餐店'))])
+    expect(rows[0]).toMatchObject({ status: 'new', source: { cardId: a.debit }, sourceIsDefault: true })
+    await commitNotificationImport(rows, { files: 1 }, d, now)
+    const [t] = await d.transactions.toArray()
+    expect(t).toMatchObject({ paymentMethodId: a.linePay, cardId: a.debit })
+    expect(t.sourceAccountId).toBeUndefined()
+    const b = await balances()
+    expect([b.get(a.taishin), b.get(a.tsCard)]).toEqual([20000 - 120, 0])
+  })
+  it('Q111 / D-133: holding several cards, notices go to the card chosen for notices', async () => {
+    const a = await setup('both')
+    expect((await plan([line(typed('80', '飲料店'))]))[0]).toMatchObject({ status: 'new', source: { cardId: a.tsCard } })
+    // None chosen for notices: each row asks which card.
+    await updatePaymentMethod(a.linePay, { notifyCardId: '' }, d, now)
+    const rows = await plan([line(typed('80', '飲料店'))])
+    expect(rows[0]).toMatchObject({ status: 'suspect', needsSource: true, source: null })
+    expect(rows[0].reason).toContain('付款通知記到哪張卡')
   })
   it('no binding: amount and shop are kept, the row asks for a source and cannot be imported without one', async () => {
     const a = await setup('none')
     const rows = await plan([line(typed('661', '好鄰居超市永和店'))])
     expect(rows[0]).toMatchObject({ status: 'suspect', include: false, needsSource: true, source: null, amount: 661, merchant: '好鄰居超市永和店' })
-    expect(rows[0].reason).toContain('還沒設定 LINE Pay 的付款來源')
+    expect(rows[0].reason).toContain('還沒設定 LINE Pay 的付款通知記到哪張卡')
     // Ticked without a source: refused, nothing written (a retry later works).
     await expect(commitNotificationImport([{ ...rows[0], include: true }], { files: 1 }, d, now)).rejects.toThrow('付款來源')
     expect(await d.transactions.count()).toBe(0)
     expect(await d.importedNotifications.count()).toBe(0)
     // Chosen in the preview: the debit card takes it straight from 台新.
-    const chosen: PlanRow = { ...rows[0], include: true, status: 'new', needsSource: false, source: { sourceAccountId: a.taishin, via: a.debit } }
+    const chosen: PlanRow = { ...rows[0], include: true, status: 'new', needsSource: false, source: { cardId: a.debit } }
     await commitNotificationImport([chosen], { files: 1 }, d, now)
     const [t] = await d.transactions.toArray()
-    expect(t).toMatchObject({ paymentMethodId: a.linePay, sourceAccountId: a.taishin })
+    expect(t).toMatchObject({ paymentMethodId: a.linePay, cardId: a.debit })
     expect((await balances()).get(a.taishin)).toBe(20000 - 661)
-    // The binding is not changed by a choice in the preview (Q94).
-    expect((await d.paymentMethods.get(a.linePay))!.boundTo).toBeUndefined()
+    // The cards LINE Pay holds are not changed by a choice in the preview (Q94).
+    expect((await d.paymentMethods.get(a.linePay))!.cards).toBeUndefined()
   })
   it('a row switched to another card in the preview goes to that card only', async () => {
     const a = await setup('card')
@@ -262,7 +266,7 @@ describe('C. where the money came from (D-130)', () => {
     await commitNotificationImport([{ ...rows[0], source: { cardId: a.cbCard }, sourceIsDefault: false }], { files: 1 }, d, now)
     const b = await balances()
     expect([b.get(a.cbCard), b.get(a.tsCard)]).toEqual([300, 0])
-    expect((await d.paymentMethods.get(a.linePay))!.boundTo).toBe(a.tsCard)
+    expect((await d.paymentMethods.get(a.linePay))!.cards).toEqual([a.tsCard])
   })
   it('an amount the app cannot record is listed as 不匯入 instead of breaking the whole import', async () => {
     await setup('card')

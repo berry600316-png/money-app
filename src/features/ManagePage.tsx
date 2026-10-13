@@ -51,13 +51,12 @@ export function ManagePage({
   const title = TITLES[kind]
   const canOrder = kind !== 'salary'
 
-  // D-125: accounts, each with its cards and the 行動支付 / 其他 bound to it or to its cards; the rest last.
+  // D-125 / D-132: accounts, each with its credit and debit cards; 行動支付 (which may hold cards of several
+  // banks), 轉帳 and the rest last.
   const byId = (id?: string) => ref.payments.find((p) => p.id === id)
   const homeOf = (p: PaymentMethod): string | undefined => {
     if (isCard(p) || p.type === 'debit_card') return p.payFromId && byId(p.payFromId)?.type === 'bank' ? p.payFromId : undefined
-    if (p.type !== 'mobile' && p.type !== 'other') return undefined
-    const target = byId(p.boundTo)
-    return isAsset(target) ? target!.id : isCard(target) ? homeOf(target!) : undefined
+    return undefined
   }
   const accounts = ref.payments.filter(isAsset)
   const payTree = [
@@ -65,11 +64,11 @@ export function ManagePage({
     { account: null, items: ref.payments.filter((p) => !isAsset(p) && !homeOf(p)) },
   ].filter((g) => g.account || g.items.length)
   const payRow = (p: PaymentMethod, nested: boolean) => {
-    const target = byId(p.boundTo)
+    const held = (p.cards ?? []).map((id) => byId(id)?.name).filter(Boolean)
     const sub = [
       PAYMENT_TYPE_LABELS[p.type],
       p.cardLast4 ? `末四碼 ${p.cardLast4}` : '',
-      p.type === 'mobile' || p.type === 'other' ? (target ? `綁 ${target.name}${isCard(target) ? '（預扣）' : ''}` : '未綁定') : '',
+      p.type === 'mobile' || p.type === 'other' ? (held.length ? `綁 ${held.join('、')}` : '還沒綁卡') : '',
       p.type === 'transfer' ? '每個銀行底下都可選' : '',
       p.type === 'debit_card' && homeOf(p) ? '直接扣' : '',
       (isCard(p) || p.type === 'debit_card') && !homeOf(p) ? '還沒指定銀行' : '',
@@ -153,7 +152,7 @@ export function ManagePage({
           {/* D-125: each account with the ways to pay that belong to it. */}
           {payTree.map(({ account, items }) => (
             <div className="set-sec" key={account?.id ?? 'other'}>
-              {!account && <h2>其他付款方式</h2>}
+              {!account && <h2>行動支付與其他</h2>}
               <div className="set-card">
                 {account && payRow(account, false)}
                 {items.map((p) => payRow(p, !!account))}
@@ -239,7 +238,7 @@ export function ManagePage({
         {kind === 'salary'
           ? '停用後不會出現在新的薪資單，但過去的薪資單與項目歷史都會保留。應發或應扣在新增時決定，之後不能更改。'
           : kind === 'payment'
-            ? '銀行、現金、儲值是帳戶，會計算餘額。信用卡屬於一個銀行，刷卡先記為那個銀行的預扣；金融卡也屬於一個銀行，直接從那裡扣；行動支付、其他綁一張卡或一個帳戶；轉帳在每個銀行底下都可選。停用後不會出現在新增畫面，過去的紀錄都會保留。'
+            ? '銀行、現金、儲值是帳戶，會計算餘額。信用卡屬於一個銀行，刷卡先記為那個銀行的預扣；金融卡也屬於一個銀行，直接從那裡扣；行動支付、其他可以綁一張或多張卡（信用卡或金融卡），付款時用上次那張；轉帳在每個銀行底下都可選。停用後不會出現在新增畫面，過去的紀錄都會保留。'
             : '停用後不會出現在新增畫面，但過去的紀錄和統計都會保留。順序也是記一筆時分類的排列順序。'}
       </p>
     </section>

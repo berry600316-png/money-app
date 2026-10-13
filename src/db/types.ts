@@ -22,8 +22,9 @@ export interface Transaction {
   /** Expenses paid with 轉帳 / 行動支付 / 其他: the account the money actually left (D-120, D-125). */
   sourceAccountId?: string
   /**
-   * D-125: expenses paid with a 行動支付 / 其他 bound to a credit card: the card charged, so the spending
-   * waits as that card's 預扣 (and shows on its bill). Set when recorded; a later binding change keeps it.
+   * D-125 / D-132: expenses paid with a 行動支付 / 其他: the card actually used. A credit card: the spending
+   * waits as its 預扣 (and shows on its bill). A debit card: the money leaves its bank account at once.
+   * Set when recorded; a later binding change keeps it.
    */
   cardId?: string
   /** A transfer's fee, recorded as its own expense: the transfer it belongs to (D-121). */
@@ -87,8 +88,14 @@ export interface PaymentMethod {
    * from it. Debit cards (D-129): the bank account it takes money from at once.
    */
   payFromId?: string
-  /** 行動支付 / 其他 only (D-125): the card or account it is bound to; absent = not bound (counts in no account). */
-  boundTo?: string
+  /**
+   * 行動支付 / 其他 only (D-132): the cards it holds (credit or debit), e.g. Apple Pay with 台新信用卡 and
+   * 台新金融卡. Paying with it uses one of them (the one used last time, unless changed). Empty / absent =
+   * holds no card yet (counts in no account).
+   */
+  cards?: string[]
+  /** D-133: which of the `cards` its payment notifications are recorded to (one card per kind of notice). */
+  notifyCardId?: string
 }
 
 /** D-118: a correction of one account's balance; never income, expense or a transfer. */

@@ -16,6 +16,8 @@ import { fromYmd, toYmd } from './dates'
 export const isAsset = (p: Pick<PaymentMethod, 'type'> | undefined) => !!p && isAssetType(p.type)
 export const isCard = (p: Pick<PaymentMethod, 'type'> | undefined) => !!p && p.type === 'credit_card'
 export const isMethod = (p: Pick<PaymentMethod, 'type'> | undefined) => !!p && isMethodType(p.type)
+/** D-129: a debit card (takes money from its bank at once). */
+export const isDebit = (p: Pick<PaymentMethod, 'type'> | undefined) => !!p && p.type === 'debit_card'
 /** An account whose balance is being counted. */
 export const isTracked = (p: Pick<PaymentMethod, 'balanceFrom' | 'openingBalance'> | undefined) =>
   !!p && typeof p.balanceFrom === 'string' && typeof p.openingBalance === 'number'
@@ -49,10 +51,20 @@ export function effectsOf(t: Transaction, byId: (id: string) => PaymentMethod | 
   // Income goes into accounts that hold money. Income filed under a card or a way to pay (older records
   // kept 信用卡 as their default) moves no balance at all, instead of making 預扣 go negative.
   if (t.type === 'income') return isAsset(p) ? [{ accountId: t.paymentMethodId, delta: t.amount }] : []
-  // expense: a card charge (directly, or through a 行動支付 bound to the card, D-125) waits as its 預扣.
+  // expense: a credit card charge (directly, or through a 行動支付 holding it, D-125 / D-132) waits as its
+  // 預扣; a debit card (directly or through a 行動支付, D-129 / D-132) takes the money from its bank at once.
   if (isCard(p)) return [{ accountId: t.paymentMethodId, delta: t.amount }]
-  if (t.cardId) return [{ accountId: t.cardId, delta: t.amount }]
-  if (isMethod(p)) return t.sourceAccountId ? [{ accountId: t.sourceAccountId, delta: -t.amount }] : []
+  if (t.cardId) {
+    const used = byId(t.cardId)
+    if (isCard(used)) return [{ accountId: t.cardId, delta: t.amount }]
+    if (isDebit(used) && used!.payFromId) return [{ accountId: used!.payFromId, delta: -t.amount }]
+    return []
+  }
+  if (isMethod(p)) {
+    if (t.sourceAccountId) return [{ accountId: t.sourceAccountId, delta: -t.amount }]
+    if (isDebit(p) && p!.payFromId) return [{ accountId: p!.payFromId, delta: -t.amount }]
+    return []
+  }
   return [{ accountId: t.paymentMethodId, delta: -t.amount }]
 }
 
@@ -136,89 +148,153 @@ export interface PayOption extends PayChoice {
   key: string
   /** The method's own name ("台新@GoGo", "Apple Pay", "轉帳"), or the account's for cash / stored value. */
   name: string
-  /** The card the spending waits on as 預扣; absent = taken from the account at once. */
+  /** As shown: the name, or "Apple Pay · 台新信用卡" for a card held by a 行動支付 (D-132). */
+  label: string
+  /** The card used (credit: waits as 預扣; debit: taken from its bank at once); absent = no card. */
   card?: PaymentMethod
 }
 
-/** The rows under one account; `account` null = ways to pay not tied to any account yet. */
+/**
+ * The rows under one account (`account` set), the cards held by 行動支付 (D-132), or ways to pay not tied
+ * to any account yet (they count in no balance).
+ */
 export interface PayGroup {
   account: PaymentMethod | null
+  title: string
   options: PayOption[]
 }
 
 export const payKey = (c: PayChoice) => [c.paymentMethodId, c.sourceAccountId ?? '', c.cardId ?? ''].join('|')
 
-/** A 行動支付 / 其他: bound once (in settings) to a card or an account (D-125). */
-const isBindable = (p: PaymentMethod) => p.type === 'mobile' || p.type === 'other'
+/** A 行動支付 / 其他: holds cards (D-132). */
+export const isWallet = (p: Pick<PaymentMethod, 'type'> | undefined) => !!p && (p.type === 'mobile' || p.type === 'other')
+/** A card a 行動支付 can hold: credit or debit (D-132, Q110 B: never an account itself). */
+export const isPlastic = (p: Pick<PaymentMethod, 'type'> | undefined) => isCard(p) || isDebit(p)
 
 /**
- * D-125: every active way to pay, under the account it draws on. A card sits under its bank, a bound
- * 行動支付 / 其他 under its card or account, a debit card (D-129) under its bank, and 轉帳 under every bank account. Cash and stored value are
- * their own way to pay. Anything not tied to an account goes in a last group (it counts in no balance).
+ * D-125 / D-132: every active way to pay. Under each bank: its credit cards (預扣), its debit cards and
+ * 轉帳 (taken at once); cash and stored value are their own way to pay. Then each 行動支付 / 其他 once for
+ * every card it holds ("Apple Pay · 台新信用卡", "Apple Pay · 台新金融卡"). Anything not tied to an account
+ * goes in a last group (it counts in no balance).
  */
 export function payGroups(all: readonly PaymentMethod[]): PayGroup[] {
-  const active = all.filter((p) => p.isActive)
+  // In the user's order (設定 › 調整順序), whatever order the caller passes them in.
+  const active = all.filter((p) => p.isActive).sort((a, b) => a.sortOrder - b.sortOrder)
   const assets = active.filter(isAsset)
   // A card belongs to a bank only; an older link to cash or stored value counts as not assigned yet.
   const bankIds = new Set(assets.filter((a) => a.type === 'bank').map((a) => a.id))
-  const cardHome = (c: PaymentMethod) => (c.payFromId && bankIds.has(c.payFromId) ? c.payFromId : '')
-  const activeCard = (id?: string) => active.find((c) => c.id === id && isCard(c))
+  const home = (c: PaymentMethod) => (c.payFromId && bankIds.has(c.payFromId) ? c.payFromId : '')
   const placed = new Set<string>()
-  const make = (m: PaymentMethod, links: Omit<PayChoice, 'paymentMethodId'>, card?: PaymentMethod): PayOption => {
+  const make = (m: PaymentMethod, links: Omit<PayChoice, 'paymentMethodId'>, card?: PaymentMethod, label = m.name): PayOption => {
     placed.add(m.id)
     const c: PayChoice = { paymentMethodId: m.id, ...links }
-    return { ...c, key: payKey(c), name: m.name, ...(card ? { card } : {}) }
+    return { ...c, key: payKey(c), name: m.name, label, ...(card ? { card } : {}) }
   }
   const groups: PayGroup[] = assets.map((a) => {
     const options: PayOption[] = []
     if (a.type !== 'bank') options.push(make(a, {}))
-    for (const c of active.filter((x) => isCard(x) && cardHome(x) === a.id)) {
-      options.push(make(c, {}, c))
-      for (const m of active.filter((x) => isBindable(x) && x.boundTo === c.id)) options.push(make(m, { cardId: c.id }, c))
-    }
-    for (const m of active.filter((x) => isBindable(x) && x.boundTo === a.id)) options.push(make(m, { sourceAccountId: a.id }))
-    // D-129: a debit card takes money from its bank at once.
-    if (a.type === 'bank') for (const m of active.filter((x) => x.type === 'debit_card' && x.payFromId === a.id)) options.push(make(m, { sourceAccountId: a.id }))
-    if (a.type === 'bank') {
+    else {
+      for (const c of active.filter((x) => isCard(x) && home(x) === a.id)) options.push(make(c, {}, c))
+      for (const c of active.filter((x) => isDebit(x) && home(x) === a.id)) options.push(make(c, { sourceAccountId: a.id }, c))
       for (const t of active.filter((x) => x.type === 'transfer')) options.push(make(t, { sourceAccountId: a.id }))
       // Nothing else to pay with from this bank: the account itself (taken at once).
       if (!options.length) options.push(make(a, {}))
     }
-    return { account: a, options }
+    return { account: a, title: a.name, options }
   })
-  const loose = active
-    .filter((m) => !isAsset(m) && !placed.has(m.id))
-    .map((m) => {
-      const card = isBindable(m) ? activeCard(m.boundTo) : undefined
-      return card ? make(m, { cardId: card.id }, card) : make(m, {}, isCard(m) ? m : undefined)
-    })
-  return [...groups.filter((g) => g.options.length), ...(loose.length ? [{ account: null, options: loose }] : [])]
+  const wallets: PayOption[] = []
+  for (const m of active.filter(isWallet)) {
+    for (const id of m.cards ?? []) {
+      const c = active.find((x) => x.id === id && isPlastic(x))
+      if (c) wallets.push(make(m, { cardId: c.id }, c, `${m.name} · ${c.name}`))
+    }
+  }
+  const loose = active.filter((m) => !isAsset(m) && !placed.has(m.id)).map((m) => make(m, {}, isCard(m) ? m : undefined))
+  return [
+    ...groups.filter((g) => g.options.length),
+    ...(wallets.length ? [{ account: null, title: '行動支付', options: wallets }] : []),
+    ...(loose.length ? [{ account: null, title: '還沒指定帳戶', options: loose }] : []),
+  ]
 }
 
 /**
- * The option to start a new expense with: `methodId` as last used (a 轉帳 under the account last used
- * with it), else the first option. A 行動支付 follows its current binding.
+ * The option to start a new expense with: `methodId` as last used; a 行動支付 with the card it used last
+ * time (Q109 B), a 轉帳 under the account last used with it; else the first option.
  */
-export function defaultPay(groups: readonly PayGroup[], methodId: string, lastSourceId?: string): PayOption | undefined {
+export function defaultPay(groups: readonly PayGroup[], methodId: string, lastSourceId?: string, lastCardId?: string): PayOption | undefined {
   const options = groups.flatMap((g) => g.options)
   const same = options.filter((o) => o.paymentMethodId === methodId)
-  return same.find((o) => !o.sourceAccountId || o.sourceAccountId === lastSourceId) ?? same[0] ?? options[0]
+  return (
+    (lastCardId ? same.find((o) => o.cardId === lastCardId) : undefined) ??
+    same.find((o) => !o.cardId && (!o.sourceAccountId || o.sourceAccountId === lastSourceId)) ??
+    same[0] ??
+    options[0]
+  )
 }
 
 /**
- * How an expense was paid: the method's name, the account it draws on when that is another one
- * ("台新 Richart" for 信用卡), and whether it waits on a card as 預扣.
+ * How an expense was paid: the method's name, then what it drew on — the card used through a 行動支付
+ * ("Apple Pay · 台新信用卡"), or the account for a card or 轉帳 ("台新 Richart · 台新信用卡") — and whether
+ * it waits on a credit card as 預扣.
  */
 export function describePay(
   c: PayChoice,
   byId: (id: string) => PaymentMethod | undefined,
 ): { name: string; account: string; label: string; pending: boolean } {
   const m = byId(c.paymentMethodId)
-  const card = isCard(m) ? m : c.cardId ? byId(c.cardId) : undefined
-  const accountId = c.sourceAccountId ?? card?.payFromId
-  const account = accountId && accountId !== c.paymentMethodId ? (byId(accountId)?.name ?? '') : ''
   const name = m?.name ?? '已刪除的付款方式'
+  const used = c.cardId ? byId(c.cardId) : undefined
+  if (used) return { name, account: used.name, label: `${name} · ${used.name}`, pending: isCard(used) }
+  const card = isCard(m) ? m : undefined
+  const accountId = c.sourceAccountId ?? card?.payFromId ?? (isDebit(m) ? m!.payFromId : undefined)
+  const account = accountId && accountId !== c.paymentMethodId ? (byId(accountId)?.name ?? '') : ''
   return { name, account, label: account ? `${account} · ${name}` : name, pending: !!card }
+}
+
+/* ---------------- older data (D-132, Q107 A) ---------------- */
+
+/** A payment method as stored before D-132: a 行動支付 bound to one card or one account. */
+export type LegacyPaymentMethod = PaymentMethod & { boundTo?: string }
+
+/**
+ * Brings data from before D-132 to the new rules (database v7, older backups):
+ *  - a 行動支付 / 其他 bound to one card now holds that card; bound to a bank account, it holds that bank's
+ *    debit card when there is exactly one, else nothing (Q110 B: a wallet never holds an account);
+ *    with a single card, notices are recorded to it (D-133);
+ *  - an expense through a 行動支付 that recorded only the account now records that account's debit card,
+ *    when there is exactly one (else it keeps the account, still counted the same).
+ * Returns only what changed.
+ */
+export function migrateWalletLinks(
+  methods: readonly LegacyPaymentMethod[],
+  transactions: readonly Transaction[],
+): { methods: PaymentMethod[]; transactions: Transaction[] } {
+  const byId = new Map(methods.map((p) => [p.id, p]))
+  const debitsOf = (bankId: string) => methods.filter((p) => isDebit(p) && p.payFromId === bankId)
+  const changedMethods: PaymentMethod[] = []
+  for (const p of methods) {
+    if (p.boundTo === undefined) continue
+    const { boundTo, ...rest } = p
+    const next: PaymentMethod = { ...rest }
+    if (isWallet(p)) {
+      const target = byId.get(boundTo)
+      const debits = target?.type === 'bank' ? debitsOf(target.id) : []
+      const card = isPlastic(target) ? target! : debits.length === 1 ? debits[0] : undefined
+      if (card && !(next.cards ?? []).includes(card.id)) next.cards = [...(next.cards ?? []), card.id]
+      if (next.cards?.length === 1 && !next.notifyCardId) next.notifyCardId = next.cards[0]
+    }
+    changedMethods.push(next)
+  }
+  const changedTx: Transaction[] = []
+  for (const t of transactions) {
+    if (t.type !== 'expense' || t.cardId || !t.sourceAccountId || !isWallet(byId.get(t.paymentMethodId))) continue
+    const debits = debitsOf(t.sourceAccountId)
+    if (debits.length !== 1) continue
+    const { sourceAccountId: _gone, ...rest } = t
+    void _gone
+    changedTx.push({ ...rest, cardId: debits[0].id })
+  }
+  return { methods: changedMethods, transactions: changedTx }
 }
 
 /** One line of an account's history (D-123): newest first, only what counts toward its balance. */

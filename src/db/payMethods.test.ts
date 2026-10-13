@@ -1,9 +1,10 @@
 import 'fake-indexeddb/auto'
+import Dexie from 'dexie'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from './db'
-import { addPaymentMethod, addTransaction, setStartBalances, updatePaymentMethod, updateTransaction, type TxInput } from './repo'
+import { addPaymentMethod, addTransaction, LAST_KEYS, lastWalletCards, setStartBalances, updatePaymentMethod, updateTransaction, type TxInput } from './repo'
 import type { CardStatement, StatementEntry } from './types'
-import { accountFlow, chargedTo, computeBalances, defaultPay, describePay, payGroups, payKey } from '../lib/accounts'
+import { accountFlow, chargedTo, computeBalances, defaultPay, describePay, migrateWalletLinks, payGroups, payKey } from '../lib/accounts'
 import { filterTx, type TxFilter } from '../lib/stats'
 import { reconcile } from '../card/reconcile'
 import { buildBackup, parseBackup, toCsv } from '../backup/format'
@@ -21,15 +22,16 @@ afterEach(() => d.close())
 
 const spend = (p: Partial<TxInput>): TxInput => ({ type: 'expense', amount: 100, merchant: '', categoryId: 'food', paymentMethodId: 'cash', date: '2026-10-12', time: '12:00', note: '', ...p })
 
-/** 台新 with its card and an Apple Pay bound to the card; LINE Pay bound to 台新 itself; cash. */
+/** 台新 with a credit card and a debit card; Apple Pay holds both, LINE Pay only the credit card; cash. */
 async function setup() {
   const start = (amount: number) => ({ date: '2026-10-01', amount })
   const taishin = await addPaymentMethod({ name: '台新 Richart', type: 'bank', start: start(20000) }, d, now)
   const card = await addPaymentMethod({ name: '台新@GoGo', type: 'credit_card', cardLast4: '1234', payFromId: taishin.id, start: start(0) }, d, now)
-  const apple = await addPaymentMethod({ name: 'Apple Pay', type: 'mobile', boundTo: card.id }, d, now)
-  const line = await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', boundTo: taishin.id }, d, now)
+  const debit = await addPaymentMethod({ name: '台新金融卡', type: 'debit_card', payFromId: taishin.id }, d, now)
+  const apple = await addPaymentMethod({ name: 'Apple Pay', type: 'mobile', cards: [card.id, debit.id] }, d, now)
+  const line = await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards: [card.id] }, d, now)
   await setStartBalances([{ id: 'cash', amount: 1500 }], '2026-10-01', d, now)
-  return { taishin: taishin.id, card: card.id, apple: apple.id, line: line.id }
+  return { taishin: taishin.id, card: card.id, debit: debit.id, apple: apple.id, line: line.id }
 }
 
 const balances = async () => {
@@ -37,105 +39,131 @@ const balances = async () => {
   return computeBalances(all.paymentMethods, all.transactions, all.adjustments)
 }
 
-describe('ways to pay belong to an account (D-125)', () => {
-  it('groups every way to pay under the account it draws on', async () => {
+describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
+  it('lists each bank with its credit and debit cards and 轉帳, then every card each 行動支付 holds', async () => {
     const a = await setup()
     const groups = payGroups(await d.paymentMethods.toArray())
     const taishin = groups.find((g) => g.account?.id === a.taishin)!
-    expect(taishin.options.map((o) => [o.name, o.cardId ?? o.sourceAccountId ?? '', !!o.card])).toEqual([
-      ['台新@GoGo', '', true],
-      ['Apple Pay', a.card, true],
-      ['LINE Pay', a.taishin, false],
-      ['轉帳', a.taishin, false],
+    expect(taishin.options.map((o) => [o.label, o.cardId ?? o.sourceAccountId ?? ''])).toEqual([
+      ['台新@GoGo', ''],
+      ['台新金融卡', a.taishin],
+      ['轉帳', a.taishin],
     ])
-    // Cash is its own way to pay; the default card (no bank yet) and the unbound 行動支付 wait in the last group.
+    const wallets = groups.find((g) => g.title === '行動支付')!
+    expect(wallets.options.map((o) => [o.label, o.cardId])).toEqual([
+      ['Apple Pay · 台新@GoGo', a.card],
+      ['Apple Pay · 台新金融卡', a.debit],
+      ['LINE Pay · 台新@GoGo', a.card],
+    ])
     expect(groups.find((g) => g.account?.id === 'cash')!.options.map((o) => o.paymentMethodId)).toEqual(['cash'])
-    const loose = groups.find((g) => !g.account)!
+    // The default card (no bank yet) and the default 行動支付 (no card yet) wait in the last group.
+    const loose = groups.find((g) => g.title === '還沒指定帳戶')!
     expect(loose.options.map((o) => o.paymentMethodId).sort()).toEqual(['card', 'mobile'])
   })
 
-  it('a second bank offers 轉帳 too, and defaultPay follows the account last used with it', async () => {
+  it('Q109 B: a 行動支付 starts with the card it used last time; 轉帳 with the account last used', async () => {
     const a = await setup()
     const cathay = await addPaymentMethod({ name: '國泰世華', type: 'bank' }, d, now)
     const groups = payGroups(await d.paymentMethods.toArray())
     expect(defaultPay(groups, 'transfer', cathay.id)!.sourceAccountId).toBe(cathay.id)
-    expect(defaultPay(groups, 'transfer', a.taishin)!.sourceAccountId).toBe(a.taishin)
-    // A 行動支付 follows its current binding.
     expect(defaultPay(groups, a.apple)!.cardId).toBe(a.card)
-    // Something no longer offered falls back to the first option.
+    expect(defaultPay(groups, a.apple, undefined, a.debit)!.cardId).toBe(a.debit)
+    // A remembered card no longer held falls back to its first card.
+    expect(defaultPay(groups, a.line, undefined, a.debit)!.cardId).toBe(a.card)
     expect(defaultPay(groups, 'gone')).toBe(groups[0].options[0])
+    // Saving an expense remembers the card per 行動支付.
+    await addTransaction(spend({ paymentMethodId: a.apple, cardId: a.debit }), d, now)
+    await addTransaction(spend({ paymentMethodId: a.line, cardId: a.card }), d, now)
+    expect(await lastWalletCards(d)).toEqual({ [a.apple]: a.debit, [a.line]: a.card })
+    expect((await d.settings.get(LAST_KEYS.walletCards))!.value).toEqual({ [a.apple]: a.debit, [a.line]: a.card })
   })
 
-  it('card spending — directly or through a bound 行動支付 — waits as 預扣; the others leave the account at once', async () => {
+  it('money moves by the card used: credit waits as 預扣, debit leaves the bank at once — directly or through Apple Pay', async () => {
     const a = await setup()
     await addTransaction(spend({ amount: 800, paymentMethodId: a.card }), d, now)
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
-    await addTransaction(spend({ amount: 200, paymentMethodId: a.line, sourceAccountId: a.taishin }), d, now)
+    await addTransaction(spend({ amount: 200, paymentMethodId: a.apple, cardId: a.debit }), d, now)
+    await addTransaction(spend({ amount: 70, paymentMethodId: a.debit, sourceAccountId: a.taishin }), d, now)
     await addTransaction(spend({ amount: 50, paymentMethodId: 'transfer', sourceAccountId: a.taishin }), d, now)
     const b = await balances()
     expect(b.get(a.card)).toBe(1100)
-    expect(b.get(a.taishin)).toBe(20000 - 250)
+    expect(b.get(a.taishin)).toBe(20000 - 200 - 70 - 50)
     // Paying the bill: the bank goes down, 預扣 clears, no new expense.
     await addTransaction({ ...spend({}), type: 'transfer', categoryId: '', paymentMethodId: a.taishin, toAccountId: a.card, amount: 1100 }, d, now)
     const after = await balances()
-    expect(after.get(a.card)).toBe(0)
-    expect(after.get(a.taishin)).toBe(20000 - 250 - 1100)
+    expect([after.get(a.card), after.get(a.taishin)]).toEqual([0, 20000 - 320 - 1100])
   })
 
-  it('a recorded charge keeps its card when the binding later changes', async () => {
+  it('a recorded payment keeps its card when the cards a 行動支付 holds change later', async () => {
     const a = await setup()
     const t = await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
-    await updatePaymentMethod(a.apple, { boundTo: a.taishin }, d, now)
+    await updatePaymentMethod(a.apple, { cards: [a.debit] }, d, now)
     expect((await d.transactions.get(t.id))!.cardId).toBe(a.card)
     expect((await balances()).get(a.card)).toBe(300)
-    // Editing the record with what the entry sheet loaded keeps it too.
     await updateTransaction(t.id, spend({ amount: 320, paymentMethodId: a.apple, cardId: a.card }), d, now)
     expect((await balances()).get(a.card)).toBe(320)
   })
 
-  it('rejects a card link that does not fit', async () => {
+  it('Q110 B: a 行動支付 holds cards only; a card link that does not fit is refused', async () => {
     const a = await setup()
     await expect(addTransaction(spend({ paymentMethodId: a.card, cardId: a.card }), d, now)).rejects.toThrow('付款方式不正確')
-    await expect(addTransaction(spend({ paymentMethodId: a.apple, cardId: a.taishin }), d, now)).rejects.toThrow('信用卡不存在')
+    await expect(addTransaction(spend({ paymentMethodId: a.apple, cardId: a.taishin }), d, now)).rejects.toThrow('卡片不存在')
     await expect(addTransaction(spend({ paymentMethodId: a.apple, cardId: a.card, sourceAccountId: a.taishin }), d, now)).rejects.toThrow('付款方式不正確')
     await expect(addTransaction({ ...spend({ paymentMethodId: a.apple, cardId: a.card }), type: 'income', categoryId: 'salary' }, d, now)).rejects.toThrow('付款方式不正確')
-    await expect(addPaymentMethod({ name: 'x', type: 'mobile', boundTo: 'transfer' }, d, now)).rejects.toThrow('綁定')
-    await expect(updatePaymentMethod(a.apple, { boundTo: a.apple }, d, now)).rejects.toThrow('綁定')
-    // A binding only means something for 行動支付 / 其他.
+    await expect(addPaymentMethod({ name: 'x', type: 'mobile', cards: [a.taishin] }, d, now)).rejects.toThrow('只能綁信用卡或金融卡')
+    await expect(updatePaymentMethod(a.apple, { cards: ['transfer'] }, d, now)).rejects.toThrow('只能綁信用卡或金融卡')
+    await expect(updatePaymentMethod(a.apple, { notifyCardId: a.taishin }, d, now)).rejects.toThrow('其中一張卡')
+    // Cards only mean something for 行動支付 / 其他.
     await updatePaymentMethod(a.apple, { type: 'transfer' }, d, now)
-    expect((await d.paymentMethods.get(a.apple))!.boundTo).toBeUndefined()
+    expect((await d.paymentMethods.get(a.apple))!.cards).toBeUndefined()
   })
 
-  it('describes how it was paid with the account it draws on', async () => {
+  it('D-133: with one card its notices go to it; with several, to the one chosen', async () => {
+    const a = await setup()
+    expect((await d.paymentMethods.get(a.line))!.notifyCardId).toBe(a.card)
+    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBeUndefined()
+    await updatePaymentMethod(a.apple, { notifyCardId: a.debit }, d, now)
+    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBe(a.debit)
+    // Dropping that card from the list clears the choice.
+    await updatePaymentMethod(a.apple, { cards: [a.card] }, d, now)
+    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBe(a.card)
+  })
+
+  it('describes how it was paid', async () => {
     const a = await setup()
     const all = await d.paymentMethods.toArray()
     const byId = (id: string) => all.find((p) => p.id === id)
     expect(describePay({ paymentMethodId: a.card }, byId)).toMatchObject({ label: '台新 Richart · 台新@GoGo', pending: true })
-    expect(describePay({ paymentMethodId: a.apple, cardId: a.card }, byId)).toMatchObject({ label: '台新 Richart · Apple Pay', pending: true })
+    expect(describePay({ paymentMethodId: a.apple, cardId: a.card }, byId)).toMatchObject({ label: 'Apple Pay · 台新@GoGo', account: '台新@GoGo', pending: true })
+    expect(describePay({ paymentMethodId: a.apple, cardId: a.debit }, byId)).toMatchObject({ label: 'Apple Pay · 台新金融卡', pending: false })
+    expect(describePay({ paymentMethodId: a.debit, sourceAccountId: a.taishin }, byId)).toMatchObject({ label: '台新 Richart · 台新金融卡', pending: false })
     expect(describePay({ paymentMethodId: 'transfer', sourceAccountId: a.taishin }, byId)).toMatchObject({ label: '台新 Richart · 轉帳', pending: false })
     expect(describePay({ paymentMethodId: 'cash' }, byId)).toMatchObject({ label: '現金', pending: false })
     expect(payKey({ paymentMethodId: 'transfer', sourceAccountId: a.taishin })).toBe(`transfer|${a.taishin}|`)
   })
 
-  it("a bank's history also lists its cards' charges as 預扣", async () => {
+  it("a bank's history lists its credit cards' charges as 預扣 and debit payments as money out", async () => {
     const a = await setup()
     await addTransaction(spend({ amount: 800, paymentMethodId: a.card, time: '10:00' }), d, now)
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card, time: '11:00' }), d, now)
+    await addTransaction(spend({ amount: 120, paymentMethodId: a.apple, cardId: a.debit, time: '11:30' }), d, now)
     await addTransaction(spend({ amount: 50, paymentMethodId: 'transfer', sourceAccountId: a.taishin, time: '12:00' }), d, now)
     const all = await readAllData(d)
     const bank = all.paymentMethods.find((p) => p.id === a.taishin)!
     const rows = accountFlow(bank, all.paymentMethods, all.transactions, all.adjustments)
     expect(rows.map((r) => [r.tx!.amount, r.delta, !!r.pending])).toEqual([
       [50, -50, false],
+      [120, -120, false],
       [300, -300, true],
       [800, -800, true],
     ])
   })
 
-  it('filtering by the bank shows its cards and bound 行動支付; 所有信用卡 includes card charges through 行動支付', async () => {
+  it('filtering: the bank shows its cards and what was paid with them; 所有信用卡 includes credit cards through 行動支付', async () => {
     const a = await setup()
     await addTransaction(spend({ amount: 800, paymentMethodId: a.card }), d, now)
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
+    await addTransaction(spend({ amount: 120, paymentMethodId: a.apple, cardId: a.debit }), d, now)
     await addTransaction(spend({ amount: 70, paymentMethodId: 'cash' }), d, now)
     const all = await readAllData(d)
     const ctx = {
@@ -145,11 +173,13 @@ describe('ways to pay belong to an account (D-125)', () => {
       names: { category: (id: string) => id, payment: (id: string) => id },
     }
     const f = (payment: string): TxFilter => ({ q: '', type: 'all', categoryIds: [], payment, dateMode: 'month', from: '', to: '' })
-    expect(filterTx(all.transactions, f(a.taishin), ctx).map((t) => t.amount).sort()).toEqual([300, 800])
-    expect(filterTx(all.transactions, f('__cards__'), ctx).map((t) => t.amount).sort()).toEqual([300, 800])
+    expect(filterTx(all.transactions, f(a.taishin), ctx).map((t) => t.amount).sort((x, y) => x - y)).toEqual([120, 300, 800])
+    expect(filterTx(all.transactions, f('__cards__'), ctx).map((t) => t.amount).sort((x, y) => x - y)).toEqual([300, 800])
+    expect(filterTx(all.transactions, f(a.debit), ctx).map((t) => t.amount)).toEqual([120])
+    expect(filterTx(all.transactions, f(a.apple), ctx).map((t) => t.amount).sort((x, y) => x - y)).toEqual([120, 300])
   })
 
-  it('the card statement matches a purchase made with a 行動支付 bound to the card', async () => {
+  it('the card statement matches a purchase made with Apple Pay on that card', async () => {
     const a = await setup()
     const t = await addTransaction(spend({ amount: 300, merchant: '全家', paymentMethodId: a.apple, cardId: a.card }), d, now)
     const statement: CardStatement = {
@@ -161,38 +191,113 @@ describe('ways to pay belong to an account (D-125)', () => {
     expect(r.autoPairs).toEqual([{ entryId: 'e1', transactionId: t.id }])
   })
 
-  it('backups keep bindings and card links; links pointing nowhere are dropped', async () => {
+  it('backups keep the cards a 行動支付 holds and the card used; links pointing nowhere are dropped', async () => {
     const a = await setup()
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
+    await addTransaction(spend({ amount: 120, paymentMethodId: a.apple, cardId: a.debit }), d, now)
     const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(file.schemaVersion).toBe(7)
     const parsed = parseBackup(JSON.stringify(file))
-    expect(parsed.paymentMethods.find((p) => p.id === a.apple)!.boundTo).toBe(a.card)
-    expect(parsed.transactions[0].cardId).toBe(a.card)
+    expect(parsed.paymentMethods.find((p) => p.id === a.apple)!.cards).toEqual([a.card, a.debit])
+    expect(parsed.paymentMethods.find((p) => p.id === a.line)!.notifyCardId).toBe(a.card)
     const other = new MoneyDB(`pay-other-${n++}`)
     await other.open()
     await restoreBackup(parsed, other, now)
     const all = await readAllData(other)
-    expect(computeBalances(all.paymentMethods, all.transactions, all.adjustments).get(a.card)).toBe(300)
+    const b = computeBalances(all.paymentMethods, all.transactions, all.adjustments)
+    expect([b.get(a.card), b.get(a.taishin)]).toEqual([300, 20000 - 120])
     other.close()
 
-    // A binding to something missing (or to a 轉帳) is dropped; a card link to a non-card is refused.
+    // A held card that is missing or not a card is dropped; a record's card that is not a card is refused.
     const broken = JSON.parse(JSON.stringify(file))
-    broken.paymentMethods.find((p: { id: string }) => p.id === a.line).boundTo = 'transfer'
-    broken.paymentMethods.find((p: { id: string }) => p.id === a.apple).boundTo = 'nope'
+    broken.paymentMethods.find((p: { id: string }) => p.id === a.apple).cards = [a.card, 'nope', a.taishin, a.card]
+    broken.paymentMethods.find((p: { id: string }) => p.id === a.line).notifyCardId = a.debit
     const p2 = parseBackup(JSON.stringify(broken))
-    expect(p2.paymentMethods.find((p) => p.id === a.line)!.boundTo).toBeUndefined()
-    expect(p2.paymentMethods.find((p) => p.id === a.apple)!.boundTo).toBeUndefined()
+    expect(p2.paymentMethods.find((p) => p.id === a.apple)!.cards).toEqual([a.card])
+    expect(p2.paymentMethods.find((p) => p.id === a.line)!.notifyCardId).toBeUndefined()
     broken.transactions[0].cardId = a.taishin
     expect(() => parseBackup(JSON.stringify(broken))).toThrow('信用卡不正確')
 
-    // CSV: the 帳戶 column names the card charged.
+    // CSV: the 帳戶 column names the card used.
     const names = { category: (id: string) => id, payment: (id: string) => all.paymentMethods.find((p) => p.id === id)?.name ?? id }
-    const row = toCsv(all.transactions, names).split('\r\n')[1].split(',')
-    expect(row[5]).toBe('Apple Pay')
-    expect(row[8]).toBe('台新@GoGo')
+    const rows = toCsv(all.transactions, names).split('\r\n').slice(1, 3).map((r) => r.split(','))
+    expect(rows.map((r) => [r[5], r[8]]).sort()).toEqual([
+      ['Apple Pay', '台新@GoGo'],
+      ['Apple Pay', '台新金融卡'],
+    ])
   })
 
-  it('a range restore keeps the bank of a card and the card of a 行動支付 that come back together', async () => {
+  it('Q107 A: an older backup (one card or one account per 行動支付) comes in with the new rules', async () => {
+    const a = await setup()
+    await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
+    const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    file.schemaVersion = 6
+    const apple = file.paymentMethods.find((p: { id: string }) => p.id === a.apple)
+    delete apple.cards
+    apple.boundTo = a.card
+    const line = file.paymentMethods.find((p: { id: string }) => p.id === a.line)
+    delete line.cards
+    delete line.notifyCardId
+    line.boundTo = a.taishin
+    file.transactions.push({ ...file.transactions[0], id: 'old-line', amount: 60, paymentMethodId: a.line, sourceAccountId: a.taishin, cardId: undefined })
+    const parsed = parseBackup(JSON.stringify(file))
+    expect(parsed.paymentMethods.find((p) => p.id === a.apple)).toMatchObject({ cards: [a.card], notifyCardId: a.card })
+    // Bound to 台新, which has one debit card: it now holds that card.
+    expect(parsed.paymentMethods.find((p) => p.id === a.line)).toMatchObject({ cards: [a.debit], notifyCardId: a.debit })
+    expect(parsed.paymentMethods.some((p) => 'boundTo' in p)).toBe(false)
+    const old = parsed.transactions.find((t) => t.id === 'old-line')!
+    expect([old.cardId, old.sourceAccountId]).toEqual([a.debit, undefined])
+  })
+
+  it('migrateWalletLinks: an account without exactly one debit card leaves the wallet empty and the record unchanged', () => {
+    const methods = [
+      { id: 'b', name: 'B', type: 'bank' as const, isActive: true, sortOrder: 0 },
+      { id: 'd1', name: 'D1', type: 'debit_card' as const, isActive: true, sortOrder: 1, payFromId: 'b' },
+      { id: 'd2', name: 'D2', type: 'debit_card' as const, isActive: true, sortOrder: 2, payFromId: 'b' },
+      { id: 'w', name: 'W', type: 'mobile' as const, isActive: true, sortOrder: 3, boundTo: 'b' },
+    ]
+    const tx = { id: 't', type: 'expense' as const, amount: 5, merchant: '', categoryId: 'food', paymentMethodId: 'w', sourceAccountId: 'b', occurredAt: now.toISOString(), note: '', source: 'manual', externalId: null, createdAt: now.toISOString(), updatedAt: now.toISOString() }
+    const r = migrateWalletLinks(methods, [tx])
+    expect(r.methods).toEqual([{ id: 'w', name: 'W', type: 'mobile', isActive: true, sortOrder: 3 }])
+    expect(r.transactions).toEqual([])
+  })
+
+  it('database v6 → v7 converts the bindings and the records through them', async () => {
+    const name = `pay-up-${n++}`
+    const old = new Dexie(name)
+    old.version(1).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, [source+externalId]', categories: 'id, type', paymentMethods: 'id', settings: 'key' })
+    old.version(2).stores({ salaryItems: 'id, kind', payslips: 'id, &month, payDate' })
+    old.version(3).stores({ importedNotifications: 'id, &captureId, batchId, transactionId', importBatches: 'id, createdAt', cardStatements: 'id, paymentMethodId, &fileHash, statementMonth', statementEntries: 'id, statementId', reconciliations: 'id, statementId, entryId, transactionId' })
+    old.version(4).stores({ monthlyPlans: 'month', planTemplates: 'id', plannedExpenses: 'id, month, &[month+templateId], transactionId' })
+    old.version(5).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, toAccountId, sourceAccountId, feeOf, [source+externalId]', adjustments: 'id, accountId, occurredAt' })
+    old.version(6).stores({})
+    await old.open()
+    await old.table('paymentMethods').bulkAdd([
+      { id: 'bank', name: '台新', type: 'bank', isActive: true, sortOrder: 0 },
+      { id: 'cc', name: '卡', type: 'credit_card', isActive: true, sortOrder: 1, payFromId: 'bank' },
+      { id: 'dc', name: '金融卡', type: 'debit_card', isActive: true, sortOrder: 2, payFromId: 'bank' },
+      { id: 'ap', name: 'Apple Pay', type: 'mobile', isActive: true, sortOrder: 3, boundTo: 'cc' },
+      { id: 'lp', name: 'LINE Pay', type: 'mobile', isActive: true, sortOrder: 4, boundTo: 'bank' },
+    ])
+    const base = { type: 'expense', merchant: '', categoryId: 'food', occurredAt: now.toISOString(), note: '', source: 'manual', externalId: null, createdAt: now.toISOString(), updatedAt: now.toISOString() }
+    await old.table('transactions').bulkAdd([
+      { ...base, id: 't1', amount: 10, paymentMethodId: 'ap', cardId: 'cc' },
+      { ...base, id: 't2', amount: 20, paymentMethodId: 'lp', sourceAccountId: 'bank' },
+    ])
+    old.close()
+    const up = new MoneyDB(name)
+    await up.open()
+    expect(await up.paymentMethods.get('ap')).toMatchObject({ cards: ['cc'], notifyCardId: 'cc' })
+    expect(await up.paymentMethods.get('lp')).toMatchObject({ cards: ['dc'], notifyCardId: 'dc' })
+    expect('boundTo' in (await up.paymentMethods.get('ap'))!).toBe(false)
+    expect(await up.transactions.get('t1')).toMatchObject({ cardId: 'cc' })
+    const t2 = (await up.transactions.get('t2'))!
+    expect([t2.cardId, t2.sourceAccountId]).toEqual(['dc', undefined])
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(7)
+    up.close()
+  })
+
+  it('a range restore keeps the bank of a card and the cards of a 行動支付 that come back together', async () => {
     const a = await setup()
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
     await addTransaction({ ...spend({}), type: 'transfer', categoryId: '', paymentMethodId: a.taishin, toAccountId: 'cash', amount: 100 }, d, now)
@@ -202,7 +307,8 @@ describe('ways to pay belong to an account (D-125)', () => {
     await restoreRange(file, '2026-10-12', '2026-10-12', fresh, now)
     const pays = await fresh.paymentMethods.toArray()
     expect(pays.find((p) => p.id === a.card)!.payFromId).toBe(a.taishin)
-    expect(pays.find((p) => p.id === a.apple)!.boundTo).toBe(a.card)
+    // The debit card did not come back, so Apple Pay holds only the card that did.
+    expect(pays.find((p) => p.id === a.apple)!.cards).toEqual([a.card])
     fresh.close()
   })
 
@@ -211,7 +317,7 @@ describe('ways to pay belong to an account (D-125)', () => {
     await d.paymentMethods.update(a.card, { payFromId: 'cash' })
     const groups = payGroups(await d.paymentMethods.toArray())
     expect(groups.find((g) => g.account?.id === 'cash')!.options.map((o) => o.paymentMethodId)).toEqual(['cash'])
-    expect(groups.find((g) => !g.account)!.options.some((o) => o.paymentMethodId === a.card)).toBe(true)
+    expect(groups.find((g) => g.title === '還沒指定帳戶')!.options.some((o) => o.paymentMethodId === a.card)).toBe(true)
   })
 
   it('the charged card is the one a statement lists (chargedTo)', () => {

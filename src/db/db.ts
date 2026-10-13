@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
 import { captureFingerprint } from '../card/notificationFile'
+import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
 import type {
   BalanceAdjustment,
   CardStatement,
@@ -20,7 +21,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -110,6 +111,19 @@ export class MoneyDB extends Dexie {
             }
           })
         await tx.table('settings').put({ key: 'schemaVersion', value: 6 })
+      })
+    // v7 (D-132, Q107 A): a 行動支付 bound to one card (or one bank account) now holds a list of cards; an
+    // expense through it that recorded only the account now records that account's debit card when there
+    // is exactly one. Nothing else changes.
+    this.version(7)
+      .stores({})
+      .upgrade(async (tx) => {
+        const methods = (await tx.table('paymentMethods').toArray()) as LegacyPaymentMethod[]
+        const transactions = (await tx.table('transactions').toArray()) as Transaction[]
+        const moved = migrateWalletLinks(methods, transactions)
+        if (moved.methods.length) await tx.table('paymentMethods').bulkPut(moved.methods)
+        if (moved.transactions.length) await tx.table('transactions').bulkPut(moved.transactions)
+        await tx.table('settings').put({ key: 'schemaVersion', value: 7 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

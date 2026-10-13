@@ -3,7 +3,7 @@ import { addCategory, addPaymentMethod, MoneyError, NAME_MAX, updateCategory, up
 import { PAYMENT_TYPE_LABELS, type PaymentType, type SalaryNature } from '../db/types'
 import { useSalaryItems } from '../db/hooks'
 import { addSalaryItem, updateSalaryItem } from '../db/salary'
-import { isAsset, isCard, isMethod } from '../lib/accounts'
+import { isCard, isMethod } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 import { MAX_AMOUNT } from '../lib/money'
 import { Seg } from '../ui/Seg'
@@ -34,7 +34,9 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const [last4, setLast4] = useState('')
   const [payFrom, setPayFrom] = useState('')
   /** D-125: the card or account a 行動支付 / 其他 is bound to; '' = not bound. */
-  const [boundTo, setBoundTo] = useState('')
+  /** D-132: the cards a 行動支付 / 其他 holds; D-133: the one its payment notices go to ('' = automatic). */
+  const [held, setHeld] = useState<string[]>([])
+  const [notifyCard, setNotifyCard] = useState('')
   /** D-118: start date and the balance (a card: unpaid 預扣) on it; '' amount = not counted. */
   const [startDate, setStartDate] = useState('')
   const [startAmount, setStartAmount] = useState('')
@@ -45,7 +47,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const [shown, setShown] = useState<EditorTarget | null>(null)
 
   // D-101: snapshot the fields once they are loaded, compare on close.
-  const fields = JSON.stringify([name.trim(), icon, payType, active, nature, bank.trim(), last4, payFrom, boundTo, startDate, startAmount])
+  const fields = JSON.stringify([name.trim(), icon, payType, active, nature, bank.trim(), last4, payFrom, held.join(','), notifyCard, startDate, startAmount])
   const opened = useRef<string | null>(null)
   const snapNext = useRef(false)
   // Declared before the loading effect so it sees the loaded values one commit later.
@@ -80,7 +82,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
       setBank(p?.bank ?? '')
       setLast4(p?.cardLast4 ?? '')
       setPayFrom(p?.payFromId ?? (p ? '' : (target.under ?? '')))
-      setBoundTo(p?.boundTo ?? (p ? '' : (target.under ?? '')))
+      setHeld(p?.cards ?? [])
+      setNotifyCard(p?.notifyCardId ?? '')
       setStartDate(p?.balanceFrom ? toYmd(new Date(p.balanceFrom)) : today)
       setStartAmount(p?.openingBalance !== undefined ? String(p.openingBalance) : '')
     } else {
@@ -102,8 +105,12 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   // D-125: a card belongs to a bank; a 行動支付 / 其他 is bound to a card or an account.
   const payers = ref.payments.filter((p) => p.type === 'bank' && p.id !== t?.id && (p.isActive || p.id === payFrom))
   const isBindable = payType === 'mobile' || payType === 'other'
-  const bindCards = ref.payments.filter((p) => isCard(p) && p.id !== t?.id && (p.isActive || p.id === boundTo))
-  const bindAccounts = ref.payments.filter((p) => isAsset(p) && p.id !== t?.id && (p.isActive || p.id === boundTo))
+  // Q110 B: only cards (credit: 預扣, debit: 直接扣); a disabled card it already holds still shows.
+  const bindCards = ref.payments.filter((p) => (isCard(p) || p.type === 'debit_card') && p.id !== t?.id && (p.isActive || held.includes(p.id)))
+  const toggleCard = (id: string) => {
+    setHeld((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]))
+    if (notifyCard === id) setNotifyCard('')
+  }
   const noun =
     t?.kind === 'payment'
       ? '帳戶或付款方式'
@@ -135,7 +142,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             bank,
             cardLast4: last4,
             payFromId: isCardType || isDebit ? payFrom : '',
-            boundTo: isBindable ? boundTo : '',
+            cards: isBindable ? held : [],
+            notifyCardId: isBindable && held.includes(notifyCard) ? notifyCard : '',
             start: tracksBalance ? (amount === null ? null : { date: startDate || today, amount }) : null,
           })
         } else {
@@ -145,7 +153,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             bank,
             cardLast4: last4,
             ...((isCardType || isDebit) && payFrom ? { payFromId: payFrom } : {}),
-            ...(isBindable && boundTo ? { boundTo } : {}),
+            ...(isBindable && held.length ? { cards: held } : {}),
+            ...(isBindable && held.includes(notifyCard) ? { notifyCardId: notifyCard } : {}),
             ...(tracksBalance && amount !== null ? { start: { date: today, amount } } : {}),
           })
         }
@@ -303,33 +312,39 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
 
           {t.kind === 'payment' && isBindable && (
             <div>
-              <label className="lbl" htmlFor="editor-bound">
-                綁定
-              </label>
-              <select id="editor-bound" className="select" value={boundTo} onChange={(e) => setBoundTo(e.target.value)}>
-                <option value="">不綁定（不算進任何帳戶）</option>
-                {bindCards.length > 0 && (
-                  <optgroup label="信用卡：記為預扣">
-                    {bindCards.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {p.cardLast4 ? ` ···${p.cardLast4}` : ''}
+              <span className="lbl" id="editor-cards-label">
+                綁定的卡片（可以多張）
+              </span>
+              {bindCards.length ? (
+                <div className="opt-set" role="group" aria-labelledby="editor-cards-label">
+                  {bindCards.map((p) => (
+                    <button type="button" key={p.id} className="opt" aria-pressed={held.includes(p.id)} onClick={() => toggleCard(p.id)}>
+                      {p.name}
+                      <small>{p.type === 'credit_card' ? '預扣' : '直接扣'}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="range-help">還沒有信用卡或金融卡，請先新增一張卡。</p>
+              )}
+              {held.length > 1 && (
+                <div style={{ marginTop: 14 }}>
+                  <label className="lbl" htmlFor="editor-notify-card">
+                    付款通知記到哪張卡
+                  </label>
+                  <select id="editor-notify-card" className="select" value={held.includes(notifyCard) ? notifyCard : ''} onChange={(e) => setNotifyCard(e.target.value)}>
+                    <option value="">還沒選（匯入時要逐筆選）</option>
+                    {held.map((id) => (
+                      <option key={id} value={id}>
+                        {ref.payment(id).name}
                       </option>
                     ))}
-                  </optgroup>
-                )}
-                {bindAccounts.length > 0 && (
-                  <optgroup label="帳戶：直接扣款">
-                    {bindAccounts.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+                  </select>
+                </div>
+              )}
               <p className="range-help" style={{ marginTop: 8 }}>
-                綁信用卡：用它付的錢記為那張卡所屬銀行的預扣，也會出現在那張卡的帳單核對裡。綁帳戶：直接從那個帳戶扣。同一個行動支付輪流用不同的卡，就分成兩個，例如「Apple Pay（台新）」。
+                記帳時用這個付款方式，會用上次刷的那張卡，要換再點一下。信用卡記為預扣；金融卡直接從它的帳號扣。
+                {held.length === 1 ? '只綁一張卡時，付款通知就記到這張。' : ''}
               </p>
             </div>
           )}

@@ -41,7 +41,16 @@ export const LAST_KEYS = {
   source: 'lastSourceAccountId',
   from: 'lastTransferFromId',
   to: 'lastTransferToId',
+  /** D-132 / Q109 B: { walletId: cardId }, the card each 行動支付 used last time. */
+  walletCards: 'lastWalletCards',
 } as const
+
+/** The card each 行動支付 used last (Q109 B). */
+export async function lastWalletCards(d: MoneyDB = db): Promise<Record<string, string>> {
+  const v = (await d.settings.get(LAST_KEYS.walletCards))?.value
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'))
+}
 
 function newId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
@@ -82,10 +91,11 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
   }
   // D-129: a debit card always takes the money from an account (its own bank).
   if (input.type === 'expense' && pay.type === 'debit_card' && input.sourceAccountId === undefined) throw new MoneyError('金融卡要從它所屬的銀行帳戶扣款')
-  // D-125: only a 行動支付 / 其他 can be charged to a card through its binding.
+  // D-125 / D-132: only a 行動支付 / 其他 is paid with one of the cards it holds (credit or debit).
   if (input.cardId !== undefined) {
     if (input.type !== 'expense' || (pay.type !== 'mobile' && pay.type !== 'other')) throw new MoneyError('付款方式不正確')
-    if (!isCard(await d.paymentMethods.get(input.cardId))) throw new MoneyError('綁定的信用卡不存在')
+    const used = await d.paymentMethods.get(input.cardId)
+    if (!isCard(used) && used?.type !== 'debit_card') throw new MoneyError('選的卡片不存在')
   }
 }
 
@@ -188,6 +198,8 @@ export async function addTransaction(input: TxInput, d: MoneyDB = db, now = new 
           ? [[LAST_KEYS.income, tx.paymentMethodId]]
           : [[LAST_KEYS.expense, tx.paymentMethodId], ...(tx.sourceAccountId ? ([[LAST_KEYS.source, tx.sourceAccountId]] as [string, string][]) : [])]
     await d.settings.bulkPut(last.map(([key, value]) => ({ key, value })))
+    // Q109 B: a 行動支付 starts with the card it used last time.
+    if (tx.cardId) await d.settings.put({ key: LAST_KEYS.walletCards, value: { ...(await lastWalletCards(d)), [tx.paymentMethodId]: tx.cardId } })
   })
   return tx
 }
@@ -377,11 +389,19 @@ async function checkPayer(d: MoneyDB, type: PaymentType, payFromId: string | und
   if ((await d.paymentMethods.get(payFromId))?.type !== 'bank') throw new MoneyError(`${type === 'debit_card' ? '金融卡' : '信用卡'}要屬於一個銀行帳戶`)
 }
 
-/** D-125: a 行動支付 / 其他 is bound to a card or to an account that holds money. */
-async function checkBinding(d: MoneyDB, type: PaymentType, boundTo: string | undefined, selfId?: string) {
-  if ((type !== 'mobile' && type !== 'other') || !boundTo) return
-  const target = await d.paymentMethods.get(boundTo)
-  if (boundTo === selfId || !(isCard(target) || isAsset(target))) throw new MoneyError('綁定的卡或帳戶不正確')
+/**
+ * D-132 / Q110 B: a 行動支付 / 其他 holds credit or debit cards (never an account itself), each once; its
+ * notices go to one of them (D-133; with a single card, that one).
+ */
+async function checkCards(d: MoneyDB, type: PaymentType, cards: readonly string[], notifyCardId: string | undefined) {
+  if (type !== 'mobile' && type !== 'other') return { cards: [] as string[], notifyCardId: undefined }
+  const unique = [...new Set(cards)]
+  for (const id of unique) {
+    const c = await d.paymentMethods.get(id)
+    if (!isCard(c) && c?.type !== 'debit_card') throw new MoneyError('只能綁信用卡或金融卡')
+  }
+  if (notifyCardId && !unique.includes(notifyCardId)) throw new MoneyError('付款通知要記到它綁定的其中一張卡')
+  return { cards: unique, notifyCardId: notifyCardId || (unique.length === 1 ? unique[0] : undefined) }
 }
 
 export interface AccountInput {
@@ -391,8 +411,10 @@ export interface AccountInput {
   cardLast4?: string
   /** Cards: the bank account it belongs to (D-119, D-125). */
   payFromId?: string
-  /** 行動支付 / 其他: the card or account it is bound to (D-125). */
-  boundTo?: string
+  /** 行動支付 / 其他: the cards it holds (D-132). */
+  cards?: string[]
+  /** 行動支付 / 其他: the card its payment notices are recorded to (D-133). */
+  notifyCardId?: string
   /** Accounts and cards: start counting from `start.date` with `start.amount` (D-118). */
   start?: { date: string; amount: number }
 }
@@ -405,7 +427,7 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
     const all = await d.paymentMethods.toArray()
     if (all.some((p) => p.name === name)) throw new MoneyError(`已經有「${name}」這個名稱`)
     await checkPayer(d, input.type, input.payFromId)
-    await checkBinding(d, input.type, input.boundTo)
+    const held = await checkCards(d, input.type, input.cards ?? [], input.notifyCardId)
     const pm: PaymentMethod = {
       id: newId(),
       name,
@@ -414,7 +436,8 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
       sortOrder: all.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1,
       ...card,
       ...(hasBank(input.type) && input.payFromId ? { payFromId: input.payFromId } : {}),
-      ...((input.type === 'mobile' || input.type === 'other') && input.boundTo ? { boundTo: input.boundTo } : {}),
+      ...(held.cards.length ? { cards: held.cards } : {}),
+      ...(held.notifyCardId ? { notifyCardId: held.notifyCardId } : {}),
       ...(input.start && !isMethod({ type: input.type }) ? { balanceFrom: startInstant(input.start.date, now), openingBalance: input.start.amount } : {}),
     }
     await d.paymentMethods.add(pm)
@@ -432,8 +455,10 @@ export async function updatePaymentMethod(
     cardLast4?: string
     /** '' clears it. */
     payFromId?: string
-    /** '' clears it (D-125). */
-    boundTo?: string
+    /** The cards a 行動支付 / 其他 holds (D-132); [] holds none. */
+    cards?: string[]
+    /** '' = automatic (its only card, if just one) (D-133). */
+    notifyCardId?: string
     /** null = stop counting ("尚未設定餘額"). */
     start?: { date: string; amount: number } | null
   },
@@ -469,12 +494,16 @@ export async function updatePaymentMethod(
       else delete next.payFromId
     }
     if (!hasBank(next.type)) delete next.payFromId
-    if (patch.boundTo !== undefined) {
-      await checkBinding(d, next.type, patch.boundTo, id)
-      if (patch.boundTo) next.boundTo = patch.boundTo
-      else delete next.boundTo
+    if (patch.cards !== undefined || patch.notifyCardId !== undefined || patch.type !== undefined) {
+      const wantCards = patch.cards ?? next.cards ?? []
+      // A card asked for now must be one it holds; one kept from before is dropped if the card no longer is.
+      const wantNotify = patch.notifyCardId !== undefined ? patch.notifyCardId : next.notifyCardId && wantCards.includes(next.notifyCardId) ? next.notifyCardId : undefined
+      const held = await checkCards(d, next.type, wantCards, wantNotify || undefined)
+      if (held.cards.length) next.cards = held.cards
+      else delete next.cards
+      if (held.notifyCardId) next.notifyCardId = held.notifyCardId
+      else delete next.notifyCardId
     }
-    if (next.type !== 'mobile' && next.type !== 'other') delete next.boundTo
     if (patch.start !== undefined) {
       if (patch.start) {
         // The same date and amount keep the stored instant; a change starts counting afresh (D-118).

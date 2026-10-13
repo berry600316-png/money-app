@@ -4,7 +4,7 @@
  * user's choices.
  */
 import type { Category, PaymentMethod, TimeSource, Transaction } from '../db/types'
-import { isAsset, isCard } from '../lib/accounts'
+import { isCard } from '../lib/accounts'
 import { toYmd } from '../lib/dates'
 import { isValidAmount } from '../lib/money'
 import { suggestCategory, type MerchantHistory } from './categorize'
@@ -115,12 +115,16 @@ export function channelMethod(name: RegExp, methods: readonly PaymentMethod[]): 
   return all.find((p) => p.isActive) ?? all[0]
 }
 
-/** D-130: its binding as a source: a card (預扣) or an account (直接扣); none if unbound or no longer usable. */
+/**
+ * D-130 / D-133: the card its notices are recorded to (one kind of notice = one card, Q111): the card set
+ * for notices, else its only card. A credit card waits as 預扣, a debit card is taken from its bank. None
+ * when it holds no usable card, or several and none is set for notices.
+ */
 export function defaultSource(method: PaymentMethod | undefined, methods: readonly PaymentMethod[]): PaySource | null {
-  const target = method?.boundTo ? methods.find((p) => p.id === method.boundTo && p.isActive) : undefined
-  if (isCard(target)) return { cardId: target!.id }
-  if (isAsset(target)) return { sourceAccountId: target!.id }
-  return null
+  const usable = (id?: string) => methods.find((p) => p.id === id && p.isActive && (isCard(p) || p.type === 'debit_card'))
+  const held = (method?.cards ?? []).filter((id) => usable(id))
+  const id = method?.notifyCardId && held.includes(method.notifyCardId) ? method.notifyCardId : held.length === 1 ? held[0] : undefined
+  return id ? { cardId: id } : null
 }
 
 export function planImport(input: PlanInput): PlanRow[] {
@@ -202,7 +206,7 @@ export function planImport(input: PlanInput): PlanRow[] {
     if (r.doubt) reasons.push(r.doubt)
     if (dupTx) reasons.push(`可能與 ${md(dupTx.occurredAt)} 的既有交易「${dupTx.merchant || '一筆支出'}」重複`)
     else if (dupRow) reasons.push(`和這次另一則通知同一天、同金額（「${dupRow.merchant || '一筆支出'}」），可能是同一筆`)
-    if (row.needsSource) reasons.push(`還沒設定 ${row.channel} 的付款來源，請選一張卡或一個帳戶`)
+    if (row.needsSource) reasons.push(`還沒設定 ${row.channel} 的付款通知記到哪張卡，請選一張卡`)
     row.duplicate = !!dupTx || !!dupRow
     if (reasons.length) {
       row.status = 'suspect'

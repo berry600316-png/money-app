@@ -52,16 +52,18 @@ export function PayPicker({
   onClose: () => void
 }) {
   const ref = useRefData()
-  const note = (o: PayOption, account: PaymentMethod | null) => {
-    if (!account) return o.card ? `預扣 · ${o.card.name}，還沒指定銀行` : '不算進帳戶餘額'
-    if (o.card) return o.card.id === o.paymentMethodId ? '預扣' : `預扣 · ${o.card.name}`
+  const note = (o: PayOption, account: PaymentMethod | null, title: string) => {
+    const credit = isCard(o.card)
+    if (title === '行動支付' && o.card) return credit ? '預扣' : '直接扣'
+    if (!account) return o.card && credit ? '預扣，卡片還沒指定銀行' : '不算進帳戶餘額'
+    if (o.card) return credit ? '預扣' : '直接扣'
     if (o.paymentMethodId === account.id) {
       const b = balances?.get(account.id)
       return b === undefined ? '尚未設定餘額' : fmt(b)
     }
     return '直接扣'
   }
-  const row = (o: PayOption, account: PaymentMethod | null, label = o.name) => (
+  const row = (o: PayOption, account: PaymentMethod | null, label = o.label, title = account?.name ?? '') => (
     <button
       type="button"
       key={o.key + label}
@@ -76,7 +78,7 @@ export function PayPicker({
         <b>{label}</b>
         {o.card?.cardLast4 && o.card.id === o.paymentMethodId && <small>···{o.card.cardLast4}</small>}
       </span>
-      <span className={'pk-r ' + (account && o.paymentMethodId === account.id && balances?.has(account.id) ? 'num' : 'small')}>{note(o, account)}</span>
+      <span className={'pk-r ' + (account && o.paymentMethodId === account.id && balances?.has(account.id) ? 'num' : 'small')}>{note(o, account, title)}</span>
       {o.key === value && <Icon name="check" className="pk-ck" />}
     </button>
   )
@@ -113,7 +115,7 @@ export function PayPicker({
             <>
               <h3 className="pk-g">最近用過</h3>
               <div className="set-card">
-                {row(recent, recentGroup.account, recentGroup.account && recentGroup.account.id !== recent.paymentMethodId ? `${recentGroup.account.name} · ${recent.name}` : recent.name)}
+                {row(recent, recentGroup.account, recentGroup.account && recentGroup.account.id !== recent.paymentMethodId ? `${recentGroup.account.name} · ${recent.name}` : recent.label, recentGroup.title)}
               </div>
             </>
           )}
@@ -137,9 +139,9 @@ export function PayPicker({
           {groups
             .filter((g) => !g.account)
             .map((g) => (
-              <div key="loose">
-                <h3 className="pk-g">還沒指定帳戶（到設定指定後才會算進帳戶）</h3>
-                <div className="set-card">{g.options.map((o) => row(o, null))}</div>
+              <div key={g.title}>
+                <h3 className="pk-g">{g.title === '行動支付' ? '行動支付（用哪張卡）' : '還沒指定帳戶（到設定指定後才會算進帳戶）'}</h3>
+                <div className="set-card">{g.options.map((o) => row(o, null, o.label, g.title))}</div>
               </div>
             ))}
         </div>

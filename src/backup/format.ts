@@ -33,6 +33,7 @@ import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { isMonthKey } from '../lib/months'
 import { captureFingerprint } from '../card/notificationFile'
+import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
 
 export const BACKUP_APP = 'money'
 export const BACKUP_FORMAT = 1
@@ -175,7 +176,7 @@ export function parseBackup(text: string): BackupFile {
   })
   checkUnique(categories, '分類')
 
-  const paymentMethods = (raw.paymentMethods as unknown[]).map((p, i): PaymentMethod => {
+  const paymentMethods = (raw.paymentMethods as unknown[]).map((p, i): LegacyPaymentMethod => {
     const n = i + 1
     if (!isObj(p) || !isStr(p.id) || !p.id) fail(`第 ${n} 個付款方式缺少編號`)
     if (!isStr(p.name) || !p.name.trim()) fail(`第 ${n} 個付款方式缺少名稱`)
@@ -189,6 +190,8 @@ export function parseBackup(text: string): BackupFile {
     if (hasStart && (!isIso(p.balanceFrom) || !isMoney0(p.openingBalance))) fail(`帳戶「${p.name}」的起始餘額不正確`)
     if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`「${p.name}」的所屬帳戶不正確`)
     if (p.boundTo !== undefined && !isStr(p.boundTo)) fail(`付款方式「${p.name}」的綁定不正確`)
+    if (p.cards !== undefined && (!Array.isArray(p.cards) || !p.cards.every(isStr))) fail(`付款方式「${p.name}」綁定的卡片不正確`)
+    if (p.notifyCardId !== undefined && !isStr(p.notifyCardId)) fail(`付款方式「${p.name}」的通知卡片不正確`)
     return {
       id: p.id,
       name: p.name,
@@ -199,18 +202,30 @@ export function parseBackup(text: string): BackupFile {
       ...(isStr(p.cardLast4) ? { cardLast4: p.cardLast4 } : {}),
       ...(hasStart ? { balanceFrom: p.balanceFrom as string, openingBalance: p.openingBalance as number } : {}),
       ...(isStr(p.payFromId) ? { payFromId: p.payFromId } : {}),
+      // Before D-132 a 行動支付 was bound to one card or account (`boundTo`); converted below.
       ...(isStr(p.boundTo) ? { boundTo: p.boundTo } : {}),
+      ...(Array.isArray(p.cards) ? { cards: p.cards as string[] } : {}),
+      ...(isStr(p.notifyCardId) ? { notifyCardId: p.notifyCardId } : {}),
     }
   })
   checkUnique(paymentMethods, '付款方式')
-  // A card belongs to a bank account in the file, and a 行動支付 / 其他 is bound to a card or an account
-  // in the file; otherwise the link is dropped and it simply counts in no account (D-119, D-125).
+  // A card belongs to a bank account in the file, and a 行動支付 / 其他 holds credit or debit cards in the
+  // file (D-132); any other link is dropped and it simply counts in no account (D-119, D-125).
   const payById = new Map(paymentMethods.map((p) => [p.id, p]))
+  const plastic = (id: string) => payById.get(id)?.type === 'credit_card' || payById.get(id)?.type === 'debit_card'
   for (const p of paymentMethods) {
     if (p.payFromId !== undefined && ((p.type !== 'credit_card' && p.type !== 'debit_card') || payById.get(p.payFromId)?.type !== 'bank')) delete p.payFromId
-    if (p.boundTo === undefined) continue
-    const target = payById.get(p.boundTo)
-    if ((p.type !== 'mobile' && p.type !== 'other') || !target || p.boundTo === p.id || !(target.type === 'credit_card' || isAssetType(target.type))) delete p.boundTo
+    const wallet = p.type === 'mobile' || p.type === 'other'
+    if (p.boundTo !== undefined) {
+      const target = payById.get(p.boundTo)
+      if (!wallet || !target || p.boundTo === p.id || !(target.type === 'credit_card' || target.type === 'debit_card' || isAssetType(target.type))) delete p.boundTo
+    }
+    if (p.cards !== undefined) {
+      const held = wallet ? [...new Set(p.cards)].filter((id) => id !== p.id && plastic(id)) : []
+      if (held.length) p.cards = held
+      else delete p.cards
+    }
+    if (p.notifyCardId !== undefined && !(p.cards ?? []).includes(p.notifyCardId)) delete p.notifyCardId
   }
 
   // D-15: the restored data must leave the app usable.
@@ -237,10 +252,10 @@ export function parseBackup(text: string): BackupFile {
       if (t.toAccountId !== undefined) fail(`第 ${n} 筆交易不是互轉，卻有轉入帳戶`)
     }
     if (t.sourceAccountId !== undefined && (t.type !== 'expense' || !isStr(t.sourceAccountId) || !payIds.has(t.sourceAccountId))) fail(`第 ${n} 筆交易的扣款帳戶不正確`)
-    // D-125: a card charged through a bound 行動支付 / 其他.
+    // D-125 / D-132: the card (credit or debit) used through a 行動支付 / 其他.
     if (
       t.cardId !== undefined &&
-      (t.type !== 'expense' || t.sourceAccountId !== undefined || !isStr(t.cardId) || payById.get(t.cardId)?.type !== 'credit_card' || !['mobile', 'other'].includes(payById.get(t.paymentMethodId as string)?.type ?? ''))
+      (t.type !== 'expense' || t.sourceAccountId !== undefined || !isStr(t.cardId) || !plastic(t.cardId) || !['mobile', 'other'].includes(payById.get(t.paymentMethodId as string)?.type ?? ''))
     ) {
       fail(`第 ${n} 筆交易的信用卡不正確`)
     }
@@ -270,6 +285,14 @@ export function parseBackup(text: string): BackupFile {
     }
   })
   checkUnique(transactions, '交易')
+  // D-132 / Q107 A: an older file's single bindings become the cards a 行動支付 holds.
+  {
+    const moved = migrateWalletLinks(paymentMethods, transactions)
+    const m = new Map(moved.methods.map((p) => [p.id, p]))
+    const t = new Map(moved.transactions.map((x) => [x.id, x]))
+    paymentMethods.splice(0, paymentMethods.length, ...paymentMethods.map((p) => m.get(p.id) ?? p))
+    transactions.splice(0, transactions.length, ...transactions.map((x) => t.get(x.id) ?? x))
+  }
   // A fee whose transfer is not in the file stays as an ordinary expense rather than pointing nowhere (D-121).
   const transferIds = new Set(transactions.filter((t) => t.type === 'transfer').map((t) => t.id))
   for (const t of transactions) if (t.feeOf && !transferIds.has(t.feeOf)) delete t.feeOf

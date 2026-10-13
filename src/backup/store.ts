@@ -216,12 +216,17 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
     }
   }
 
-  // A card or 行動支付 coming back keeps its bank / binding only if that account or card is here after the
-  // restore, whether it already was or comes back in this same restore (D-119, D-125).
+  // A card or 行動支付 coming back keeps its bank / its cards only if that account or card is here after the
+  // restore, whether it already was or comes back in this same restore (D-119, D-125, D-132).
   const after = new Set([...payIds, ...newPayments.map((p) => p.id)])
   for (const p of newPayments) {
     if (p.payFromId && !after.has(p.payFromId)) delete p.payFromId
-    if (p.boundTo && !after.has(p.boundTo)) delete p.boundTo
+    if (p.cards) {
+      const held = p.cards.filter((id) => after.has(id))
+      if (held.length) p.cards = held
+      else delete p.cards
+    }
+    if (p.notifyCardId && !(p.cards ?? []).includes(p.notifyCardId)) delete p.notifyCardId
   }
 
   return {

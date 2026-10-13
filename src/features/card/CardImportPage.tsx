@@ -103,10 +103,11 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
       if (!out.some((o) => sameSource(o.source, source) && (o.source.via ?? '') === (source.via ?? ''))) out.push({ source, name, note })
     }
     const def = defaultFor(r)
-    if (def) add(def, labelOf(def), def.cardId ? '預扣（預設）' : '直接扣（預設）')
+    if (def) add(def, labelOf(def), isCard(byId(def.cardId)) ? '預扣（預設）' : '直接扣（預設）')
     for (const c of cards) add({ cardId: c.id }, c.name, '預扣，繳卡費時才扣')
+    // D-132: a debit card is recorded as the card used; the money leaves its bank at once.
     for (const m of ref.payments.filter((p) => p.type === 'debit_card' && p.isActive && byId(p.payFromId)?.type === 'bank')) {
-      add({ sourceAccountId: m.payFromId!, via: m.id }, m.name, `直接從 ${byId(m.payFromId)!.name} 扣`)
+      add({ cardId: m.id }, m.name, `直接從 ${byId(m.payFromId)!.name} 扣`)
     }
     return out
   }
@@ -185,7 +186,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         </span>
         {r.channel && (
           <button type="button" className={'src-chip' + (r.source ? '' : ' need')} onClick={() => setPicking(r)}>
-            <Icon name={r.source?.cardId ? 'card' : 'bank'} />
+            <Icon name="card" />
             <span>{r.source ? `${labelOf(r.source)}${r.sourceIsDefault ? '（預設）' : ''}` : '選擇付款來源'}</span>
             <Icon name="chev" />
           </button>
@@ -316,7 +317,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             </ul>
           )}
 
-          <p className="set-foot">預設的付款來源是你在設定裡為 LINE Pay 綁定的卡或帳戶，不一定是這次實際扣款的，請看一下。匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
+          <p className="set-foot">預設的卡片是 LINE Pay 設定裡「付款通知記到哪張卡」那張（只綁一張時就是它）。匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
           <div className="foot-bar">
             <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || missingCard || missingSource}>
               {busy ? '匯入中…' : chosen.length ? `匯入 ${chosen.length} 筆` : '沒有要匯入的消費'}
@@ -347,7 +348,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
           <div className="pk-body">
             {options.length === 0 ? (
               <p className="range-help" style={{ margin: '8px 8px 0' }}>
-                還沒有信用卡或金融卡。請先到「設定 › 帳戶與付款方式」新增，或把 LINE Pay 綁定一個帳戶。
+                還沒有信用卡或金融卡。請先到「設定 › 帳戶與付款方式」新增一張卡，再綁到 LINE Pay。
               </p>
             ) : (
               <div className="set-card">

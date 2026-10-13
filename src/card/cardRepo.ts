@@ -94,7 +94,8 @@ export async function commitNotificationImport(
           // D-130: the source the user saw: a card (預扣) or an account (直接扣), never both, never none.
           const src = row.source
           const target = src?.cardId ? await d.paymentMethods.get(src.cardId) : src?.sourceAccountId ? await d.paymentMethods.get(src.sourceAccountId) : undefined
-          if (src?.cardId && isCard(target)) link = { cardId: src.cardId }
+          // D-132: the card used: credit (預扣) or debit (taken from its bank at once).
+          if (src?.cardId && (isCard(target) || target?.type === 'debit_card')) link = { cardId: src.cardId }
           else if (src?.sourceAccountId && isAsset(target)) link = { sourceAccountId: src.sourceAccountId }
           else throw new MoneyError(`請選擇「${row.merchant || '這筆消費'}」的付款來源`)
           paymentMethodId = await channelMethodId(row.channel, row.paymentMethodId)
