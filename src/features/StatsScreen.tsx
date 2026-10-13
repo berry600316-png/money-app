@@ -135,8 +135,11 @@ export function StatsScreen({
             const pct = Math.round((e.amount / v.s.expense) * 100)
             return (
               <button type="button" className="crow" key={e.categoryId} onClick={() => onCategory(e.categoryId)}>
-                {/* D-122: no category icons; the dot matches the bar above. */}
-                <span className="cdot" style={{ background: e.color }} aria-hidden="true" />
+                {/* D-127: the category's icon; the dot on its corner matches the bar above. */}
+                <span className="ico">
+                  <Icon name={c.icon} />
+                  <span className="cdot" style={{ background: e.color }} aria-hidden="true" />
+                </span>
                 <span className="crow-main">
                   <span className="crow-top">
                     <span className="crow-name">
@@ -167,7 +170,9 @@ export function StatsScreen({
             const c = ref.category(e.categoryId)
             return (
               <button type="button" className="crow" key={e.categoryId} onClick={() => onCategory(e.categoryId)}>
-                <span className="cdot inc" aria-hidden="true" />
+                <span className="ico">
+                  <Icon name={c.icon} />
+                </span>
                 <span className="crow-main">
                   <span className="crow-top">
                     <span className="crow-name">{c.name}</span>

@@ -19,7 +19,8 @@ const PATHS: Record<string, string> = {
   invest: '<path d="M4 19.5h16"/><path d="m5 15 4.5-4.5 3.5 3 6-6.5"/><path d="M15 7h4v4"/>',
   other: '<circle cx="6.5" cy="12" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="17.5" cy="12" r="1.1"/>',
   salary: '<rect x="3.5" y="7" width="17" height="12" rx="2.5"/><path d="M9 7V5.5h6V7M3.5 12.5h17"/>',
-  bonus: '<rect x="4.5" y="10" width="15" height="10" rx="1.5"/><path d="M3.5 7h17v3h-17ZM12 7v13M12 7c-1.5-3-5-2.8-4.4-.7M12 7c1.5-3 5-2.8 4.4-.7"/>',
+  // D-127: its own drawing (a medal); it used to be the very same picture as 禮物 (gift).
+  bonus: '<circle cx="12" cy="9.5" r="5.5"/><path d="m9 14.2-1.6 6.3 4.6-2.3 4.6 2.3-1.6-6.3M12 7v5M10 8.6l2-1.6"/>',
   plusCircle: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8.5v7M8.5 12h7"/>',
   // interface icons
   gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -57,17 +58,25 @@ const PATHS: Record<string, string> = {
   out: '<path d="M12 19V7M7 12l5-5 5 5"/>',
 }
 
-/** D-12: icons offered when creating a category. */
+/**
+ * D-12 / D-127: icons a category can use (chosen when adding it, changeable later). The last row is
+ * for income too (薪水, 獎金, 加號, 其他), which the first sixteen never covered.
+ */
 export const CATEGORY_ICON_CHOICES = [
   'food', 'coffee', 'transport', 'car', 'plane', 'daily', 'shopping', 'shirt',
   'fun', 'home', 'phone', 'medical', 'pet', 'book', 'gift', 'invest',
+  'salary', 'bonus', 'plusCircle', 'other',
 ] as const
 
 export const ICON_LABELS: Record<string, string> = {
   food: '餐點', coffee: '咖啡', transport: '大眾運輸', car: '汽車', plane: '旅行', daily: '日用品',
   shopping: '購物袋', shirt: '衣服', fun: '娛樂', home: '居家', phone: '手機', medical: '醫療',
   pet: '寵物', book: '書本', gift: '禮物', invest: '投資',
+  salary: '薪水', bonus: '獎金', plusCircle: '其他收入', other: '其他',
 }
+
+/** A name this app can draw (anything else would quietly show 「其他」). */
+export const isIconName = (name: string) => Object.prototype.hasOwnProperty.call(PATHS, name)
 
 export function Icon({ name, className }: { name: string; className?: string }) {
   return (

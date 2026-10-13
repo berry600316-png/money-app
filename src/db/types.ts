@@ -19,8 +19,13 @@ export interface Transaction {
   paymentMethodId: string
   /** Transfers only: the account the money went to (a credit card here = paying its bill, D-119). */
   toAccountId?: string
-  /** Expenses paid with 轉帳 / 行動支付 / 其他: the account the money actually left (D-120). */
+  /** Expenses paid with 轉帳 / 行動支付 / 其他: the account the money actually left (D-120, D-125). */
   sourceAccountId?: string
+  /**
+   * D-125: expenses paid with a 行動支付 / 其他 bound to a credit card: the card charged, so the spending
+   * waits as that card's 預扣 (and shows on its bill). Set when recorded; a later binding change keeps it.
+   */
+  cardId?: string
   /** A transfer's fee, recorded as its own expense: the transfer it belongs to (D-121). */
   feeOf?: string
   occurredAt: string
@@ -54,9 +59,10 @@ export interface Category {
 export type PaymentType = 'bank' | 'cash' | 'credit_card' | 'stored_value' | 'mobile' | 'transfer' | 'other'
 
 /**
- * D-117: one list for accounts and payment methods. bank / cash / stored_value are accounts that hold
- * money; credit_card is an account whose spending waits as 預扣 until the bill is paid; mobile / transfer
- * / other are ways to pay that ask which account the money left (D-120).
+ * D-117 / D-125: one list for accounts and payment methods. bank / cash / stored_value are accounts that
+ * hold money. The rest are ways to pay that belong to an account: a credit card belongs to its bank (its
+ * spending waits there as 預扣 until the bill is paid); a 行動支付 / 其他 is bound to a card or an account;
+ * 轉帳 is offered under every bank account.
  */
 export interface PaymentMethod {
   id: string
@@ -76,8 +82,10 @@ export interface PaymentMethod {
    */
   balanceFrom?: string
   openingBalance?: number
-  /** Credit cards only (D-119): the account its bill is paid from. */
+  /** Credit cards only (D-119, D-125): the bank account it belongs to; its 預扣 shows there and its bill is paid from it. */
   payFromId?: string
+  /** 行動支付 / 其他 only (D-125): the card or account it is bound to; absent = not bound (counts in no account). */
+  boundTo?: string
 }
 
 /** D-118: a correction of one account's balance; never income, expense or a transfer. */

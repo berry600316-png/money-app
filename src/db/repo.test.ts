@@ -166,3 +166,15 @@ describe('date and time (D-99, D-100)', () => {
     expect(t.occurredAt).toBe(noon)
   })
 })
+
+describe('category icons (D-127)', () => {
+  it('can be chosen when adding and changed later; new income gets the income icon', async () => {
+    const c = await addCategory({ name: '寵物', type: 'expense', icon: 'pet' }, d)
+    await updateCategory(c.id, { icon: 'gift' }, d)
+    expect((await d.categories.get(c.id))!.icon).toBe('gift')
+    const inc = await addCategory({ name: '利息', type: 'income' }, d)
+    expect(inc.icon).toBe('plusCircle')
+    await expect(updateCategory(c.id, { icon: '<svg>' }, d)).rejects.toThrow('圖示')
+    await expect(addCategory({ name: 'x', type: 'expense', icon: '' }, d)).rejects.toThrow('圖示')
+  })
+})

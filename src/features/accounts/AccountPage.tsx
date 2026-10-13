@@ -99,7 +99,8 @@ export function AccountPage({
       return { title: `${toCard ? '繳卡費' : '互轉'} ${other}`, sub: [time, t.note].filter(Boolean).join(' · ') }
     }
     const cat = ref.category(t.categoryId).name
-    const via = t.sourceAccountId ? ref.payment(t.paymentMethodId).name : ''
+    // How it was paid when that is not this account itself: 轉帳, 信用卡, Apple Pay… (D-125).
+    const via = t.paymentMethodId !== acc.id ? ref.payment(t.paymentMethodId).name : ''
     return { title: t.merchant || cat, sub: [time, cat, via, t.note].filter(Boolean).join(' · ') }
   }
 
@@ -202,10 +203,11 @@ export function AccountPage({
                     <span className="row-title">{title}</span>
                     <span className="row-sub">{sub}</span>
                   </span>
-                  <span className={'row-amt num' + (moved ? ' transfer' : shownDelta > 0 ? ' income' : '')}>
+                  <span className={'row-amt num' + (moved ? ' transfer' : r.pending ? ' pending' : shownDelta > 0 ? ' income' : '')}>
                     {shownDelta > 0 ? '+' : '−'}
                     {fmt(Math.abs(shownDelta))}
                     {moved && <small>不算收支</small>}
+                    {r.pending && <small>預扣</small>}
                   </span>
                 </button>
               )

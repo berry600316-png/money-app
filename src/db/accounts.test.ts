@@ -199,13 +199,16 @@ describe('accounts and balances (spec §17)', () => {
     await expect(addTransaction(spend({ paymentMethodId: 'cash', sourceAccountId: a.taishin }), d, now)).rejects.toThrow('付款方式不正確')
   })
 
-  it('D-119: the first payment of a card without a payer remembers it', async () => {
-    await setup()
+  it('D-119 / D-125: the first payment of a card without a bank from a bank remembers that bank', async () => {
+    const a = await setup()
     await updatePaymentMethod('card', { start: { date: '2026-10-01', amount: 1530 } }, d, now)
     expect((await d.paymentMethods.get('card'))!.payFromId).toBeUndefined()
+    // Paid from cash: a card belongs to a bank, so nothing is remembered.
     await addTransaction(move('cash', 'card', 1000), d, now)
-    expect((await d.paymentMethods.get('card'))!.payFromId).toBe('cash')
-    expect((await balances()).get('card')).toBe(530)
+    expect((await d.paymentMethods.get('card'))!.payFromId).toBeUndefined()
+    await addTransaction(move(a.taishin, 'card', 30), d, now)
+    expect((await d.paymentMethods.get('card'))!.payFromId).toBe(a.taishin)
+    expect((await balances()).get('card')).toBe(500)
   })
 
   it('rejects transfers that make no sense', async () => {
@@ -232,7 +235,8 @@ describe('accounts and balances (spec §17)', () => {
     await expect(addPaymentMethod({ name: 'x', type: 'bank', start: { date: '2026-10-13', amount: 1 } }, d, now)).rejects.toThrow('未來')
     await expect(addPaymentMethod({ name: 'x', type: 'bank', start: { date: '2026-02-31', amount: 1 } }, d, now)).rejects.toThrow('起算日期不正確')
     await expect(addPaymentMethod({ name: 'x', type: 'bank', start: { date: '2026-10-01', amount: -1 } }, d, now)).rejects.toThrow('金額')
-    await expect(addPaymentMethod({ name: 'y', type: 'credit_card', payFromId: 'transfer' }, d, now)).rejects.toThrow('繳卡費的帳戶')
+    await expect(addPaymentMethod({ name: 'y', type: 'credit_card', payFromId: 'transfer' }, d, now)).rejects.toThrow('銀行帳戶')
+    await expect(addPaymentMethod({ name: 'y', type: 'credit_card', payFromId: 'cash' }, d, now)).rejects.toThrow('銀行帳戶')
     // Ways to pay never hold a balance, even when asked to.
     const m = await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', start: { date: '2026-10-01', amount: 100 } }, d, now)
     expect(m.balanceFrom).toBeUndefined()
