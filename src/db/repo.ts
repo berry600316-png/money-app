@@ -77,7 +77,11 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
   if (input.sourceAccountId !== undefined) {
     if (input.type !== 'expense' || !isMethod(pay)) throw new MoneyError('付款方式不正確')
     if (!isAsset(await d.paymentMethods.get(input.sourceAccountId))) throw new MoneyError('請選擇從哪個帳戶付')
+    // D-129: a debit card takes money only from its own bank account.
+    if (pay.type === 'debit_card' && pay.payFromId && pay.payFromId !== input.sourceAccountId) throw new MoneyError('金融卡只能從它所屬的銀行帳戶扣款')
   }
+  // D-129: a debit card always takes the money from an account (its own bank).
+  if (input.type === 'expense' && pay.type === 'debit_card' && input.sourceAccountId === undefined) throw new MoneyError('金融卡要從它所屬的銀行帳戶扣款')
   // D-125: only a 行動支付 / 其他 can be charged to a card through its binding.
   if (input.cardId !== undefined) {
     if (input.type !== 'expense' || (pay.type !== 'mobile' && pay.type !== 'other')) throw new MoneyError('付款方式不正確')
@@ -361,10 +365,16 @@ function checkStart(ymd: string, amount: number, now: Date) {
   if (!Number.isSafeInteger(amount) || amount < 0 || amount > MAX_AMOUNT) throw new MoneyError(`金額需為 0 到 ${MAX_AMOUNT.toLocaleString('en-US')} 的整數`)
 }
 
-/** D-119 / D-125: a card belongs to a bank account; its 預扣 shows there and its bill is paid from it. */
+/** Credit and debit cards hang under a bank account (D-125, D-129). */
+const hasBank = (type: PaymentType) => type === 'credit_card' || type === 'debit_card'
+
+/**
+ * D-119 / D-125: a credit card belongs to a bank account; its 預扣 shows there and its bill is paid from it.
+ * D-129: a debit card belongs to the bank account it takes money from.
+ */
 async function checkPayer(d: MoneyDB, type: PaymentType, payFromId: string | undefined) {
-  if (type !== 'credit_card' || !payFromId) return
-  if ((await d.paymentMethods.get(payFromId))?.type !== 'bank') throw new MoneyError('信用卡要屬於一個銀行帳戶')
+  if (!hasBank(type) || !payFromId) return
+  if ((await d.paymentMethods.get(payFromId))?.type !== 'bank') throw new MoneyError(`${type === 'debit_card' ? '金融卡' : '信用卡'}要屬於一個銀行帳戶`)
 }
 
 /** D-125: a 行動支付 / 其他 is bound to a card or to an account that holds money. */
@@ -403,7 +413,7 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
       isActive: true,
       sortOrder: all.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1,
       ...card,
-      ...(input.type === 'credit_card' && input.payFromId ? { payFromId: input.payFromId } : {}),
+      ...(hasBank(input.type) && input.payFromId ? { payFromId: input.payFromId } : {}),
       ...((input.type === 'mobile' || input.type === 'other') && input.boundTo ? { boundTo: input.boundTo } : {}),
       ...(input.start && !isMethod({ type: input.type }) ? { balanceFrom: startInstant(input.start.date, now), openingBalance: input.start.amount } : {}),
     }
@@ -458,7 +468,7 @@ export async function updatePaymentMethod(
       if (patch.payFromId) next.payFromId = patch.payFromId
       else delete next.payFromId
     }
-    if (next.type !== 'credit_card') delete next.payFromId
+    if (!hasBank(next.type)) delete next.payFromId
     if (patch.boundTo !== undefined) {
       await checkBinding(d, next.type, patch.boundTo, id)
       if (patch.boundTo) next.boundTo = patch.boundTo

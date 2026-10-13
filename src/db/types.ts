@@ -56,13 +56,13 @@ export interface Category {
   sortOrder: number
 }
 
-export type PaymentType = 'bank' | 'cash' | 'credit_card' | 'stored_value' | 'mobile' | 'transfer' | 'other'
+export type PaymentType = 'bank' | 'cash' | 'credit_card' | 'debit_card' | 'stored_value' | 'mobile' | 'transfer' | 'other'
 
 /**
  * D-117 / D-125: one list for accounts and payment methods. bank / cash / stored_value are accounts that
  * hold money. The rest are ways to pay that belong to an account: a credit card belongs to its bank (its
  * spending waits there as 預扣 until the bill is paid); a 行動支付 / 其他 is bound to a card or an account;
- * 轉帳 is offered under every bank account.
+ * 轉帳 is offered under every bank account; a debit card (D-129) belongs to a bank and takes money from it at once.
  */
 export interface PaymentMethod {
   id: string
@@ -82,7 +82,10 @@ export interface PaymentMethod {
    */
   balanceFrom?: string
   openingBalance?: number
-  /** Credit cards only (D-119, D-125): the bank account it belongs to; its 預扣 shows there and its bill is paid from it. */
+  /**
+   * Credit cards (D-119, D-125): the bank account it belongs to; its 預扣 shows there and its bill is paid
+   * from it. Debit cards (D-129): the bank account it takes money from at once.
+   */
   payFromId?: string
   /** 行動支付 / 其他 only (D-125): the card or account it is bound to; absent = not bound (counts in no account). */
   boundTo?: string
@@ -175,6 +178,13 @@ export interface ImportedNotification {
   transactionId: string | null
   batchId: string
   importedAt: string
+  /**
+   * D-131: a fingerprint of the content, so a second notification arriving with the same captureId but
+   * different text is caught instead of silently skipped. Absent on records from before it existed.
+   */
+  fingerprint?: string
+  /** D-130: the payment source was shown to the user, who imported it (a default is a preference, not proof). */
+  sourceConfirmed?: boolean
 }
 
 export interface ImportBatch {
@@ -252,6 +262,7 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
   cash: '現金',
   stored_value: '儲值',
   credit_card: '信用卡',
+  debit_card: '金融卡',
   mobile: '行動支付',
   transfer: '轉帳',
   other: '其他',
@@ -260,7 +271,7 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
 /** Accounts that hold money (D-117). */
 export const isAssetType = (t: PaymentType) => t === 'bank' || t === 'cash' || t === 'stored_value'
 /** Ways to pay that are not themselves an account; an expense asks where the money left (D-120). */
-export const isMethodType = (t: PaymentType) => t === 'mobile' || t === 'transfer' || t === 'other'
+export const isMethodType = (t: PaymentType) => t === 'mobile' || t === 'transfer' || t === 'other' || t === 'debit_card'
 
 /* ---------------- monthly planning (D-105..D-112) ---------------- */
 

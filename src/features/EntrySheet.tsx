@@ -94,7 +94,7 @@ const KEYS: { k: string; label?: string; cls?: string }[] = [
   { k: '00' }, { k: '0', cls: 'zero' },
 ]
 
-const payIcon = (p: PaymentMethod) => (isCard(p) ? 'card' : p.type === 'bank' ? 'bank' : isMethod(p) ? 'out' : 'wallet')
+const payIcon = (p: PaymentMethod) => (isCard(p) || p.type === 'debit_card' ? 'card' : p.type === 'bank' ? 'bank' : isMethod(p) ? 'out' : 'wallet')
 
 export function EntrySheet({
   open,

@@ -51,7 +51,7 @@ describe('backups with accounts (D-124, spec §15 / §17.10)', () => {
     expect(before.get(ids.card)).toBe(0)
 
     const file = parseBackup(JSON.stringify(await fileOf(a)))
-    expect(file.schemaVersion).toBe(5)
+    expect(file.schemaVersion).toBe(6)
     expect(file.adjustments).toHaveLength(1)
     expect(file.paymentMethods.find((p) => p.id === ids.card)!.payFromId).toBe(ids.bank)
     await restoreBackup(file, b, now)
@@ -72,7 +72,7 @@ describe('backups with accounts (D-124, spec §15 / §17.10)', () => {
   })
 
   it('a backup from a newer app is refused before anything is written', () => {
-    expect(() => parseBackup(JSON.stringify({ app: 'money', format: 1, schemaVersion: 6, exportedAt: now.toISOString() }))).toThrow('請先更新 App')
+    expect(() => parseBackup(JSON.stringify({ app: 'money', format: 1, schemaVersion: 7, exportedAt: now.toISOString() }))).toThrow('請先更新 App')
   })
 
   it('rejects broken account data and drops a dangling card payer', async () => {

@@ -32,6 +32,7 @@ import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { isMonthKey } from '../lib/months'
+import { captureFingerprint } from '../card/notificationFile'
 
 export const BACKUP_APP = 'money'
 export const BACKUP_FORMAT = 1
@@ -186,7 +187,7 @@ export function parseBackup(text: string): BackupFile {
     // D-118: a start date and an opening balance come together, or neither.
     const hasStart = p.balanceFrom !== undefined || p.openingBalance !== undefined
     if (hasStart && (!isIso(p.balanceFrom) || !isMoney0(p.openingBalance))) fail(`帳戶「${p.name}」的起始餘額不正確`)
-    if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`信用卡「${p.name}」的繳款帳戶不正確`)
+    if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`「${p.name}」的所屬帳戶不正確`)
     if (p.boundTo !== undefined && !isStr(p.boundTo)) fail(`付款方式「${p.name}」的綁定不正確`)
     return {
       id: p.id,
@@ -206,7 +207,7 @@ export function parseBackup(text: string): BackupFile {
   // in the file; otherwise the link is dropped and it simply counts in no account (D-119, D-125).
   const payById = new Map(paymentMethods.map((p) => [p.id, p]))
   for (const p of paymentMethods) {
-    if (p.payFromId !== undefined && (p.type !== 'credit_card' || payById.get(p.payFromId)?.type !== 'bank')) delete p.payFromId
+    if (p.payFromId !== undefined && ((p.type !== 'credit_card' && p.type !== 'debit_card') || payById.get(p.payFromId)?.type !== 'bank')) delete p.payFromId
     if (p.boundTo === undefined) continue
     const target = payById.get(p.boundTo)
     if ((p.type !== 'mobile' && p.type !== 'other') || !target || p.boundTo === p.id || !(target.type === 'credit_card' || isAssetType(target.type))) delete p.boundTo
@@ -474,20 +475,33 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if ((o.notificationTime !== null && !isIso(o.notificationTime)) || (o.capturedAt !== null && !isIso(o.capturedAt))) fail(`第 ${n} 則刷卡通知的時間不正確`)
     if (!NOTIF_STATUS.includes(o.status as NotificationStatus)) fail(`第 ${n} 則刷卡通知的狀態不正確`)
     if (o.transactionId !== null && !isStr(o.transactionId)) fail(`第 ${n} 則刷卡通知的記帳連結不正確`)
+    if (o.fingerprint !== undefined && !isStr(o.fingerprint)) fail(`第 ${n} 則刷卡通知的內容指紋不正確`)
+    if (o.sourceConfirmed !== undefined && typeof o.sourceConfirmed !== 'boolean') fail(`第 ${n} 則刷卡通知的付款來源標記不正確`)
     let parsed: ImportedNotification['parsed'] = null
     if (o.parsed !== null) {
       const p = o.parsed
       if (!isObj(p) || !isValidAmount(p.amount) || !isStr(p.merchant) || !isNullStr(p.cardLast4) || (p.occurredAt !== null && !isIso(p.occurredAt))) fail(`第 ${n} 則刷卡通知的解析結果不正確`)
       parsed = { amount: p.amount as number, merchant: p.merchant, occurredAt: p.occurredAt as string | null, cardLast4: p.cardLast4 }
     }
+    // D-131: only notifications that became a record keep their text; for the rest an older backup's text
+    // is reduced to its fingerprint here, so restoring never brings private messages back.
+    const keepText = o.status === 'imported'
+    const hasText = o.title !== null || o.subtitle !== null || o.body !== null
+    const fingerprint = isStr(o.fingerprint)
+      ? o.fingerprint
+      : hasText
+        ? captureFingerprint({ sourceApp: o.sourceApp, title: o.title, subtitle: o.subtitle, body: o.body, notificationTime: o.notificationTime as string | null })
+        : undefined
     return {
       id: o.id,
       captureId: o.captureId,
       sourceApp: o.sourceApp,
       sourceType: o.sourceType,
-      title: o.title,
-      subtitle: o.subtitle,
-      body: o.body,
+      title: keepText ? o.title : null,
+      subtitle: keepText ? o.subtitle : null,
+      body: keepText ? o.body : null,
+      ...(fingerprint ? { fingerprint } : {}),
+      ...(o.sourceConfirmed === true ? { sourceConfirmed: true } : {}),
       notificationTime: o.notificationTime as string | null,
       capturedAt: o.capturedAt as string | null,
       status: o.status as NotificationStatus,

@@ -54,7 +54,7 @@ export function ManagePage({
   // D-125: accounts, each with its cards and the 行動支付 / 其他 bound to it or to its cards; the rest last.
   const byId = (id?: string) => ref.payments.find((p) => p.id === id)
   const homeOf = (p: PaymentMethod): string | undefined => {
-    if (isCard(p)) return p.payFromId && byId(p.payFromId)?.type === 'bank' ? p.payFromId : undefined
+    if (isCard(p) || p.type === 'debit_card') return p.payFromId && byId(p.payFromId)?.type === 'bank' ? p.payFromId : undefined
     if (p.type !== 'mobile' && p.type !== 'other') return undefined
     const target = byId(p.boundTo)
     return isAsset(target) ? target!.id : isCard(target) ? homeOf(target!) : undefined
@@ -71,7 +71,8 @@ export function ManagePage({
       p.cardLast4 ? `末四碼 ${p.cardLast4}` : '',
       p.type === 'mobile' || p.type === 'other' ? (target ? `綁 ${target.name}${isCard(target) ? '（預扣）' : ''}` : '未綁定') : '',
       p.type === 'transfer' ? '每個銀行底下都可選' : '',
-      isCard(p) && !homeOf(p) ? '還沒指定銀行' : '',
+      p.type === 'debit_card' && homeOf(p) ? '直接扣' : '',
+      (isCard(p) || p.type === 'debit_card') && !homeOf(p) ? '還沒指定銀行' : '',
     ].filter(Boolean)
     return (
       <button type="button" key={p.id} className={'srow' + (nested ? ' sub' : '') + (p.isActive ? '' : ' off')} onClick={() => onEdit({ kind: 'payment', id: p.id })}>
@@ -238,7 +239,7 @@ export function ManagePage({
         {kind === 'salary'
           ? '停用後不會出現在新的薪資單，但過去的薪資單與項目歷史都會保留。應發或應扣在新增時決定，之後不能更改。'
           : kind === 'payment'
-            ? '銀行、現金、儲值是帳戶，會計算餘額。信用卡屬於一個銀行，刷卡先記為那個銀行的預扣；行動支付、其他綁一張卡或一個帳戶；轉帳在每個銀行底下都可選。停用後不會出現在新增畫面，過去的紀錄都會保留。'
+            ? '銀行、現金、儲值是帳戶，會計算餘額。信用卡屬於一個銀行，刷卡先記為那個銀行的預扣；金融卡也屬於一個銀行，直接從那裡扣；行動支付、其他綁一張卡或一個帳戶；轉帳在每個銀行底下都可選。停用後不會出現在新增畫面，過去的紀錄都會保留。'
             : '停用後不會出現在新增畫面，但過去的紀錄和統計都會保留。順序也是記一筆時分類的排列順序。'}
       </p>
     </section>

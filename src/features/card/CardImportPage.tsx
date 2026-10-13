@@ -1,16 +1,31 @@
 import { useRef, useState } from 'react'
 import { commitNotificationImport, getDefaultCards } from '../../card/cardRepo'
-import { planImport, type PlanRow } from '../../card/importPlan'
-import { readCaptureFile, type NotificationCapture } from '../../card/notificationFile'
+import { channelMethod, defaultSource, planImport, type PaySource, type PlanRow } from '../../card/importPlan'
+import { NOTIFICATION_ADAPTERS } from '../../card/notificationAdapters'
+import { MAX_CAPTURES, readCaptureFiles } from '../../card/notificationFile'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
+import type { PaymentMethod } from '../../db/types'
+import { isCard } from '../../lib/accounts'
 import { dayLabel, timeLabel } from '../../lib/dates'
 import { fmt } from '../../lib/money'
+import { BottomSheet } from '../../ui/BottomSheet'
 import { Icon } from '../../ui/Icon'
+import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 
-/** Phase 1: pick notification JSON files → preview → one tap to import (spec §5.4). */
+/** The text the source chip adds when a row still asks for one (D-130). */
+const NEEDS_SOURCE = '還沒設定'
+
+const sameSource = (a: PaySource | null, b: PaySource | null) => !!a && !!b && (a.cardId ?? '') === (b.cardId ?? '') && (a.sourceAccountId ?? '') === (b.sourceAccountId ?? '')
+
+/**
+ * Pick notification JSON files → preview → one tap to import (spec §5.4, D-128..D-131).
+ * Rows: 可匯入 (ticked), 需要確認 (not ticked: a possible duplicate, or no payment source yet) and 不匯入
+ * (with the reason). A LINE Pay row shows where the money came from — its binding by default — and the
+ * user can switch it to another of their cards or debit cards for that row only (Q94).
+ */
 export function CardImportPage({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
   const ref = useRefData()
   const toast = useToast()
@@ -19,23 +34,20 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
   const [files, setFiles] = useState(0)
   const [errors, setErrors] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  /** Card per source app for rows without card digits (D-84). */
+  /** Card per source app for card notices without card digits (D-84). */
   const [chosenCards, setChosenCards] = useState<Record<string, string>>({})
   const [showSkipped, setShowSkipped] = useState(false)
+  /** The row whose payment source is being chosen. */
+  const [picking, setPicking] = useState<PlanRow | null>(null)
   const cards = ref.payments.filter((p) => p.type === 'credit_card' && p.isActive)
   const expenseCats = ref.categories.filter((c) => c.type === 'expense' && c.isActive)
+  const byId = (id?: string) => ref.payments.find((p) => p.id === id)
 
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return
     setBusy(true)
     try {
-      const captures: NotificationCapture[] = []
-      const errs: string[] = []
-      for (const f of Array.from(list)) {
-        const r = readCaptureFile(await f.text(), f.name)
-        captures.push(...r.captures)
-        errs.push(...r.errors)
-      }
+      const { captures, errors: errs } = await readCaptureFiles(Array.from(list))
       const since = new Date(Date.now() - 120 * 864e5).toISOString()
       const [known, recent, defaultCards] = await Promise.all([
         db.importedNotifications.toArray(),
@@ -48,7 +60,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         .map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
       const plan = planImport({
         captures,
-        knownCaptureIds: new Set(known.map((k) => k.captureId)),
+        knownCaptureIds: new Map(known.map((k) => [k.captureId, k.fingerprint])),
         transactions: recent,
         paymentMethods: ref.payments,
         categories: ref.categories,
@@ -67,15 +79,57 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
     }
   }
 
-  const importable = rows?.filter((r) => r.status === 'new' || r.status === 'suspect') ?? []
-  const chosen = importable.filter((r) => r.include)
-  const needsCardApps = [...new Set(chosen.filter((r) => !r.paymentMethodId).map((r) => r.capture.sourceApp))]
+  const ready = rows?.filter((r) => r.status === 'new') ?? []
+  const check = rows?.filter((r) => r.status === 'suspect') ?? []
+  const skipped = rows?.filter((r) => r.status === 'duplicate' || r.status === 'not_spending' || r.status === 'unparsed') ?? []
+  const chosen = [...ready, ...check].filter((r) => r.include)
+  const needsCardApps = [...new Set(chosen.filter((r) => !r.channel && !r.paymentMethodId).map((r) => r.capture.sourceApp))]
   const cardOf = (app: string) => (chosenCards[app] && cards.some((c) => c.id === chosenCards[app]) ? chosenCards[app] : (cards[0]?.id ?? ''))
   const missingCard = needsCardApps.some((a) => !cardOf(a))
-  const skipped = rows?.filter((r) => r.status === 'duplicate' || r.status === 'not_spending' || r.status === 'unparsed') ?? []
-  const count = (s: PlanRow['status']) => rows?.filter((r) => r.status === s).length ?? 0
+  const missingSource = chosen.some((r) => r.channel && !r.source)
 
   const patch = (r: PlanRow, p: Partial<PlanRow>) => setRows((rs) => rs?.map((x) => (x === r ? { ...x, ...p } : x)) ?? null)
+
+  /** The binding of the row's 行動支付, as a source (D-92: the default is its binding). */
+  const defaultFor = (r: PlanRow): PaySource | null => {
+    const name = NOTIFICATION_ADAPTERS.find((a) => a.channel?.label === r.channel)?.channel?.name
+    return name ? defaultSource(r.paymentMethodId ? byId(r.paymentMethodId) : channelMethod(name, ref.payments), ref.payments) : null
+  }
+
+  /** Q102 / Q104: only what the user set up: the default, their credit cards (預扣) and debit cards (直接扣). */
+  const sourceOptions = (r: PlanRow): { source: PaySource; name: string; note: string }[] => {
+    const out: { source: PaySource; name: string; note: string }[] = []
+    const add = (source: PaySource, name: string, note: string) => {
+      if (!out.some((o) => sameSource(o.source, source) && (o.source.via ?? '') === (source.via ?? ''))) out.push({ source, name, note })
+    }
+    const def = defaultFor(r)
+    if (def) add(def, labelOf(def), def.cardId ? '預扣（預設）' : '直接扣（預設）')
+    for (const c of cards) add({ cardId: c.id }, c.name, '預扣，繳卡費時才扣')
+    for (const m of ref.payments.filter((p) => p.type === 'debit_card' && p.isActive && byId(p.payFromId)?.type === 'bank')) {
+      add({ sourceAccountId: m.payFromId!, via: m.id }, m.name, `直接從 ${byId(m.payFromId)!.name} 扣`)
+    }
+    return out
+  }
+
+  const labelOf = (s: PaySource): string => {
+    const target: PaymentMethod | undefined = byId(s.via) ?? byId(s.cardId ?? s.sourceAccountId)
+    return target?.name ?? '已刪除的帳戶'
+  }
+
+  const pickSource = (r: PlanRow, source: PaySource) => {
+    const rest = r.reason
+      .split('；')
+      .filter((s) => s && !s.startsWith(NEEDS_SOURCE))
+      .join('；')
+    // Choosing the source settles a row that only lacked one; a possible duplicate stays for the user to tick.
+    patch(r, {
+      source,
+      sourceIsDefault: sameSource(source, defaultFor(r)) && !source.via,
+      needsSource: false,
+      reason: rest,
+      ...(r.status === 'suspect' && !r.duplicate && !rest ? { status: 'new' as const, include: true } : {}),
+    })
+  }
 
   const commit = async () => {
     if (!rows || busy) return
@@ -83,12 +137,16 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
       toast('請先選擇信用卡', { kind: 'error' })
       return
     }
+    if (missingSource) {
+      toast('還有勾選的消費沒有選付款來源', { kind: 'error' })
+      return
+    }
     setBusy(true)
     try {
-      const final = rows.map((r) => (r.include && !r.paymentMethodId ? { ...r, paymentMethodId: cardOf(r.capture.sourceApp) } : r))
+      const final = rows.map((r) => (r.include && !r.channel && !r.paymentMethodId ? { ...r, paymentMethodId: cardOf(r.capture.sourceApp) } : r))
       const rememberCards = Object.fromEntries(needsCardApps.map((a) => [a, cardOf(a)]))
       const s = await commitNotificationImport(final, { files, rememberCards })
-      toast(s.imported ? `已匯入 ${s.imported} 筆刷卡紀錄` : '沒有新的刷卡紀錄')
+      toast(s.imported ? `已匯入 ${s.imported} 筆消費` : '沒有新的消費')
       onBack()
     } catch (e) {
       toast(e instanceof MoneyError ? e.message : '匯入失敗，沒有任何資料被寫入', { kind: 'error' })
@@ -103,27 +161,52 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
 
   const row = (r: PlanRow, i: number) => (
     <div className="irow" key={r.capture.captureId + i}>
-      <button type="button" className="tick" aria-pressed={r.include} aria-label={r.include ? '不要匯入這筆' : '匯入這筆'} onClick={() => patch(r, { include: !r.include })}>
+      <button
+        type="button"
+        className="tick"
+        aria-pressed={r.include}
+        aria-label={r.include ? '不要匯入這筆' : '匯入這筆'}
+        onClick={() => {
+          if (!r.include && r.channel && !r.source) {
+            toast('請先選這筆的付款來源', { kind: 'error' })
+            return
+          }
+          patch(r, { include: !r.include })
+        }}
+      >
         {r.include && <Icon name="check" />}
       </button>
       <span className="row-main">
         <span className="row-title">{r.merchant || '（未辨識商店）'}</span>
         <span className="row-sub">
           {when(r.occurredAt)}
-          {r.paymentMethodId ? ` · ${ref.payment(r.paymentMethodId).name}` : ''}
+          {r.timeSource === 'notification' ? '（通知時間）' : ''}
+          {r.channel ? ` · ${r.channel}` : r.paymentMethodId ? ` · ${ref.payment(r.paymentMethodId).name}` : ''}
         </span>
+        {r.channel && (
+          <button type="button" className={'src-chip' + (r.source ? '' : ' need')} onClick={() => setPicking(r)}>
+            <Icon name={r.source?.cardId ? 'card' : 'bank'} />
+            <span>{r.source ? `${labelOf(r.source)}${r.sourceIsDefault ? '（預設）' : ''}` : '選擇付款來源'}</span>
+            <Icon name="chev" />
+          </button>
+        )}
         {r.reason && <span className="why">{r.reason}</span>}
       </span>
-      <select className="cat-pill" aria-label="分類" value={r.categoryId} onChange={(e) => patch(r, { categoryId: e.target.value })}>
-        {expenseCats.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-      <span className="row-amt num">{fmt(r.amount)}</span>
+      <span className="irow-end">
+        <span className="row-amt num">{fmt(r.amount)}</span>
+        <select className="cat-pill" aria-label="分類" value={r.categoryId} onChange={(e) => patch(r, { categoryId: e.target.value })}>
+          {expenseCats.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </span>
     </div>
   )
+
+  const options = picking ? sourceOptions(picking) : []
+  const current = picking ? (rows?.find((x) => x.capture === picking.capture) ?? picking) : null
 
   return (
     <>
@@ -141,15 +224,15 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
       {!rows && (
         <>
           <p className="lead">
-            選擇捷徑存下的刷卡通知（JSON 檔，通常在「檔案 › 我的 iPhone › MoneyApp › Inbox」）。可以一次選很多個，
+            選擇捷徑存下的通知檔（JSON，通常在「檔案 › 我的 iPhone › MoneyApp › Inbox」），可以一次選很多個。
+            目前會自動辨識 <b>LINE Pay 付款完成</b>的通知；其他通知會列出原因，不會匯入。
             <b>重複選到已匯入的檔案也不會重複記帳</b>。
           </p>
           <button type="button" className="pick-btn" onClick={() => input.current?.click()} disabled={busy}>
             <Icon name="inbox" />
-            {busy ? '讀取中…' : '選擇刷卡紀錄檔案'}
-            <small>只在這支 iPhone 上解析，不會上傳</small>
+            {busy ? '讀取中…' : '選擇通知檔案'}
+            <small>只在這支 iPhone 上解析，不會上傳；一次最多 {MAX_CAPTURES} 則</small>
           </button>
-          {cards.length === 0 && <p className="err-line">還沒有信用卡：請先到「設定 › 付款方式」新增，類型選「信用卡」並填末四碼。</p>}
         </>
       )}
 
@@ -157,11 +240,11 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         <>
           <div className="counts">
             <span>
-              <b>{chosen.length}</b>筆將匯入
+              <b>{ready.length}</b>筆可匯入
             </span>
-            {count('suspect') > 0 && (
+            {check.length > 0 && (
               <span>
-                <b>{count('suspect')}</b>筆需要確認
+                <b>{check.length}</b>筆需要確認
               </span>
             )}
             {skipped.length > 0 && (
@@ -185,29 +268,29 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             </div>
           ))}
 
-          {importable.filter((r) => r.status === 'new').length > 0 && (
+          {ready.length > 0 && (
             <>
               <div className="grp-title">
-                <b>新的刷卡紀錄</b>
-                <span>點左邊圓圈可取消</span>
+                <b>可匯入</b>
+                <span>確認付款來源後一次匯入</span>
               </div>
-              <div className="card">{importable.filter((r) => r.status === 'new').map(row)}</div>
+              <div className="card">{ready.map(row)}</div>
             </>
           )}
-          {count('suspect') > 0 && (
+          {check.length > 0 && (
             <>
               <div className="grp-title">
-                <b>需要你確認</b>
-                <span>預設不匯入，確認是新消費再勾選</span>
+                <b>需要確認</b>
+                <span>預設不匯入，確認後再勾選</span>
               </div>
-              <div className="card">{importable.filter((r) => r.status === 'suspect').map(row)}</div>
+              <div className="card">{check.map(row)}</div>
             </>
           )}
 
           {skipped.length > 0 && (
             <>
               <button type="button" className="summary-toggle" aria-expanded={showSkipped} onClick={() => setShowSkipped(!showSkipped)}>
-                <span>不會匯入的 {skipped.length} 則（已匯入過、非消費、無法辨識）</span>
+                <span>不匯入的 {skipped.length} 則（已處理過、不是 LINE Pay 付款、無法辨識）</span>
                 <Icon name="chev" />
               </button>
               {showSkipped && (
@@ -216,7 +299,7 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
                     <div className="irow muted-row" key={r.capture.captureId + 's' + i}>
                       <span className="row-main">
                         <span className="row-title">{r.reason}</span>
-                        <span className="row-sub">{[r.capture.title, r.capture.body].filter(Boolean).join(' ')}</span>
+                        <span className="row-sub">{[r.capture.sourceApp, r.capture.title, r.capture.body].filter(Boolean).join(' · ')}</span>
                       </span>
                     </div>
                   ))}
@@ -233,10 +316,10 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             </ul>
           )}
 
-          <p className="set-foot">匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
+          <p className="set-foot">預設的付款來源是你在設定裡為 LINE Pay 綁定的卡或帳戶，不一定是這次實際扣款的，請看一下。匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
           <div className="foot-bar">
-            <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || missingCard}>
-              {busy ? '匯入中…' : chosen.length ? `匯入 ${chosen.length} 筆` : '沒有要匯入的紀錄'}
+            <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || missingCard || missingSource}>
+              {busy ? '匯入中…' : chosen.length ? `匯入 ${chosen.length} 筆` : '沒有要匯入的消費'}
             </button>
             <button type="button" className="btn-quiet" onClick={() => setRows(null)} disabled={busy}>
               重新選擇檔案
@@ -244,6 +327,57 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
           </div>
         </>
       )}
+
+      <Overlay>
+        <BottomSheet
+          open={picking !== null}
+          onClose={() => setPicking(null)}
+          labelledBy="src-picker-title"
+          className="picker-sheet"
+          head={
+            <div className="sheet-bar">
+              <button type="button" className="txt-btn" onClick={() => setPicking(null)}>
+                關閉
+              </button>
+              <h2 id="src-picker-title">這筆從哪裡付</h2>
+              <span />
+            </div>
+          }
+        >
+          <div className="pk-body">
+            {options.length === 0 ? (
+              <p className="range-help" style={{ margin: '8px 8px 0' }}>
+                還沒有信用卡或金融卡。請先到「設定 › 帳戶與付款方式」新增，或把 LINE Pay 綁定一個帳戶。
+              </p>
+            ) : (
+              <div className="set-card">
+                {options.map((o) => {
+                  const on = !!current?.source && sameSource(current.source, o.source) && (current.source.via ?? '') === (o.source.via ?? '')
+                  return (
+                    <button
+                      type="button"
+                      key={(o.source.cardId ?? o.source.sourceAccountId ?? '') + (o.source.via ?? '') + o.note}
+                      className="pk-row"
+                      aria-pressed={on}
+                      onClick={() => {
+                        if (current) pickSource(current, o.source)
+                        setPicking(null)
+                      }}
+                    >
+                      <span className="pk-m">
+                        <b>{o.name}</b>
+                        {isCard(byId(o.source.cardId)) && byId(o.source.cardId)?.cardLast4 && <small>···{byId(o.source.cardId)!.cardLast4}</small>}
+                      </span>
+                      <span className="pk-r small">{o.note}</span>
+                      {on && <Icon name="check" className="pk-ck" />}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </BottomSheet>
+      </Overlay>
     </>
   )
 }

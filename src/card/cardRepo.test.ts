@@ -47,6 +47,8 @@ async function plan(bodies: string[], ids?: string[]) {
     history: [],
     defaultCards: {},
     adapters: [SIM_NOTIFICATION_ADAPTER],
+    // These cases test the card import path through the (switched-off) generic reader (D-128).
+    generic: true,
     now,
   })
 }

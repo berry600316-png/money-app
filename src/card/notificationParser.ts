@@ -3,11 +3,11 @@
  *
  * 1. A bank adapter built from real samples (./notificationAdapters.ts) is tried first; a matching
  *    template is trusted.
- * 2. Otherwise the GENERIC rules below make a best guess so the user does not retype everything, but a
- *    guessed purchase is never imported by default (it always carries `doubt`).
+ * 2. D-128: anything else is NOT imported. The GENERIC rules below (best guesses from keywords) are
+ *    switched off by GENERIC_GUESSING and kept only for when the user turns them back on; with real money
+ *    at stake a correct record beats an automatic one.
  *
- * IMPORTANT: no real notification sample has been provided yet; the generic rules are tested only
- * against simulated wording.
+ * IMPORTANT: the generic rules were only ever tested against simulated wording.
  */
 import type { ParsedSpend } from '../db/types'
 import type { NotificationCapture } from './notificationFile'
@@ -17,8 +17,8 @@ import { findLast4, findTime, NTD_RE, parseAmount, toHalfWidth } from './text'
 
 export type ParseResult =
   /** `doubt`: looks like a purchase but also reads like an offer or a code; not imported by default. */
-  /** `bank`: from the adapter, null for generic guesses. */
-  | { kind: 'spend'; spend: ParsedSpend; adapter: string; bank: string | null; doubt: string | null }
+  /** `bank`: from the adapter, null for generic guesses. `channel`: the 行動支付 it went through (D-130). */
+  | { kind: 'spend'; spend: ParsedSpend; adapter: string; bank: string | null; doubt: string | null; channel?: { label: string; name: RegExp } }
   | { kind: 'not_spending'; reason: string }
   | { kind: 'unparsed'; reason: string }
 
@@ -184,7 +184,17 @@ function parseGeneric(c: NotificationCapture): ParseResult {
   }
 }
 
-export function parseNotification(c: NotificationCapture, adapters: readonly NotificationAdapter[] = NOTIFICATION_ADAPTERS): ParseResult {
+/**
+ * D-128: guessing purchases from unknown wording is off. Only notifications matching a verified adapter
+ * template become records; everything else is listed as 「不匯入」 with the reason.
+ */
+export const GENERIC_GUESSING = false
+
+export function parseNotification(
+  c: NotificationCapture,
+  adapters: readonly NotificationAdapter[] = NOTIFICATION_ADAPTERS,
+  opts: { generic?: boolean } = {},
+): ParseResult {
   const adapter = adapterFor(c, adapters)
   if (adapter) {
     const m = matchTemplate(c, adapter)
@@ -193,10 +203,21 @@ export function parseNotification(c: NotificationCapture, adapters: readonly Not
       return {
         kind: 'spend',
         adapter: adapter.id,
-        bank: adapter.bank,
+        bank: adapter.bank || null,
         doubt: null,
+        ...(adapter.channel ? { channel: adapter.channel } : {}),
         spend: { amount: m.amount, merchant: m.merchant, occurredAt: m.occurredAt, cardLast4: m.last4, ...(m.timeSource ? { timeSource: m.timeSource } : {}) },
       }
+    }
+  }
+  if (!(opts.generic ?? GENERIC_GUESSING)) {
+    return {
+      kind: 'unparsed',
+      reason: adapter?.channel
+        ? `這則「${c.sourceApp}」通知不是 ${adapter.channel.label} 付款完成的通知，不會匯入`
+        : adapter
+          ? `這則「${c.sourceApp}」通知的寫法和已建立的格式不同，不會匯入`
+          : `目前只會匯入 LINE Pay 付款通知，「${c.sourceApp}」的通知請自己記帳`,
     }
   }
   const r = parseGeneric(c)

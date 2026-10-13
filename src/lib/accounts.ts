@@ -153,7 +153,7 @@ const isBindable = (p: PaymentMethod) => p.type === 'mobile' || p.type === 'othe
 
 /**
  * D-125: every active way to pay, under the account it draws on. A card sits under its bank, a bound
- * 行動支付 / 其他 under its card or account, and 轉帳 under every bank account. Cash and stored value are
+ * 行動支付 / 其他 under its card or account, a debit card (D-129) under its bank, and 轉帳 under every bank account. Cash and stored value are
  * their own way to pay. Anything not tied to an account goes in a last group (it counts in no balance).
  */
 export function payGroups(all: readonly PaymentMethod[]): PayGroup[] {
@@ -177,6 +177,8 @@ export function payGroups(all: readonly PaymentMethod[]): PayGroup[] {
       for (const m of active.filter((x) => isBindable(x) && x.boundTo === c.id)) options.push(make(m, { cardId: c.id }, c))
     }
     for (const m of active.filter((x) => isBindable(x) && x.boundTo === a.id)) options.push(make(m, { sourceAccountId: a.id }))
+    // D-129: a debit card takes money from its bank at once.
+    if (a.type === 'bank') for (const m of active.filter((x) => x.type === 'debit_card' && x.payFromId === a.id)) options.push(make(m, { sourceAccountId: a.id }))
     if (a.type === 'bank') {
       for (const t of active.filter((x) => x.type === 'transfer')) options.push(make(t, { sourceAccountId: a.id }))
       // Nothing else to pay with from this bank: the account itself (taken at once).

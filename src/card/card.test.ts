@@ -69,7 +69,7 @@ describe('sample files in docs/samples/notifications stay importable', () => {
     for (const [path, text] of Object.entries(files)) {
       const r = readCaptureFile(text, path)
       expect(r.errors).toEqual([])
-      for (const c of r.captures) kinds.push(parseNotification(c).kind)
+      for (const c of r.captures) kinds.push(parseNotification(c, undefined, { generic: true }).kind)
     }
     expect(kinds.filter((k) => k === 'spend')).toHaveLength(4)
     expect(kinds.filter((k) => k === 'not_spending')).toHaveLength(1)
@@ -77,7 +77,7 @@ describe('sample files in docs/samples/notifications stay importable', () => {
 })
 
 describe('bank adapters (D-97)', () => {
-  const sim = (body: string, sourceApp = 'Richart Life') => parseNotification(capture({ body, sourceApp }), [SIM_NOTIFICATION_ADAPTER])
+  const sim = (body: string, sourceApp = 'Richart Life') => parseNotification(capture({ body, sourceApp }), [SIM_NOTIFICATION_ADAPTER], { generic: true })
   it('a notification matching a bank template is trusted: no doubt, bank known', () => {
     const r = sim(SIM_NOTIFICATIONS.convenience)
     expect(r).toMatchObject({ kind: 'spend', adapter: 'sim-v1', bank: '台新', doubt: null })
@@ -98,9 +98,14 @@ describe('bank adapters (D-97)', () => {
     expect(r).toMatchObject({ kind: 'spend', adapter: 'generic', bank: null })
     expect(r.kind === 'spend' && r.doubt).toContain('還沒建立「某銀行 App」的通知格式')
   })
-  it('the app ships with no adapter yet: every purchase needs confirmation until real samples arrive', () => {
-    const r = parseNotification(capture({ body: SIM_NOTIFICATIONS.convenience }))
+  it('with the generic reader on, an app without an adapter is a guess the user must confirm', () => {
+    const r = parseNotification(capture({ body: SIM_NOTIFICATIONS.convenience }), undefined, { generic: true })
     expect(r.kind === 'spend' && r.doubt).toContain('還沒建立')
+  })
+  it('D-128: in production (generic reader off) a bank notice is never guessed: it is not imported', () => {
+    const r = parseNotification(capture({ body: SIM_NOTIFICATIONS.convenience }))
+    expect(r).toMatchObject({ kind: 'unparsed' })
+    expect(r.kind === 'unparsed' && r.reason).toContain('目前只會匯入 LINE Pay 付款通知')
   })
   it('statements: a bank adapter is used when it recognises the layout; otherwise the generic reader says so', () => {
     const fake: StatementAdapter = {
@@ -119,7 +124,7 @@ describe('bank adapters (D-97)', () => {
 })
 
 describe('generic notification rules (no bank adapter: always confirmed by the user)', () => {
-  const p = (body: string) => parseNotification(capture({ body }))
+  const p = (body: string) => parseNotification(capture({ body }), undefined, { generic: true })
   it('reads a purchase with merchant, amount, time and card', () => {
     const r = p(SIM_NOTIFICATIONS.convenience)
     expect(r.kind).toBe('spend')
@@ -247,7 +252,7 @@ describe('generic notification rules (no bank adapter: always confirmed by the u
     }
   })
   it('a "12/31" read in early January belongs to last year', () => {
-    const r = parseNotification(capture({ body: '於12/31 23:10在全家消費NT$50', notificationTime: new Date(2027, 0, 1, 0, 5).toISOString() }))
+    const r = parseNotification(capture({ body: '於12/31 23:10在全家消費NT$50', notificationTime: new Date(2027, 0, 1, 0, 5).toISOString() }), undefined, { generic: true })
     expect(r.kind === 'spend' && new Date(r.spend.occurredAt!).getFullYear()).toBe(2026)
   })
 })
@@ -278,6 +283,8 @@ describe('import planning: duplicates, cards, categories (D-83..D-85)', () => {
     history: [{ merchant: '全家便利商店', categoryId: 'food' }],
     defaultCards: {},
     adapters: [SIM_NOTIFICATION_ADAPTER],
+    // These cases exercise the card rules through the (switched-off) generic reader (D-128).
+    generic: true,
     now: new Date(2026, 9, 11, 20),
   }
   it('same captureId (already imported, or twice in one batch) is a duplicate', () => {
@@ -300,10 +307,14 @@ describe('import planning: duplicates, cards, categories (D-83..D-85)', () => {
     const rows = planImport({ ...base, captures: [capture({ body: SIM_NOTIFICATIONS.convenience })], knownCaptureIds: new Set(), transactions: [manual] })
     expect(rows[0].status).toBe('suspect')
   })
-  it('same amount at the same shop on another card is NOT a duplicate', () => {
-    const other = tx({ amount: 85, at: new Date(2026, 9, 11, 14, 5), merchant: '全家', paymentMethodId: 'other' })
+  it('Q97: same amount on the same day is shown as a possible duplicate even on another card (a hint, never merged)', () => {
+    const other = tx({ amount: 85, at: new Date(2026, 9, 11, 9, 0), merchant: '早餐店', paymentMethodId: 'other' })
     const rows = planImport({ ...base, captures: [capture({ body: SIM_NOTIFICATIONS.convenience })], knownCaptureIds: new Set(), transactions: [other] })
-    expect(rows[0].status).toBe('new')
+    expect(rows[0]).toMatchObject({ status: 'suspect', include: false, duplicate: true })
+    expect(rows[0].reason).toContain('可能與 10/11 的既有交易「早餐店」重複')
+    // Another day is not flagged.
+    const yesterday = tx({ amount: 85, at: new Date(2026, 9, 10, 14, 5), merchant: '全家', paymentMethodId: 'taishin' })
+    expect(planImport({ ...base, captures: [capture({ body: SIM_NOTIFICATIONS.convenience })], knownCaptureIds: new Set(), transactions: [yesterday] })[0].status).toBe('new')
   })
   it('maps the card by last four digits, else the remembered card, else asks', () => {
     const c = capture({ body: SIM_NOTIFICATIONS.convenience })
@@ -642,6 +653,7 @@ describe('purchase time (D-100)', () => {
       categories: DEFAULT_CATEGORIES,
       history: [],
       defaultCards: {},
+      generic: true,
       now: new Date(2026, 9, 11, 20),
     })
     expect(rows[0]).toMatchObject({ occurredAt: arrived, timeSource: 'notification' })

@@ -178,7 +178,7 @@ export function AccountsPage({
         <Icon name="plus" />
         新增帳戶
       </button>
-      <p className="set-foot">信用卡、行動支付、轉帳是付款方式，掛在帳戶底下：刷卡先記為那個銀行的預扣，繳卡費時才真的扣款。點銀行可看每張卡的預扣。</p>
+      <p className="set-foot">信用卡、金融卡、行動支付、轉帳是付款方式，掛在帳戶底下：刷信用卡先記為那個銀行的預扣，繳卡費時才真的扣款；金融卡直接扣。點銀行可看每張卡的預扣。</p>
 
       <SetupSheet open={setup} accounts={ov?.unset ?? []} onClose={() => setSetup(false)} />
     </>

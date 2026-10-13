@@ -4,10 +4,10 @@
  * real 台新 statements, and passing tests on them does not prove real-world parsing works.
  */
 import type { NotificationAdapter } from './notificationAdapters'
-import type { NotificationCapture } from './notificationFile'
+import { captureFingerprint, type NotificationCapture } from './notificationFile'
 
 export function capture(partial: Partial<NotificationCapture> & { body: string }): NotificationCapture {
-  return {
+  const c = {
     schemaVersion: 1,
     captureId: partial.captureId ?? 'cap-' + Math.random().toString(36).slice(2),
     derivedId: false,
@@ -20,6 +20,7 @@ export function capture(partial: Partial<NotificationCapture> & { body: string }
     fileName: 'test.json',
     ...partial,
   }
+  return { ...c, fingerprint: partial.fingerprint ?? captureFingerprint(c) }
 }
 
 export const SIM_NOTIFICATIONS = {

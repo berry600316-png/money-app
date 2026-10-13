@@ -3,8 +3,8 @@
  */
 import { db, type MoneyDB } from '../db/db'
 import { MoneyError } from '../db/repo'
-import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../db/types'
-import { chargedTo } from '../lib/accounts'
+import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
+import { chargedTo, isAsset, isCard } from '../lib/accounts'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
 import { isValidAmount } from '../lib/money'
 import type { PlanRow } from './importPlan'
@@ -42,6 +42,9 @@ export interface ImportSummary {
 /**
  * Write the user's choices in one transaction: included rows become expense transactions,
  * every capture (except ones already known) is remembered so it is never imported twice (D-83).
+ * D-130: a 行動支付 row is filed under that payment method (created if the user has none yet) with the
+ * source the user saw: the card charged (預扣) or the account debited (直接扣).
+ * D-131: only notices that became a record keep their text; the rest keep a fingerprint.
  */
 export async function commitNotificationImport(
   rows: readonly PlanRow[],
@@ -56,6 +59,23 @@ export async function commitNotificationImport(
     const known = new Set((await d.importedNotifications.toArray()).map((n) => n.captureId))
     const summary: ImportSummary = { imported: 0, duplicates: 0, skipped: 0, failed: 0, batchId }
     const seenInBatch = new Set<string>()
+    /** The 行動支付 method per channel name, found or created once per import. */
+    const channelIds = new Map<string, string>()
+    const channelMethodId = async (label: string, preferred: string | null): Promise<string> => {
+      if (preferred && (await d.paymentMethods.get(preferred))) return preferred
+      const hit = channelIds.get(label)
+      if (hit) return hit
+      const all = await d.paymentMethods.toArray()
+      const same = all.filter((p) => (p.type === 'mobile' || p.type === 'other') && p.name.trim().toLowerCase() === label.toLowerCase())
+      let id = (same.find((p) => p.isActive) ?? same[0])?.id
+      if (!id) {
+        const pm: PaymentMethod = { id: newId(), name: label, type: 'mobile', isActive: true, sortOrder: all.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1 }
+        await d.paymentMethods.add(pm)
+        id = pm.id
+      }
+      channelIds.set(label, id)
+      return id
+    }
     for (const row of rows) {
       const c = row.capture
       if (known.has(c.captureId) || seenInBatch.has(c.captureId)) {
@@ -68,7 +88,20 @@ export async function commitNotificationImport(
         row.status === 'not_spending' ? 'not_spending' : row.status === 'unparsed' ? 'unparsed' : 'skipped'
       if ((row.status === 'new' || row.status === 'suspect') && row.include) {
         if (!isValidAmount(row.amount)) throw new MoneyError(`「${row.merchant || '未辨識商店'}」的金額不正確`)
-        if (!row.paymentMethodId || !(await d.paymentMethods.get(row.paymentMethodId))) throw new MoneyError('請選擇這些刷卡紀錄的信用卡')
+        let paymentMethodId: string
+        let link: Pick<Transaction, 'cardId' | 'sourceAccountId'> = {}
+        if (row.channel) {
+          // D-130: the source the user saw: a card (預扣) or an account (直接扣), never both, never none.
+          const src = row.source
+          const target = src?.cardId ? await d.paymentMethods.get(src.cardId) : src?.sourceAccountId ? await d.paymentMethods.get(src.sourceAccountId) : undefined
+          if (src?.cardId && isCard(target)) link = { cardId: src.cardId }
+          else if (src?.sourceAccountId && isAsset(target)) link = { sourceAccountId: src.sourceAccountId }
+          else throw new MoneyError(`請選擇「${row.merchant || '這筆消費'}」的付款來源`)
+          paymentMethodId = await channelMethodId(row.channel, row.paymentMethodId)
+        } else {
+          if (!row.paymentMethodId || !(await d.paymentMethods.get(row.paymentMethodId))) throw new MoneyError('請選擇這些刷卡紀錄的信用卡')
+          paymentMethodId = row.paymentMethodId
+        }
         const cat = await d.categories.get(row.categoryId)
         if (!cat || cat.type !== 'expense') throw new MoneyError('分類不正確，請重新選擇')
         const tx: Transaction = {
@@ -77,7 +110,8 @@ export async function commitNotificationImport(
           amount: row.amount,
           merchant: row.merchant.trim().slice(0, 40),
           categoryId: row.categoryId,
-          paymentMethodId: row.paymentMethodId,
+          paymentMethodId,
+          ...link,
           occurredAt: Date.parse(row.occurredAt) > now.getTime() ? stamp : row.occurredAt,
           note: '',
           source: NOTIFICATION_SOURCE,
@@ -102,14 +136,18 @@ export async function commitNotificationImport(
       } else {
         summary.skipped++
       }
+      // D-131: the text of a notice that did not become a record (a chat, an offer…) is not kept.
+      const keepText = status === 'imported'
       await d.importedNotifications.add({
         id: newId(),
         captureId: c.captureId,
         sourceApp: c.sourceApp,
         sourceType: c.sourceType,
-        title: c.title,
-        subtitle: c.subtitle,
-        body: c.body,
+        title: keepText ? c.title : null,
+        subtitle: keepText ? c.subtitle : null,
+        body: keepText ? c.body : null,
+        fingerprint: c.fingerprint,
+        ...(keepText && row.channel ? { sourceConfirmed: true } : {}),
         notificationTime: c.notificationTime,
         capturedAt: c.capturedAt,
         status,

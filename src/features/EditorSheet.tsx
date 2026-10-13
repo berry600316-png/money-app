@@ -15,7 +15,7 @@ import type { EditorTarget } from './ManagePage'
 import { useCloseGuard, useDirtyCheck } from '../ui/discard'
 
 /** Accounts first, then the ways to pay that ask which account the money left (D-117, D-120). */
-const PAYMENT_TYPES: PaymentType[] = ['bank', 'cash', 'stored_value', 'credit_card', 'transfer', 'mobile', 'other']
+const PAYMENT_TYPES: PaymentType[] = ['bank', 'cash', 'stored_value', 'credit_card', 'debit_card', 'transfer', 'mobile', 'other']
 
 const digits = (s: string) => s.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 8)
 
@@ -96,6 +96,8 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
   const t = target ?? shown
   const isNew = !t?.id
   const isCardType = payType === 'credit_card'
+  // D-129: a debit card belongs to a bank account like a credit card, but takes money at once.
+  const isDebit = payType === 'debit_card'
   const tracksBalance = !isMethod({ type: payType })
   // D-125: a card belongs to a bank; a 行動支付 / 其他 is bound to a card or an account.
   const payers = ref.payments.filter((p) => p.type === 'bank' && p.id !== t?.id && (p.isActive || p.id === payFrom))
@@ -132,7 +134,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             isActive: active,
             bank,
             cardLast4: last4,
-            payFromId: isCardType ? payFrom : '',
+            payFromId: isCardType || isDebit ? payFrom : '',
             boundTo: isBindable ? boundTo : '',
             start: tracksBalance ? (amount === null ? null : { date: startDate || today, amount }) : null,
           })
@@ -142,7 +144,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
             type: payType,
             bank,
             cardLast4: last4,
-            ...(isCardType && payFrom ? { payFromId: payFrom } : {}),
+            ...((isCardType || isDebit) && payFrom ? { payFromId: payFrom } : {}),
             ...(isBindable && boundTo ? { boundTo } : {}),
             ...(tracksBalance && amount !== null ? { start: { date: today, amount } } : {}),
           })
@@ -213,7 +215,7 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
               enterKeyHint="done"
               placeholder={
                 t.kind === 'payment'
-                  ? { bank: '例如：台新 Richart', cash: '例如：身上現金', stored_value: '例如：悠遊卡', credit_card: '例如：台新信用卡', transfer: '例如：轉帳', mobile: '例如：LINE Pay', other: '例如：禮券' }[payType]
+                  ? { bank: '例如：台新 Richart', cash: '例如：身上現金', stored_value: '例如：悠遊卡', credit_card: '例如：台新信用卡', debit_card: '例如：台新金融卡', transfer: '例如：轉帳', mobile: '例如：LINE Pay', other: '例如：禮券' }[payType]
                   : t.kind === 'salary'
                     ? '例如：交通津貼、三節獎金'
                     : '例如：寵物、學習'
@@ -234,6 +236,25 @@ export function EditorSheet({ target, onClose }: { target: EditorTarget | null; 
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {t.kind === 'payment' && isDebit && (
+            <div>
+              <label className="lbl" htmlFor="editor-debit-bank">
+                屬於哪個銀行帳戶
+              </label>
+              <select id="editor-debit-bank" className="select" value={payFrom} onChange={(e) => setPayFrom(e.target.value)}>
+                <option value="">還沒指定（不算進任何帳戶）</option>
+                {payers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <p className="range-help" style={{ marginTop: 8 }}>
+                用金融卡付的錢直接從這個帳戶扣（不像信用卡先記為預扣）。記帳時它會出現在這個銀行底下；匯入 LINE Pay 消費時也可以選它。
+              </p>
             </div>
           )}
 

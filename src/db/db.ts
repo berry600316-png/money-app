@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
+import { captureFingerprint } from '../card/notificationFile'
 import type {
   BalanceAdjustment,
   CardStatement,
@@ -19,7 +20,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -91,6 +92,24 @@ export class MoneyDB extends Dexie {
       })
       .upgrade(async (tx) => {
         await tx.table('settings').put({ key: 'schemaVersion', value: 5 })
+      })
+    // v6 (D-131): notifications that never became a record keep no text; each keeps a fingerprint of its
+    // content (taken here, before the text goes) so a later capture reusing its id is still told apart.
+    this.version(6)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('importedNotifications')
+          .toCollection()
+          .modify((n: ImportedNotification) => {
+            if (!n.fingerprint && (n.title !== null || n.subtitle !== null || n.body !== null)) n.fingerprint = captureFingerprint(n)
+            if (n.status !== 'imported') {
+              n.title = null
+              n.subtitle = null
+              n.body = null
+            }
+          })
+        await tx.table('settings').put({ key: 'schemaVersion', value: 6 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

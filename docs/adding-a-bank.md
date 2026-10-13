@@ -42,11 +42,14 @@ Money 對每家銀行各有一個專用的解析格式（adapter），由**真�
 - `templates`：每種寫法一個，`pattern` 用 `^…$` 錨定整段文字（已轉半形；全形逗號、冒號會變成 `,`、`:`），
   用具名群組取欄位：`amount`（消費必填）、`merchant`、`last4`、`date`、`time`。非消費的寫法用 `kind: 'not_spending'` 加 `reason`。
   整段文字是「標題、副標題、內文」以換行相接；對不上時會再拿「只有內文」比對一次（適合標題會變動的 App）。
+  若設定 `title`（例如 `/^LINE\s*錢包$/`），標題必須相符，`pattern` 只比對內文：用在「標題才能證明寄件者」的 App（LINE 的聊天訊息可以打出任何文字）。
+- `channel`（選填，D-130）：這個 App 的消費是透過某個行動支付（例如 `{ label: 'LINE Pay', name: /^LINE\s*Pay$/i }`），
+  不是某張卡。記帳時付款方式記為使用者名稱相符的那個行動支付（沒有就在匯入時建立），付款來源預設是它的「綁定」，預覽時可逐筆改。
 
-範例見 `src/card/fixtures.ts` 的 `SIM_NOTIFICATION_ADAPTER`（模擬寫法，只給測試用，沒有註冊進 App）。
+已註冊的範例：`LINE_PAY_ADAPTER`（D-128）。測試用的模擬寫法：`src/card/fixtures.ts` 的 `SIM_NOTIFICATION_ADAPTER`（沒有註冊進 App）。
 
-符合任一 template 的通知會直接列為「新的刷卡紀錄」；同一個 App 但寫法對不上任何 template 的，退回通用推測並標示
-「寫法和已建立的格式不同（可能是銀行改版）」，請使用者確認。
+符合任一 template 的通知會直接列為「可匯入」。對不上任何 template 的（同一個 App 的其他寫法、或還沒有格式的 App）一律列為「不匯入」並寫出原因：
+D-128 起通用推測（`GENERIC_GUESSING`）預設關閉，程式保留，測試時可用 `parseNotification(c, adapters, { generic: true })` 開啟。
 
 ### 帳單格式
 
