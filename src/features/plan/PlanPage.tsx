@@ -198,7 +198,7 @@ export function PlanPage({
         <button type="button" className="row" onClick={onTemplates}>
           <span className="row-main">
             <span className="row-title">管理固定項目</span>
-            <span className="row-sub">新增、改名、預設金額、日期、停用</span>
+            <span className="row-sub">新增、改名、預設金額、日期、刪除</span>
           </span>
           <Icon name="chev" className="chev" />
         </button>

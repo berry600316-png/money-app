@@ -7,6 +7,8 @@ import { MAX_AMOUNT } from '../lib/money'
 import { currentMonthKey, isMonthKey, monthKeyLabel, monthShort } from '../lib/months'
 
 export const COMPANY_MAX = 30
+/** D-141: a payslip line's note. */
+export const NOTE_MAX = 50
 
 export interface PayslipInput {
   month: string
@@ -67,9 +69,10 @@ export async function savePayslip(id: string | null, input: PayslipInput, d: Mon
     const lines: PayslipLine[] = input.lines.map((l) => {
       const it = items.get(l.itemId)
       if (!it) throw new MoneyError('有薪資項目已不存在，請重新開啟薪資單')
-      // D-69: a line that was already on this payslip keeps the name it was saved with.
+      // D-69: a line that was already on this payslip keeps the name it was saved with (D-141: and its note;
+      // a line left off the payslip takes its note with it).
       const old = prev?.lines.find((p) => p.itemId === l.itemId)
-      return { itemId: l.itemId, name: old?.name ?? it.name, amount: l.amount }
+      return { itemId: l.itemId, name: old?.name ?? it.name, amount: l.amount, ...(old?.note ? { note: old.note } : {}) }
     })
     lines.sort((a, b) => order(items.get(a.itemId)!) - order(items.get(b.itemId)!))
     const { net } = payslipTotals(lines, (iid) => items.get(iid)?.kind)
@@ -114,6 +117,28 @@ export async function savePayslip(id: string | null, input: PayslipInput, d: Mon
     }
     await d.payslips.put(slip)
     return slip
+  })
+}
+
+/**
+ * D-141: write (or, with blank text, remove) the note of one item on a payslip. One note per item per
+ * payslip, up to NOTE_MAX characters; line breaks are kept.
+ */
+export async function setPayslipNote(id: string, itemId: string, note: string, d: MoneyDB = db, now = new Date()): Promise<Payslip> {
+  const text = note.trim()
+  if (text.length > NOTE_MAX) throw new MoneyError(`備註最多 ${NOTE_MAX} 個字`)
+  return d.transaction('rw', d.payslips, async () => {
+    const slip = await d.payslips.get(id)
+    if (!slip) throw new MoneyError('這張薪資單已不存在')
+    if (!slip.lines.some((l) => l.itemId === itemId)) throw new MoneyError('這張薪資單上沒有這個項目')
+    const lines = slip.lines.map((l) => {
+      if (l.itemId !== itemId) return l
+      const next: PayslipLine = { itemId: l.itemId, name: l.name, amount: l.amount }
+      return text ? { ...next, note: text } : next
+    })
+    const next = { ...slip, lines, updatedAt: now.toISOString() }
+    await d.payslips.put(next)
+    return next
   })
 }
 

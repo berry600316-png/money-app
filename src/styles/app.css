@@ -20,6 +20,8 @@
   --bar: #A9C8EE;
   --muted-ink: #B3C0D2;
   --danger: #B8443A;
+  /* D-141: a payslip line's note. */
+  --note: #8A6A1E;
   --stage: #DCE6F2;
   --scrim: rgba(10, 22, 44, 0.34);
   /* the second blue (D-116) */
@@ -544,6 +546,21 @@ button.srow:disabled:active { background: transparent; }
 .summary-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: none; padding: 14px 4px 8px; font-size: 0.875rem; color: var(--ink-2); }
 .summary-toggle svg { width: 16px; height: 16px; transition: transform 0.25s var(--ease); }
 .summary-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
+/* D-141: notes on payslip lines (shown under the item, edited from 備註 at the bottom). */
+.line-note { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; margin-top: 3px; font-size: 0.75rem; line-height: 1.45; color: var(--note); white-space: pre-line; overflow-wrap: anywhere; }
+.add-line.note-btn { justify-content: center; margin-top: 14px; }
+.note-btn small { font-weight: 400; font-size: 0.8125rem; color: var(--ink-2); }
+.note-grp { font-size: 0.75rem; color: var(--ink-2); margin: 10px 4px 6px; }
+.note-grp:first-child { margin-top: 0; }
+.opt small.note-has { color: var(--note); }
+.opt[aria-pressed='true'] small.note-has { color: rgba(255, 255, 255, 0.8); }
+.note-area { height: auto; min-height: 92px; padding: 12px 14px; line-height: 1.5; resize: none; font-family: inherit; }
+.note-cnt { margin: 4px 4px 0; text-align: right; font-size: 0.75rem; color: var(--ink-2); }
+/* D-140: 已刪除 folded at the bottom of a settings list; why an item cannot be deleted. */
+.del-sec { margin-top: 4px; }
+.del-sec .summary-toggle { padding-top: 6px; }
+.del-sec .srow .mini-btn { margin-left: auto; }
+.del-note { margin: 2px 4px 0; text-align: center; }
 .select-row { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 6px 6px 6px 16px; border-radius: 16px; background: var(--card); box-shadow: 0 0 0 1.5px var(--brand) inset; font-size: 0.9375rem; }
 .select-row label { flex: 1; }
 .select-row select { border: 0; background: var(--fill); border-radius: 12px; height: 38px; padding: 0 12px; font-size: 16px; -webkit-appearance: none; appearance: none; }

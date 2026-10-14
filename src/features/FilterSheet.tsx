@@ -130,7 +130,7 @@ export function FilterSheet({
               <button type="button" key={p.id} className="opt" aria-pressed={d.payment === p.id} onClick={() => set({ payment: p.id })}>
                 {p.name}
                 {p.cardLast4 && <small>{p.cardLast4}</small>}
-                {!p.isActive && <small>已停用</small>}
+                {!p.isActive && <small>已刪除</small>}
               </button>
             ))}
           </div>

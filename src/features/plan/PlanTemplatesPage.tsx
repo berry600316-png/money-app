@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { usePlanTemplates } from '../../db/hooks'
-import { setPlanTemplateActive } from '../../db/planRepo'
+import { deletePlanTemplate, planTemplateDeleteImpact, setPlanTemplateActive } from '../../db/planRepo'
+import { deleteMessage, type DeleteImpact } from '../../db/deletion'
+import { ActionSheet } from '../../ui/ActionSheet'
+import { Overlay } from '../../ui/overlay'
 import { MoneyError } from '../../db/repo'
 import { currentMonthKey } from '../../lib/months'
 import { fmt } from '../../lib/money'
@@ -9,19 +12,28 @@ import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 import { PlanItemEditor, type PlanEditorTarget } from './PlanItemEditor'
 
-/** D-107: the fixed monthly items. No sorting, no complex repeat rules (spec 15.5). */
+/** D-107: the fixed monthly items. No sorting, no complex repeat rules (spec 15.5). D-140: 刪除 / 已刪除. */
 export function PlanTemplatesPage({ backLabel, onBack }: { backLabel: string; onBack: () => void }) {
   const templates = usePlanTemplates()
   const ref = useRefData()
   const toast = useToast()
   const [editor, setEditor] = useState<PlanEditorTarget | null>(null)
+  const [asking, setAsking] = useState<{ id: string; name: string; impact: DeleteImpact } | null>(null)
+  const [showDeleted, setShowDeleted] = useState(false)
   const cur = currentMonthKey()
+  const fail = (e: unknown) => toast(e instanceof MoneyError ? e.message : '沒有成功，請再試一次', { kind: 'error' })
 
-  const toggle = (id: string, active: boolean, name: string) =>
-    setPlanTemplateActive(id, active).then(
-      () => toast(active ? `「${name}」恢復使用` : `「${name}」已停用，之後的月份不再加入`),
-      (e) => toast(e instanceof MoneyError ? e.message : '沒有成功，請再試一次', { kind: 'error' }),
+  const askDelete = (id: string, name: string) => planTemplateDeleteImpact(id).then((impact) => setAsking({ id, name, impact }), fail)
+  const doDelete = () => {
+    if (!asking) return
+    const { id, name } = asking
+    setAsking(null)
+    deletePlanTemplate(id).then(
+      (r) => toast(r.mode === 'hard' ? `已刪除「${name}」` : `已刪除「${name}」，之後的月份不再加入；可以在「已刪除」恢復`),
+      fail,
     )
+  }
+  const restore = (id: string, name: string) => setPlanTemplateActive(id, true).then(() => toast(`已恢復「${name}」`), fail)
 
   const active = (templates ?? []).filter((t) => t.isActive)
   const stopped = (templates ?? []).filter((t) => !t.isActive)
@@ -34,9 +46,15 @@ export function PlanTemplatesPage({ backLabel, onBack }: { backLabel: string; on
         </span>
       </button>
       <span className="row-amt num">{fmt(t.amount)}</span>
-      <button type="button" className="mini-btn" onClick={() => void toggle(t.id, !t.isActive, t.name)}>
-        {t.isActive ? '停用' : '恢復'}
-      </button>
+      {t.isActive ? (
+        <button type="button" className="mini-btn" aria-label={`刪除「${t.name}」`} onClick={() => void askDelete(t.id, t.name)}>
+          刪除
+        </button>
+      ) : (
+        <button type="button" className="mini-btn" aria-label={`恢復「${t.name}」`} onClick={() => void restore(t.id, t.name)}>
+          恢復
+        </button>
+      )}
     </div>
   )
 
@@ -67,14 +85,23 @@ export function PlanTemplatesPage({ backLabel, onBack }: { backLabel: string; on
       )}
       {stopped.length > 0 && (
         <>
-          <div className="sec-head">
-            <h2>已停用</h2>
-            <span>過去月份的紀錄保留</span>
-          </div>
-          <div className="card muted-card">{stopped.map(row)}</div>
+          <button type="button" className="summary-toggle" aria-expanded={showDeleted} onClick={() => setShowDeleted(!showDeleted)}>
+            <span>已刪除 {stopped.length} 個（過去月份的紀錄保留）</span>
+            <Icon name="chev" />
+          </button>
+          {showDeleted && <div className="card muted-card">{stopped.map(row)}</div>}
         </>
       )}
       <PlanItemEditor target={editor} onClose={() => setEditor(null)} />
+      <Overlay>
+        <ActionSheet
+          open={asking !== null}
+          onClose={() => setAsking(null)}
+          title={`刪除「${asking?.name ?? ''}」？`}
+          message={asking ? `本月起還沒記帳、沒改過的這一項會拿掉。${deleteMessage(asking.impact, 'other')}` : ''}
+          actions={[{ label: '刪除', danger: true, onClick: doDelete }]}
+        />
+      </Overlay>
     </>
   )
 }

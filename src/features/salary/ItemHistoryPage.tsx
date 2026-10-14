@@ -82,7 +82,7 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
         {item && (
           <span className="tag">
             {item.kind === 'earning' ? '應發' : '應扣'} · {item.nature === 'fixed' ? '固定' : '變動'}
-            {!item.isActive && ' · 已停用'}
+            {!item.isActive && ' · 已刪除'}
           </span>
         )}
       </div>

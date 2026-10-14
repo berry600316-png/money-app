@@ -282,7 +282,7 @@ describe('C. where the money came from (D-130)', () => {
     await updatePaymentMethod(a.debit, { isActive: false }, d, now)
     const [r] = await plan([line(typed('60', '麵店'))])
     expect(r).toMatchObject({ status: 'suspect', source: null, typeNames: ['金融卡'] })
-    expect(r.sourceNote).toBe('符合「金融卡」，但「台新金融卡」已停用，請選這筆用哪張卡')
+    expect(r.sourceNote).toBe('符合「金融卡」，但「台新金融卡」已刪除，請選這筆用哪張卡')
     await updatePaymentMethod(a.debit, { isActive: true }, d, now)
     await updatePaymentMethod(a.linePay, { cards: [a.tsCard] }, d, now)
     expect((await plan([line(typed('60', '麵店'))]))[0].sourceNote).toBe('符合「金融卡」，但「台新金融卡」已不在「LINE Pay」底下，請選這筆用哪張卡')
@@ -315,7 +315,7 @@ describe('C. where the money came from (D-130)', () => {
     const fresh = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards: [a.debit] }, d, now)).id
     const [off] = await plan([line(typed('70', '早餐店'), { captureId: 'n3' })])
     expect(off).toMatchObject({ status: 'suspect', paymentMethodId: fresh, source: null })
-    expect(off.sourceNote).toContain('「我的手機錢包」已停用')
+    expect(off.sourceNote).toContain('「我的手機錢包」已刪除')
   })
   it('no binding: amount and shop are kept, the row asks for a source and cannot be imported without one', async () => {
     const a = await setup('none')

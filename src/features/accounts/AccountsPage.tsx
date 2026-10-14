@@ -44,7 +44,10 @@ export function AccountsPage({
   const [setup, setSetup] = useState(false)
   const accounts = ref.payments.filter((p) => !isMethod(p))
   const ov = balances ? overview(accounts, balances) : null
-  const shown = (p: PaymentMethod) => p.isActive || balances?.has(p.id)
+  // D-140 (Q134 A, Q135 A): one in 已刪除 stays here, and counts, until its balance or 預扣 is back to 0.
+  const shown = (p: PaymentMethod) => p.isActive || (balances?.get(p.id) ?? 0) !== 0
+  // A bank in 已刪除 also stays while a card of it still owes 預扣, so the card can be paid (Q134 A, Q136 B).
+  const bankShown = (p: PaymentMethod) => shown(p) || (p.type === 'bank' && cardsPaidFrom(p.id, accounts, balances ?? new Map()).cards.some(shown))
 
   const cardRow = (c: PaymentMethod) => {
     const pending = balances?.get(c.id)
@@ -54,6 +57,7 @@ export function AccountsPage({
           <span className="s-main">
             {c.name}
             {c.cardLast4 && <span className="tag">···{c.cardLast4}</span>}
+            {!c.isActive && <span className="tag">已刪除</span>}
             <span className="s-sub">{pending === undefined ? '尚未設定' : <>預扣 <span className="num">{fmt(pending)}</span></>}</span>
           </span>
         </button>
@@ -140,7 +144,7 @@ export function AccountsPage({
       </div>
 
       {GROUPS.map((g) => {
-        const list = accounts.filter((p) => p.type === g.type && shown(p))
+        const list = accounts.filter((p) => p.type === g.type && bankShown(p))
         if (!list.length) return null
         return (
           <div className="set-sec p-in d3" key={g.type}>
@@ -153,7 +157,10 @@ export function AccountsPage({
                     <button type="button" className={'srow acc-row' + (a.isActive ? '' : ' off')} onClick={() => onOpen(a.id)}>
                       <span className="s-main">
                         {a.name}
-                        <span className="s-sub">{b === undefined ? '尚未設定餘額' : a.balanceFrom ? startLabel(a.balanceFrom) : ''}</span>
+                        <span className="s-sub">
+                          {a.isActive ? '' : '已刪除 · '}
+                          {b === undefined ? '尚未設定餘額' : a.balanceFrom ? startLabel(a.balanceFrom) : ''}
+                        </span>
                       </span>
                       {b === undefined ? <span className="s-val acc-set">設定 ›</span> : <span className={'acc-v num' + (b < 0 ? ' neg' : '')}>{fmt(b)}</span>}
                     </button>

@@ -193,6 +193,7 @@ export function parseBackup(text: string): BackupFile {
     if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`「${p.name}」的所屬帳戶不正確`)
     if (p.boundTo !== undefined && !isStr(p.boundTo)) fail(`付款方式「${p.name}」的綁定不正確`)
     if (p.cards !== undefined && (!Array.isArray(p.cards) || !p.cards.every(isStr))) fail(`付款方式「${p.name}」綁定的卡片不正確`)
+    if (p.deletedWith !== undefined && !isStr(p.deletedWith)) fail(`付款方式「${p.name}」的刪除紀錄不正確`)
     if (p.notifyCardId !== undefined && !isStr(p.notifyCardId)) fail(`付款方式「${p.name}」的通知卡片不正確`)
     return {
       id: p.id,
@@ -207,6 +208,7 @@ export function parseBackup(text: string): BackupFile {
       // Before D-132 a 行動支付 was bound to one card or account (`boundTo`); converted below.
       ...(isStr(p.boundTo) ? { boundTo: p.boundTo } : {}),
       ...(Array.isArray(p.cards) ? { cards: p.cards as string[] } : {}),
+      ...(isStr(p.deletedWith) ? { deletedWith: p.deletedWith } : {}),
       // Before D-136 its notices went to one chosen card; dropped below (migrateWalletLinks).
       ...(isStr(p.notifyCardId) ? { notifyCardId: p.notifyCardId } : {}),
     }
@@ -228,6 +230,8 @@ export function parseBackup(text: string): BackupFile {
       if (held.length) p.cards = held
       else delete p.cards
     }
+    // D-140: only a deleted card remembers the bank it was deleted with, and only a bank in the file.
+    if (p.deletedWith !== undefined && (p.isActive || !plastic(p.id) || payById.get(p.deletedWith)?.type !== 'bank')) delete p.deletedWith
   }
 
   // D-15: the restored data must leave the app usable.
@@ -366,7 +370,9 @@ export function parseBackup(text: string): BackupFile {
         if (!isStr(l.name)) fail(`第 ${n} 張薪資單的項目名稱不正確`)
         const a = l.amount
         if (typeof a !== 'number' || !Number.isSafeInteger(a) || a < 0 || a > MAX_AMOUNT) fail(`第 ${n} 張薪資單的金額不正確`)
-        return { itemId: l.itemId, name: l.name, amount: a }
+        // D-141: a note, trimmed and cut to 50 characters; anything else is left out.
+        const note = isStr(l.note) ? l.note.trim().slice(0, 50) : ''
+        return { itemId: l.itemId, name: l.name, amount: a, ...(note ? { note } : {}) }
       })
       return {
         id: p.id,
