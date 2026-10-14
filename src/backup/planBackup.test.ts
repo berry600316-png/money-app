@@ -43,7 +43,7 @@ describe('planning in backups (D-114)', () => {
   it('a full backup restores plans, templates, items and their links', async () => {
     await seedPlan(a)
     const file = parseBackup(JSON.stringify(buildBackup(await readAllData(a), now)))
-    expect(file.schemaVersion).toBe(7)
+    expect(file.schemaVersion).toBe(8)
     await restoreBackup(file, b, now)
     const s = await summary(b)
     expect([s.income, s.saving, s.necessary, s.recorded, s.spendable]).toEqual([55000, 12000, 16000, 15000, 55000 - 16000 - 0 - 12000])

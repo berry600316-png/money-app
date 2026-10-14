@@ -226,7 +226,6 @@ async function planRange(backup: BackupFile, from: string, to: string, d: MoneyD
       if (held.length) p.cards = held
       else delete p.cards
     }
-    if (p.notifyCardId && !(p.cards ?? []).includes(p.notifyCardId)) delete p.notifyCardId
   }
 
   return {

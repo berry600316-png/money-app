@@ -25,11 +25,12 @@ import { currentMonthKey } from './lib/months'
 import { defaultNewMonth } from './lib/salaryHistory'
 import { StackPage } from './ui/StackPage'
 import { CardImportPage } from './features/card/CardImportPage'
+import { NoticeTypesPage } from './features/card/NoticeTypesPage'
 import { ReconcilePage } from './features/card/ReconcilePage'
 import { StatementImportPage } from './features/card/StatementImportPage'
 import { ReconProvider } from './ui/reconContext'
 import { OverlayContext } from './ui/overlay'
-import { RefDataProvider } from './ui/refData'
+import { RefDataProvider, useRefData } from './ui/refData'
 import { ToastProvider } from './ui/Toast'
 import { DiscardHost, DiscardProvider, useCloseGuard, useDiscardAsking } from './ui/discard'
 import { anyLayerOpen } from './ui/layers'
@@ -44,6 +45,7 @@ type Route =
   | { kind: 'payslip'; id: string }
   | { kind: 'history'; itemId: string }
   | { kind: 'cardImport' }
+  | { kind: 'noticeTypes' }
   | { kind: 'reconcile'; statementId: string | null }
   | { kind: 'statementImport' }
   | { kind: 'plan'; month: string }
@@ -56,6 +58,7 @@ const ROUTE_LABEL: Record<Route['kind'], string> = {
   payslip: '薪資單',
   history: '項目歷史',
   cardImport: '匯入',
+  noticeTypes: '通知類型',
   reconcile: '核對',
   statementImport: '帳單',
   plan: '規劃',
@@ -155,6 +158,13 @@ function Shell() {
     void initPwa(() => !busy.current)
   }, [])
 
+  // D-136: no card to record notices to yet: open the 行動支付 whose cards are bound (LINE Pay first).
+  const ref = useRefData()
+  const bindCards = () => {
+    const wallets = ref.payments.filter((p) => (p.type === 'mobile' || p.type === 'other') && p.isActive)
+    const wallet = wallets.find((p) => /^LINE\s*Pay$/i.test(p.name.trim())) ?? wallets[0]
+    setEditor(wallet ? { kind: 'payment', id: wallet.id } : { kind: 'payment', id: null, newType: 'mobile' })
+  }
   const push = useCallback((route: Route) => {
     routeKey.current += 1
     const key = routeKey.current
@@ -290,6 +300,7 @@ function Shell() {
             }}
             onPlan={() => push({ kind: 'plan', month: currentMonthKey() })}
             onAccounts={() => push({ kind: 'accounts' })}
+            onOpenAccount={(id) => push({ kind: 'account', id })}
           />
           <ListScreen
             active={tab === 'list'}
@@ -380,7 +391,8 @@ function Shell() {
                 />
               )}
               {r.route.kind === 'history' && <ItemHistoryPage itemId={r.route.itemId} backLabel={back} onBack={pop} />}
-              {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} />}
+              {r.route.kind === 'cardImport' && <CardImportPage backLabel={back} onBack={pop} onNoticeTypes={() => push({ kind: 'noticeTypes' })} />}
+              {r.route.kind === 'noticeTypes' && <NoticeTypesPage backLabel={back} onBack={pop} onBindCards={bindCards} />}
               {r.route.kind === 'statementImport' && <StatementImportPage backLabel={back} onBack={pop} onSaved={showStatement} />}
               {r.route.kind === 'plan' && (
                 <PlanPage

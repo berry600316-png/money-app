@@ -69,6 +69,29 @@ export function effectsOf(t: Transaction, byId: (id: string) => PaymentMethod | 
 }
 
 /**
+ * D-139: the money left in 現金 accounts in use that count a balance (the same figure as 我的帳戶); an
+ * account without a start balance is left out. `ids` empty = nothing to show.
+ */
+export function cashOnHand(methods: readonly PaymentMethod[], balances: ReadonlyMap<string, number> | undefined): { ids: string[]; total: number } {
+  const ids = methods.filter((p) => p.type === 'cash' && p.isActive && balances?.has(p.id)).map((p) => p.id)
+  return { ids, total: ids.reduce((sum, id) => sum + balances!.get(id)!, 0) }
+}
+
+/**
+ * D-138: the expenses that took money out of a 現金 account (not 儲值, cards, debit cards or transfers),
+ * shown on the home page under the month's spending.
+ */
+export function cashSpent(list: readonly Transaction[], methods: readonly PaymentMethod[]): number {
+  const byId = (id: string) => methods.find((p) => p.id === id)
+  let sum = 0
+  for (const t of list) {
+    if (t.type !== 'expense') continue
+    for (const e of effectsOf(t, byId)) if (e.delta < 0 && byId(e.accountId)?.type === 'cash') sum -= e.delta
+  }
+  return sum
+}
+
+/**
  * Current balance of every tracked account (cards: their 預扣). Accounts without a start date are
  * absent from the map: "尚未設定餘額".
  */
@@ -253,14 +276,18 @@ export function describePay(
 
 /* ---------------- older data (D-132, Q107 A) ---------------- */
 
-/** A payment method as stored before D-132: a 行動支付 bound to one card or one account. */
-export type LegacyPaymentMethod = PaymentMethod & { boundTo?: string }
+/**
+ * A payment method as stored before D-132 (a 行動支付 bound to one card or one account) or before D-136
+ * (one card chosen for its notices, `notifyCardId`, now keyword rules).
+ */
+export type LegacyPaymentMethod = PaymentMethod & { boundTo?: string; notifyCardId?: string }
 
 /**
  * Brings data from before D-132 to the new rules (database v7, older backups):
  *  - a 行動支付 / 其他 bound to one card now holds that card; bound to a bank account, it holds that bank's
  *    debit card when there is exactly one, else nothing (Q110 B: a wallet never holds an account);
- *    with a single card, notices are recorded to it (D-133);
+ *  - the single card chosen for notices (`notifyCardId`, D-133) is dropped: D-136 routes notices by the
+ *    user's keyword rules (one card held needs none);
  *  - an expense through a 行動支付 that recorded only the account now records that account's debit card,
  *    when there is exactly one (else it keeps the account, still counted the same).
  * Returns only what changed.
@@ -273,15 +300,15 @@ export function migrateWalletLinks(
   const debitsOf = (bankId: string) => methods.filter((p) => isDebit(p) && p.payFromId === bankId)
   const changedMethods: PaymentMethod[] = []
   for (const p of methods) {
-    if (p.boundTo === undefined) continue
-    const { boundTo, ...rest } = p
+    if (p.boundTo === undefined && p.notifyCardId === undefined) continue
+    const { boundTo, notifyCardId: _old, ...rest } = p
+    void _old
     const next: PaymentMethod = { ...rest }
-    if (isWallet(p)) {
+    if (isWallet(p) && boundTo !== undefined) {
       const target = byId.get(boundTo)
       const debits = target?.type === 'bank' ? debitsOf(target.id) : []
       const card = isPlastic(target) ? target! : debits.length === 1 ? debits[0] : undefined
       if (card && !(next.cards ?? []).includes(card.id)) next.cards = [...(next.cards ?? []), card.id]
-      if (next.cards?.length === 1 && !next.notifyCardId) next.notifyCardId = next.cards[0]
     }
     changedMethods.push(next)
   }

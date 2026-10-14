@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react'
-import { commitNotificationImport, getDefaultCards } from '../../card/cardRepo'
-import { channelMethod, defaultSource, planImport, type PaySource, type PlanRow } from '../../card/importPlan'
-import { NOTIFICATION_ADAPTERS } from '../../card/notificationAdapters'
-import { MAX_CAPTURES, readCaptureFiles } from '../../card/notificationFile'
+import { useEffect, useRef, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
+import { commitNotificationImport, getDefaultCards, getNoticeMethods, getNoticeTypes } from '../../card/cardRepo'
+import { planImport, type PaySource, type PlanRow } from '../../card/importPlan'
+import { MAX_CAPTURES, readCaptureFiles, type NotificationCapture } from '../../card/notificationFile'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
 import type { PaymentMethod } from '../../db/types'
@@ -15,22 +15,24 @@ import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 
-/** The text the source chip adds when a row still asks for one (D-130). */
-const NEEDS_SOURCE = '還沒設定'
-
 const sameSource = (a: PaySource | null, b: PaySource | null) => !!a && !!b && (a.cardId ?? '') === (b.cardId ?? '') && (a.sourceAccountId ?? '') === (b.sourceAccountId ?? '')
 
 /**
  * Pick notification JSON files → preview → one tap to import (spec §5.4, D-128..D-131).
  * Rows: 可匯入 (ticked), 需要確認 (not ticked: a possible duplicate, or no payment source yet) and 不匯入
- * (with the reason). A LINE Pay row shows where the money came from — its binding by default — and the
- * user can switch it to another of their cards or debit cards for that row only (Q94).
+ * (with the reason). A LINE Pay row shows where the money came from — the place its notice type says
+ * (D-136) — and the user can switch it to another of their cards or debit cards for that row only (Q94).
+ * No type matched, or types for different places matched: the user picks. The notice types are set up from
+ * here (Q117).
  */
-export function CardImportPage({ onBack, backLabel }: { onBack: () => void; backLabel: string }) {
+export function CardImportPage({ onBack, backLabel, onNoticeTypes }: { onBack: () => void; backLabel: string; onNoticeTypes: () => void }) {
   const ref = useRefData()
   const toast = useToast()
   const input = useRef<HTMLInputElement | null>(null)
   const [rows, setRows] = useState<PlanRow[] | null>(null)
+  /** The notices read from the chosen files, planned again when the notice types change. */
+  const [captures, setCaptures] = useState<NotificationCapture[] | null>(null)
+  const noticeTypes = useLiveQuery(() => getNoticeTypes(), [])
   const [files, setFiles] = useState(0)
   const [errors, setErrors] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
@@ -43,34 +45,55 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
   const expenseCats = ref.categories.filter((c) => c.type === 'expense' && c.isActive)
   const byId = (id?: string) => ref.payments.find((p) => p.id === id)
 
+  const plan = async (captures: NotificationCapture[]) => {
+    const since = new Date(Date.now() - 120 * 864e5).toISOString()
+    const [known, recent, defaultCards, noticeMethods, types] = await Promise.all([
+      db.importedNotifications.toArray(),
+      db.transactions.where('occurredAt').above(since).toArray(),
+      getDefaultCards(),
+      getNoticeMethods(),
+      getNoticeTypes(),
+    ])
+    const history = [...recent]
+      .filter((t) => t.type === 'expense' && t.merchant)
+      .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
+      .map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
+    setRows(
+      planImport({
+        captures,
+        knownCaptureIds: new Map(known.map((k) => [k.captureId, k.fingerprint])),
+        transactions: recent,
+        paymentMethods: await db.paymentMethods.toArray(),
+        categories: ref.categories,
+        history,
+        defaultCards,
+        noticeMethods,
+        noticeTypes: types,
+      }),
+    )
+    setChosenCards(defaultCards)
+  }
+
+  // Back from the notice types (or after a card was disabled or unbound): the preview follows them (cards
+  // picked by hand start over).
+  const typesKey = JSON.stringify([noticeTypes ?? null, ref.payments.map((p) => [p.id, p.isActive, p.cards ?? []])])
+  const planned = useRef(typesKey)
+  useEffect(() => {
+    if (planned.current === typesKey) return
+    planned.current = typesKey
+    if (captures && rows && !busy) void plan(captures)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typesKey])
+
   const onFiles = async (list: FileList | null) => {
     if (!list?.length) return
     setBusy(true)
     try {
-      const { captures, errors: errs } = await readCaptureFiles(Array.from(list))
-      const since = new Date(Date.now() - 120 * 864e5).toISOString()
-      const [known, recent, defaultCards] = await Promise.all([
-        db.importedNotifications.toArray(),
-        db.transactions.where('occurredAt').above(since).toArray(),
-        getDefaultCards(),
-      ])
-      const history = [...recent]
-        .filter((t) => t.type === 'expense' && t.merchant)
-        .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
-        .map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
-      const plan = planImport({
-        captures,
-        knownCaptureIds: new Map(known.map((k) => [k.captureId, k.fingerprint])),
-        transactions: recent,
-        paymentMethods: ref.payments,
-        categories: ref.categories,
-        history,
-        defaultCards,
-      })
-      setRows(plan)
+      const { captures: read, errors: errs } = await readCaptureFiles(Array.from(list))
+      await plan(read)
+      setCaptures(read)
       setFiles(list.length)
       setErrors(errs)
-      setChosenCards(defaultCards)
     } catch {
       toast('無法讀取這些檔案', { kind: 'error' })
     } finally {
@@ -90,11 +113,10 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
 
   const patch = (r: PlanRow, p: Partial<PlanRow>) => setRows((rs) => rs?.map((x) => (x === r ? { ...x, ...p } : x)) ?? null)
 
-  /** The binding of the row's 行動支付, as a source (D-92: the default is its binding). */
-  const defaultFor = (r: PlanRow): PaySource | null => {
-    const name = NOTIFICATION_ADAPTERS.find((a) => a.channel?.label === r.channel)?.channel?.name
-    return name ? defaultSource(r.paymentMethodId ? byId(r.paymentMethodId) : channelMethod(name, ref.payments), ref.payments) : null
-  }
+  /** Q128: the notice types that chose the card, shown next to it. */
+  const autoNote = (r: PlanRow) => r.typeNames.join('、')
+  /** 「LINE Pay · 台新金融卡」: the 行動支付 of the notice type and its card. */
+  const autoLabel = (r: PlanRow) => `${byId(r.autoMethodId ?? undefined)?.name ?? r.channel ?? ''} · ${labelOf(r.autoSource!)}`
 
   /** Q102 / Q104: only what the user set up: the default, their credit cards (預扣) and debit cards (直接扣). */
   const sourceOptions = (r: PlanRow): { source: PaySource; name: string; note: string }[] => {
@@ -102,8 +124,8 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
     const add = (source: PaySource, name: string, note: string) => {
       if (!out.some((o) => sameSource(o.source, source) && (o.source.via ?? '') === (source.via ?? ''))) out.push({ source, name, note })
     }
-    const def = defaultFor(r)
-    if (def) add(def, labelOf(def), isCard(byId(def.cardId)) ? '預扣（預設）' : '直接扣（預設）')
+    const def = r.autoSource
+    if (def) add(def, autoLabel(r), `${isCard(byId(def.cardId)) ? '預扣' : '直接扣'} · 通知類型：${autoNote(r)}`)
     for (const c of cards) add({ cardId: c.id }, c.name, '預扣，繳卡費時才扣')
     // D-132: a debit card is recorded as the card used; the money leaves its bank at once.
     for (const m of ref.payments.filter((p) => p.type === 'debit_card' && p.isActive && byId(p.payFromId)?.type === 'bank')) {
@@ -118,17 +140,16 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
   }
 
   const pickSource = (r: PlanRow, source: PaySource) => {
-    const rest = r.reason
-      .split('；')
-      .filter((s) => s && !s.startsWith(NEEDS_SOURCE))
-      .join('；')
     // Choosing the source settles a row that only lacked one; a possible duplicate stays for the user to tick.
+    // The notice type's card keeps its 行動支付; another card is recorded under the notice's own (LINE Pay).
+    const auto = sameSource(source, r.autoSource) && !source.via
     patch(r, {
       source,
-      sourceIsDefault: sameSource(source, defaultFor(r)) && !source.via,
+      sourceIsDefault: auto,
+      paymentMethodId: auto ? r.autoMethodId : r.channelMethodId,
       needsSource: false,
-      reason: rest,
-      ...(r.status === 'suspect' && !r.duplicate && !rest ? { status: 'new' as const, include: true } : {}),
+      sourceNote: '',
+      ...(r.status === 'suspect' && !r.duplicate && !r.reason ? { status: 'new' as const, include: true } : {}),
     })
   }
 
@@ -187,10 +208,18 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
         {r.channel && (
           <button type="button" className={'src-chip' + (r.source ? '' : ' need')} onClick={() => setPicking(r)}>
             <Icon name="card" />
-            <span>{r.source ? `${labelOf(r.source)}${r.sourceIsDefault ? '（預設）' : ''}` : '選擇付款來源'}</span>
+            {r.source && r.sourceIsDefault && r.autoSource ? (
+              <span>
+                {autoLabel(r)}
+                <small>通知類型：{autoNote(r)}</small>
+              </span>
+            ) : (
+              <span>{r.source ? labelOf(r.source) : '選擇付款來源'}</span>
+            )}
             <Icon name="chev" />
           </button>
         )}
+        {r.sourceNote && <span className="why">{r.sourceNote}</span>}
         {r.reason && <span className="why">{r.reason}</span>}
       </span>
       <span className="irow-end">
@@ -207,6 +236,17 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
   )
 
   const options = picking ? sourceOptions(picking) : []
+
+  /** Q117 / Q124 B: the notice types are set up from the import page. */
+  const typesRow = (
+    <div className="set-card types-link">
+      <button type="button" className="srow" onClick={onNoticeTypes}>
+        <span className="s-main">通知類型</span>
+        <span className="s-val">{noticeTypes ? (noticeTypes.length ? `${noticeTypes.length} 個` : '還沒設定') : ''}</span>
+        <Icon name="chev" className="chev" />
+      </button>
+    </div>
+  )
   const current = picking ? (rows?.find((x) => x.capture === picking.capture) ?? picking) : null
 
   return (
@@ -234,6 +274,8 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             {busy ? '讀取中…' : '選擇通知檔案'}
             <small>只在這支 iPhone 上解析，不會上傳；一次最多 {MAX_CAPTURES} 則</small>
           </button>
+          {typesRow}
+          <p className="set-foot">依「通知類型」的關鍵字判斷每則付款通知要記到哪張卡；沒有符合的，匯入前會請你選。</p>
         </>
       )}
 
@@ -317,7 +359,8 @@ export function CardImportPage({ onBack, backLabel }: { onBack: () => void; back
             </ul>
           )}
 
-          <p className="set-foot">預設的卡片是 LINE Pay 設定裡「付款通知記到哪張卡」那張（只綁一張時就是它）。匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
+          {typesRow}
+          <p className="set-foot">卡片依「通知類型」自動帶入，每筆都可以點開改。匯入後可以到「檔案」App 刪除這些 JSON；之後再選到也不會重複記帳。</p>
           <div className="foot-bar">
             <button type="button" className="btn-primary" onClick={commit} disabled={busy || !chosen.length || missingCard || missingSource}>
               {busy ? '匯入中…' : chosen.length ? `匯入 ${chosen.length} 筆` : '沒有要匯入的消費'}

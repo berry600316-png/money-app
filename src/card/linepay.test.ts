@@ -13,7 +13,8 @@ import { DEFAULT_CATEGORIES } from '../db/defaults'
 import { addPaymentMethod, addTransaction, setStartBalances, updatePaymentMethod, type TxInput } from '../db/repo'
 import { computeBalances } from '../lib/accounts'
 import { summarize } from '../lib/stats'
-import { commitNotificationImport } from './cardRepo'
+import { commitNotificationImport, deleteNoticeType, getNoticeMethods, getNoticeTypes, saveNoticeType } from './cardRepo'
+import type { NoticeType } from './noticeTypes'
 import { capture } from './fixtures'
 import { planImport, type PlanRow } from './importPlan'
 import { LINE_PAY_ADAPTER, matchTemplate } from './notificationAdapters'
@@ -169,7 +170,10 @@ beforeEach(async () => {
 })
 afterEach(() => d.close())
 
-/** LINE Pay holds: 'card' = 台新信用卡; 'debit' = 台新金融卡; 'both' = both, notices to 台新信用卡; 'none' = nothing. */
+/**
+ * LINE Pay holds: 'card' = 台新信用卡; 'debit' = 台新金融卡 (each with a notice type 「LINE Pay」 → that card);
+ * 'both' = both, no notice type; 'none' = nothing.
+ */
 async function setup(bind: 'card' | 'debit' | 'both' | 'none' = 'card') {
   const start = { date: '2026-10-01', amount: 20000 }
   const taishin = (await addPaymentMethod({ name: '台新 Richart', type: 'bank', start }, d, now)).id
@@ -179,7 +183,8 @@ async function setup(bind: 'card' | 'debit' | 'both' | 'none' = 'card') {
   const debit = (await addPaymentMethod({ name: '台新金融卡', type: 'debit_card', payFromId: taishin }, d, now)).id
   await setStartBalances([{ id: 'easycard', amount: 500 }], '2026-10-01', d, now)
   const cards = { card: [tsCard], debit: [debit], both: [tsCard, debit], none: [] }[bind]
-  const linePay = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards, ...(bind === 'both' ? { notifyCardId: tsCard } : {}) }, d, now)).id
+  const linePay = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards }, d, now)).id
+  if (bind === 'card' || bind === 'debit') await saveNoticeType({ name: 'LINE Pay', keywords: ['LINE Pay'], paymentMethodId: linePay, cardId: cards[0] }, d)
   return { taishin, cathay, tsCard, cbCard, debit, linePay }
 }
 
@@ -193,6 +198,8 @@ async function plan(captures: NotificationCapture[]) {
     categories: DEFAULT_CATEGORIES,
     history: [],
     defaultCards: {},
+    noticeMethods: await getNoticeMethods(d),
+    noticeTypes: await getNoticeTypes(d),
     now,
   })
 }
@@ -233,20 +240,88 @@ describe('C. where the money came from (D-130)', () => {
     const b = await balances()
     expect([b.get(a.taishin), b.get(a.tsCard)]).toEqual([20000 - 120, 0])
   })
-  it('Q111 / D-133: holding several cards, notices go to the card chosen for notices', async () => {
+  it('D-136 / Q121: no notice type matched → the row asks which card; no card is guessed', async () => {
     const a = await setup('both')
-    expect((await plan([line(typed('80', '飲料店'))]))[0]).toMatchObject({ status: 'new', source: { cardId: a.tsCard } })
-    // None chosen for notices: each row asks which card.
-    await updatePaymentMethod(a.linePay, { notifyCardId: '' }, d, now)
-    const rows = await plan([line(typed('80', '飲料店'))])
-    expect(rows[0]).toMatchObject({ status: 'suspect', needsSource: true, source: null })
-    expect(rows[0].reason).toContain('付款通知記到哪張卡')
+    const [r] = await plan([line(typed('80', '飲料店'))])
+    expect(r).toMatchObject({ status: 'suspect', include: false, needsSource: true, source: null, autoSource: null, paymentMethodId: a.linePay, reason: '' })
+    expect(r.sourceNote).toBe('沒有符合的通知類型，請選這筆用哪張卡')
+  })
+  it('D-136 / Q113 A: every keyword of a type must be in the notice (title too, any width or case)', async () => {
+    const a = await setup('both')
+    await saveNoticeType({ name: '飲料', keywords: ['ｌｉｎｅ錢包', '飲料'], paymentMethodId: a.linePay, cardId: a.debit }, d)
+    const rows = await plan([line(typed('80', '飲料店')), line(typed('90', '書店'), { captureId: 'b' })])
+    expect(rows[0]).toMatchObject({ status: 'new', include: true, source: { cardId: a.debit }, autoSource: { cardId: a.debit }, autoMethodId: a.linePay, sourceIsDefault: true, typeNames: ['飲料'], sourceNote: '' })
+    // Only one of the two keywords: not this type.
+    expect(rows[1]).toMatchObject({ status: 'suspect', source: null, typeNames: [] })
+    await commitNotificationImport(rows.slice(0, 1), { files: 1 }, d, now)
+    const b = await balances()
+    expect([b.get(a.taishin), b.get(a.tsCard)]).toEqual([20000 - 80, 0])
+  })
+  it('Q120 A: a type whose keywords include another one\'s wins; types for different cards otherwise leave it to the user', async () => {
+    const a = await setup('both')
+    await saveNoticeType({ name: 'LINE Pay', keywords: ['LINE Pay'], paymentMethodId: a.linePay, cardId: a.tsCard }, d)
+    await saveNoticeType({ name: '全聯', keywords: ['LINE Pay', '全聯'], paymentMethodId: a.linePay, cardId: a.debit }, d)
+    await saveNoticeType({ name: '書店', keywords: ['書店'], paymentMethodId: a.linePay, cardId: a.tsCard }, d)
+    const [pxmart, other, both, sameCard] = await plan([
+      line(typed('80', '全聯福利中心')),
+      line(typed('70', '麵店'), { captureId: 'o' }),
+      line(typed('60', '全聯書店'), { captureId: 'x' }),
+      line(typed('50', '二手書店'), { captureId: 'y' }),
+    ])
+    expect(pxmart).toMatchObject({ status: 'new', source: { cardId: a.debit }, typeNames: ['全聯'] })
+    expect(other).toMatchObject({ status: 'new', source: { cardId: a.tsCard }, typeNames: ['LINE Pay'] })
+    // 全聯 (debit) and 書店 (credit) both match and neither includes the other.
+    expect(both).toMatchObject({ status: 'suspect', include: false, source: null, typeNames: ['全聯', '書店'] })
+    expect(both.sourceNote).toBe('同時符合「全聯」「書店」兩種通知，請選這筆用哪張卡')
+    // 「LINE Pay」 and 「書店」 both match but record to the same card: no question.
+    expect(sameCard).toMatchObject({ status: 'new', source: { cardId: a.tsCard }, typeNames: ['LINE Pay', '書店'] })
+  })
+  it('Q127 A: a type whose card was disabled or unbound stays, and its notices ask which card', async () => {
+    const a = await setup('both')
+    await saveNoticeType({ name: '金融卡', keywords: ['LINE Pay'], paymentMethodId: a.linePay, cardId: a.debit }, d)
+    await updatePaymentMethod(a.debit, { isActive: false }, d, now)
+    const [r] = await plan([line(typed('60', '麵店'))])
+    expect(r).toMatchObject({ status: 'suspect', source: null, typeNames: ['金融卡'] })
+    expect(r.sourceNote).toBe('符合「金融卡」，但「台新金融卡」已停用，請選這筆用哪張卡')
+    await updatePaymentMethod(a.debit, { isActive: true }, d, now)
+    await updatePaymentMethod(a.linePay, { cards: [a.tsCard] }, d, now)
+    expect((await plan([line(typed('60', '麵店'))]))[0].sourceNote).toBe('符合「金融卡」，但「台新金融卡」已不在「LINE Pay」底下，請選這筆用哪張卡')
+    expect(await getNoticeTypes(d)).toHaveLength(1)
+  })
+  it('Q119 A: a type can record under another 行動支付; LINE Pay notices are not linked to it', async () => {
+    const a = await setup('both')
+    const apple = (await addPaymentMethod({ name: 'Apple Pay', type: 'mobile', cards: [a.cbCard] }, d, now)).id
+    await saveNoticeType({ name: '國泰', keywords: ['LINE Pay'], paymentMethodId: apple, cardId: a.cbCard }, d)
+    const rows = await plan([line(typed('45', '豆漿店'))])
+    expect(rows[0]).toMatchObject({ status: 'new', paymentMethodId: apple, autoMethodId: apple, channelMethodId: a.linePay, source: { cardId: a.cbCard } })
+    await commitNotificationImport(rows, { files: 1 }, d, now)
+    expect((await d.transactions.toArray())[0]).toMatchObject({ paymentMethodId: apple, cardId: a.cbCard })
+    expect((await balances()).get(a.cbCard)).toBe(45)
+    expect(await getNoticeMethods(d)).toEqual({})
+  })
+  it('D-135: LINE Pay notices remember their payment method by id, so renaming it keeps the link', async () => {
+    const a = await setup('card')
+    expect(await getNoticeMethods(d)).toEqual({})
+    await commitNotificationImport(await plan([line(typed('80', '飲料店'), { captureId: 'n1' })]), { files: 1 }, d, now)
+    expect(await getNoticeMethods(d)).toEqual({ linepay: a.linePay })
+    await updatePaymentMethod(a.linePay, { name: '我的手機錢包' }, d, now)
+    const [r] = await plan([line(typed('90', '豆花店'), { captureId: 'n2' })])
+    expect(r).toMatchObject({ status: 'new', paymentMethodId: a.linePay, source: { cardId: a.tsCard } })
+    await commitNotificationImport([r], { files: 1 }, d, now)
+    expect((await d.paymentMethods.toArray()).filter((p) => p.type === 'mobile' && /line/i.test(p.name))).toHaveLength(0)
+    expect((await d.transactions.toArray()).every((t) => t.paymentMethodId === a.linePay)).toBe(true)
+    // Disabled: an active one named LINE Pay takes the notices; the type pointing at the disabled one asks.
+    await updatePaymentMethod(a.linePay, { isActive: false }, d, now)
+    const fresh = (await addPaymentMethod({ name: 'LINE Pay', type: 'mobile', cards: [a.debit] }, d, now)).id
+    const [off] = await plan([line(typed('70', '早餐店'), { captureId: 'n3' })])
+    expect(off).toMatchObject({ status: 'suspect', paymentMethodId: fresh, source: null })
+    expect(off.sourceNote).toContain('「我的手機錢包」已停用')
   })
   it('no binding: amount and shop are kept, the row asks for a source and cannot be imported without one', async () => {
     const a = await setup('none')
     const rows = await plan([line(typed('661', '好鄰居超市永和店'))])
     expect(rows[0]).toMatchObject({ status: 'suspect', include: false, needsSource: true, source: null, amount: 661, merchant: '好鄰居超市永和店' })
-    expect(rows[0].reason).toContain('還沒設定 LINE Pay 的付款通知記到哪張卡')
+    expect(rows[0].sourceNote).toBe('沒有符合的通知類型，請選這筆用哪張卡')
     // Ticked without a source: refused, nothing written (a retry later works).
     await expect(commitNotificationImport([{ ...rows[0], include: true }], { files: 1 }, d, now)).rejects.toThrow('付款來源')
     expect(await d.transactions.count()).toBe(0)
@@ -290,7 +365,7 @@ describe('C. where the money came from (D-130)', () => {
     await expect(commitNotificationImport([{ ...rows[0], source: { sourceAccountId: a.tsCard } }], { files: 1 }, d, now)).rejects.toThrow('付款來源')
   })
   it('without a LINE Pay payment method yet, the first import creates one (unbound) and files the record under it', async () => {
-    const a = await setup('card')
+    const a = await setup('none')
     await updatePaymentMethod(a.linePay, { name: '舊的行動支付' }, d, now)
     const rows = await plan([line(typed('80', '飲料店'))])
     expect(rows[0]).toMatchObject({ paymentMethodId: null, needsSource: true })
@@ -299,6 +374,61 @@ describe('C. where the money came from (D-130)', () => {
     expect(created).toHaveLength(1)
     expect(created[0]).toMatchObject({ type: 'mobile', isActive: true })
     expect((await d.transactions.toArray())[0].paymentMethodId).toBe(created[0].id)
+    expect(rows[0].sourceNote).toBe('沒有符合的通知類型，請選這筆用哪張卡')
+    expect(await getNoticeMethods(d)).toEqual({ linepay: created[0].id })
+  })
+})
+
+describe('notice types (D-136)', () => {
+  it('saving: a name, 1–5 keywords of up to 10 characters no other type has, at most 10 types, a card it can use', async () => {
+    const a = await setup('both')
+    const base = { name: 'X', keywords: ['LINE Pay'], paymentMethodId: a.linePay, cardId: a.tsCard }
+    await expect(saveNoticeType({ ...base, name: ' ' }, d)).rejects.toThrow('請輸入名稱')
+    await expect(saveNoticeType({ ...base, name: '一二三四五六七八九十一二三' }, d)).rejects.toThrow('名稱最多 12 個字')
+    await expect(saveNoticeType({ ...base, keywords: [] }, d)).rejects.toThrow('至少要有一個關鍵字')
+    await expect(saveNoticeType({ ...base, keywords: ['a', 'b', 'c', 'd', 'e', 'f'] }, d)).rejects.toThrow('關鍵字最多 5 個')
+    await expect(saveNoticeType({ ...base, keywords: ['LINE Pay', ' '] }, d)).rejects.toThrow('關鍵字不能空白')
+    await expect(saveNoticeType({ ...base, keywords: ['一二三四五六七八九十一'] }, d)).rejects.toThrow('關鍵字最多 10 個字')
+    await expect(saveNoticeType({ ...base, keywords: ['全聯', 'line pay', 'ＬＩＮＥ ＰＡＹ'] }, d)).rejects.toThrow('「ＬＩＮＥ ＰＡＹ」重複了')
+    // The card must be one this 行動支付 holds, and both must be usable.
+    await expect(saveNoticeType({ ...base, cardId: a.cbCard }, d)).rejects.toThrow('請重新選擇記到哪張卡')
+    await expect(saveNoticeType({ ...base, paymentMethodId: a.tsCard }, d)).rejects.toThrow('請重新選擇記到哪張卡')
+    const first = await saveNoticeType({ ...base, name: ' X ', keywords: [' LINE Pay '] }, d)
+    expect(first).toMatchObject({ name: 'X', keywords: ['LINE Pay'] })
+    // The keywords tell the types apart, in any order, width or case (Q120 A).
+    await expect(saveNoticeType({ ...base, name: 'Y', keywords: ['line pay'] }, d)).rejects.toThrow('「X」已經用了一樣的關鍵字')
+    await saveNoticeType({ ...base, name: 'Y', keywords: ['全聯', 'LINE Pay'] }, d)
+    await expect(saveNoticeType({ ...base, name: 'Z', keywords: ['ｌｉｎｅ ｐａｙ', '全聯'] }, d)).rejects.toThrow('「Y」已經用了一樣的關鍵字')
+    // Editing keeps its place; its own keywords are no clash.
+    await saveNoticeType({ ...first, name: 'X2' }, d)
+    expect((await getNoticeTypes(d)).map((t) => t.name)).toEqual(['X2', 'Y'])
+    for (let i = 0; i < 8; i++) await saveNoticeType({ ...base, name: `T${i}`, keywords: [`k${i}`] }, d)
+    await expect(saveNoticeType({ ...base, name: 'T9', keywords: ['k9'] }, d)).rejects.toThrow('通知類型最多 10 個')
+    await deleteNoticeType(first.id, d)
+    expect(await getNoticeTypes(d)).toHaveLength(9)
+    await expect(saveNoticeType({ ...first, name: 'X3' }, d)).rejects.toThrow('已經不存在')
+  })
+  it('notice types go with a full backup; a damaged one is left out, one pointing nowhere stays', async () => {
+    const a = await setup('card')
+    const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    const saved = file.settings.find((s: { key: string }) => s.key === 'noticeTypes')
+    expect(saved.value).toHaveLength(1)
+    saved.value.push(
+      { id: 'bad' },
+      { id: 'dup', name: '重複', keywords: ['line pay'], paymentMethodId: a.linePay, cardId: a.tsCard },
+      { id: 'gone', name: '舊卡', keywords: [' 全聯 ', 'x'.repeat(11)], paymentMethodId: 'nope', cardId: 'nope' },
+    )
+    const parsed = parseBackup(JSON.stringify(file))
+    const types = parsed.settings.find((s) => s.key === 'noticeTypes')!.value as NoticeType[]
+    expect(types.map((t) => [t.id, t.keywords])).toEqual([
+      [saved.value[0].id, ['LINE Pay']],
+      ['gone', ['全聯']],
+    ])
+    const other = new MoneyDB(`linepay-other-${n++}`)
+    await other.open()
+    await restoreBackup(parsed, other, now)
+    expect((await getNoticeTypes(other)).map((t) => t.name)).toEqual(['LINE Pay', '舊卡'])
+    other.close()
   })
 })
 

@@ -107,6 +107,17 @@ svg { display: block; }
 .hero { padding: 22px 0 8px; }
 .eyebrow { font-size: 0.8125rem; color: var(--ink-2); letter-spacing: 0.04em; }
 .hero-amt { color: var(--brand); font-size: 3.625rem; font-weight: 400; letter-spacing: -0.015em; line-height: 1.1; margin-top: 6px; display: flex; align-items: baseline; gap: 8px; }
+/* D-138: this month's cash spending, beside the big figure behind a hairline (the figure shrinks to make room). */
+.hero-row { display: flex; align-items: flex-end; gap: 12px; }
+.hero-row .hero-amt { flex: 1; min-width: 0; }
+.hero-side { flex: none; display: block; padding: 0 0 9px 14px; border: 0; border-left: 1px solid var(--line); background: none; color: inherit; text-align: left; }
+button.hero-side:active { opacity: 0.6; }
+.hero-side .k, .hero-side .v, .hero-side .s { display: block; }
+.hero-side .k { font-size: 0.75rem; color: var(--ink-2); letter-spacing: 0.04em; white-space: nowrap; }
+.hero-side .k svg { display: inline-block; width: 11px; height: 11px; margin-left: 1px; vertical-align: -1px; color: var(--muted-ink); }
+.hero-side .v { margin-top: 2px; font-size: 1.375rem; font-weight: 500; line-height: 1.1; white-space: nowrap; }
+.hero-side .s { margin-top: 3px; font-size: 0.6875rem; color: var(--ink-2); white-space: nowrap; }
+.hero-side .s b { font-weight: 500; font-size: 0.8125rem; color: var(--ink); }
 .cur { font-family: var(--font-ui); font-size: 0.9375rem; font-weight: 500; color: var(--ink-2); letter-spacing: 0; }
 .trio { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 22px 0 0; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .trio > div { padding: 0 12px; border-left: 1px solid var(--line); min-width: 0; }
@@ -210,6 +221,19 @@ svg { display: block; }
 .filter-sheet .f-note { font-size: 0.75rem; color: var(--ink-2); margin: 8px 4px 0; }
 .filter-sheet .f-err { font-size: 0.75rem; color: var(--danger); margin: 8px 4px 0; }
 .opt-set { display: flex; flex-wrap: wrap; gap: 8px; }
+/* D-136: payment notice types (匯入刷卡紀錄 › 通知類型). */
+.types-link { margin-top: 12px; }
+.nt-example { display: grid; gap: 4px; margin: 12px 0 0; padding: 12px 16px; border-radius: 16px; background: var(--card); font-size: 0.875rem; line-height: 1.5; overflow-wrap: anywhere; }
+.nt-example b { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
+.nt-example small { font-size: 0.8125rem; color: var(--ink-2); }
+.nt-example span { display: grid; }
+.nt-example i { font-style: normal; padding-left: 1em; }
+.nt-keywords { display: grid; gap: 8px; }
+.nt-kw { display: flex; align-items: center; gap: 6px; }
+.nt-kw .field { flex: 1; min-width: 0; }
+.nt-kw .nt-del { flex: none; margin-right: -6px; color: var(--ink-2); }
+.nt-row .chev { width: 16px; height: 16px; color: var(--muted-ink); flex: none; }
+.nt-row .why { font-size: 0.75rem; line-height: 1.4; color: var(--danger); }
 .opt { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.875rem; color: var(--ink); }
 .opt small { font-size: 0.75rem; color: var(--ink-2); }
 .opt[aria-pressed='true'] { background: var(--brand); color: #fff; box-shadow: none; }
@@ -378,7 +402,7 @@ button.srow:disabled:active { background: transparent; }
 
 /* form sheet (category / payment editors) */
 .form { display: flex; flex-direction: column; gap: 16px; padding: 12px 0 4px; }
-.form label.lbl { display: block; font-size: 0.8125rem; color: var(--ink-2); margin: 0 0 8px 4px; }
+.form label.lbl, .form span.lbl.field-head { display: block; font-size: 0.8125rem; color: var(--ink-2); margin: 0 0 8px 4px; }
 .icon-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
 .icon-grid button { aspect-ratio: 1; max-width: 100%; border: 0; border-radius: 12px; background: var(--card); color: var(--brand); display: grid; place-items: center; box-shadow: 0 0 0 1px var(--line) inset; }
 .icon-grid button svg { width: 20px; height: 20px; }
@@ -505,6 +529,7 @@ button.srow:disabled:active { background: transparent; }
 /* D-130: where a LINE Pay purchase took the money from; tap to change it for this row. */
 .src-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 32px; margin-top: 4px; padding: 4px 8px 4px 10px; border: 0; border-radius: 16px; background: var(--brand-soft); color: var(--brand); font-size: 0.8125rem; font-weight: 600; text-align: left; }
 .src-chip span { min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
+.src-chip small { display: block; font-size: 0.6875rem; font-weight: 500; opacity: 0.8; }
 .src-chip svg { flex: none; width: 15px; height: 15px; }
 .src-chip svg:last-child { width: 13px; height: 13px; opacity: 0.7; }
 .src-chip.need { background: transparent; box-shadow: 0 0 0 1.5px var(--brand) inset; }

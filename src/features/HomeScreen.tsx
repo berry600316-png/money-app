@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useMonthTx } from '../db/hooks'
+import { useBalances, useMonthTx } from '../db/hooks'
 import { dayLabel, fromYmd, sameLocalDay, sameYm, toYmd, ymOf, type YearMonth } from '../lib/dates'
 import { fmt } from '../lib/money'
+import { cashOnHand, cashSpent } from '../lib/accounts'
 import { sortDesc, summarize } from '../lib/stats'
 import { useToday } from '../lib/useToday'
 import { Icon } from '../ui/Icon'
 import { TxRow } from '../ui/TxRows'
+import { useRefData } from '../ui/refData'
 import { BackupBanner } from './BackupBanner'
 import { HomeCalendar } from './HomeCalendar'
 import { HomePlanCard } from './plan/HomePlanCard'
@@ -28,9 +30,12 @@ export function HomeScreen({
   onBackup,
   onPlan,
   onAccounts,
+  onOpenAccount,
 }: {
   /** D-123 / Q79: 我的帳戶, from the button beside settings. */
   onAccounts: () => void
+  /** D-139: one account's page (the 現金 account, from 現金餘額). */
+  onOpenAccount: (id: string) => void
   onBackup: () => void
   /** D-113: the month plan, under the month overview. */
   onPlan: () => void
@@ -45,6 +50,7 @@ export function HomeScreen({
 }) {
   const today = useToday()
   const now = new Date()
+  const ref = useRefData()
   const ym = ymOf(now)
   const monthTx = useMonthTx(ym)
 
@@ -53,9 +59,15 @@ export function HomeScreen({
     const list = monthTx ?? []
     const s = summarize(list)
     const todayOut = summarize(list.filter((t) => sameLocalDay(new Date(t.occurredAt), now))).expense
-    return { ...s, today: todayOut }
+    return { ...s, today: todayOut, cash: cashSpent(list, ref.payments) }
     // `now` changes every render; only the calendar day it represents matters.
-  }, [monthTx, today]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthTx, today, ref.payments]) // eslint-disable-line react-hooks/exhaustive-deps
+  // D-138: shown while the user has a 現金 account in use, or spent cash this month.
+  const hasCash = view.cash > 0 || ref.payments.some((p) => p.type === 'cash' && p.isActive)
+  // D-139: what is left in the 現金 accounts; with none counting a balance the side shows only the spending.
+  const balances = useBalances()
+  const { ids: cashIds, total: cashLeft } = cashOnHand(ref.payments, balances)
+  const openCash = () => (cashIds.length === 1 ? onOpenAccount(cashIds[0]) : onAccounts())
 
   const [calYm, setCalYm] = useState<YearMonth>(ym)
   const [selected, setSelected] = useState(today)
@@ -103,9 +115,31 @@ export function HomeScreen({
 
       <section className="hero">
         <div className="eyebrow">本月支出</div>
-        <div className="hero-amt num">
-          <span className="cur">NT$</span>
-          <span>{fmt(view.expense)}</span>
+        <div className="hero-row">
+          <div className="hero-amt num">
+            <span className="cur">NT$</span>
+            <span>{fmt(view.expense)}</span>
+          </div>
+          {/* D-138 / D-139: cash left and this month's cash spending, beside the figure behind a hairline. */}
+          {cashIds.length > 0 ? (
+            <button type="button" className="hero-side" onClick={openCash} aria-label={`現金餘額 ${fmt(cashLeft)}，本月花費 ${fmt(view.cash)}，查看現金的進出`}>
+              <span className="k">
+                現金餘額
+                <Icon name="chev" />
+              </span>
+              <span className={'v num' + (cashLeft < 0 ? ' neg' : '')}>{fmt(cashLeft)}</span>
+              <span className="s">
+                本月花費 <b className="num">{fmt(view.cash)}</b>
+              </span>
+            </button>
+          ) : (
+            hasCash && (
+              <div className="hero-side">
+                <span className="k">現金花費</span>
+                <span className="v num">{fmt(view.cash)}</span>
+              </div>
+            )
+          )}
         </div>
         <dl className="trio">
           <div>

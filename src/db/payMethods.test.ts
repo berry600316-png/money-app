@@ -4,10 +4,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from './db'
 import { addPaymentMethod, addTransaction, LAST_KEYS, lastWalletCards, setStartBalances, updatePaymentMethod, updateTransaction, type TxInput } from './repo'
 import type { CardStatement, StatementEntry } from './types'
-import { accountFlow, chargedTo, computeBalances, defaultPay, describePay, migrateWalletLinks, payGroups, payKey } from '../lib/accounts'
+import { accountFlow, cashOnHand, cashSpent, chargedTo, computeBalances, defaultPay, describePay, migrateWalletLinks, payGroups, payKey } from '../lib/accounts'
 import { filterTx, type TxFilter } from '../lib/stats'
 import { reconcile } from '../card/reconcile'
 import { buildBackup, parseBackup, toCsv } from '../backup/format'
+import { linksByName } from '../card/notificationAdapters'
 import { readAllData, restoreBackup, restoreRange } from '../backup/store'
 
 let d: MoneyDB
@@ -112,21 +113,18 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     await expect(addTransaction({ ...spend({ paymentMethodId: a.apple, cardId: a.card }), type: 'income', categoryId: 'salary' }, d, now)).rejects.toThrow('付款方式不正確')
     await expect(addPaymentMethod({ name: 'x', type: 'mobile', cards: [a.taishin] }, d, now)).rejects.toThrow('只能綁信用卡或金融卡')
     await expect(updatePaymentMethod(a.apple, { cards: ['transfer'] }, d, now)).rejects.toThrow('只能綁信用卡或金融卡')
-    await expect(updatePaymentMethod(a.apple, { notifyCardId: a.taishin }, d, now)).rejects.toThrow('其中一張卡')
     // Cards only mean something for 行動支付 / 其他.
     await updatePaymentMethod(a.apple, { type: 'transfer' }, d, now)
     expect((await d.paymentMethods.get(a.apple))!.cards).toBeUndefined()
   })
 
-  it('D-133: with one card its notices go to it; with several, to the one chosen', async () => {
-    const a = await setup()
-    expect((await d.paymentMethods.get(a.line))!.notifyCardId).toBe(a.card)
-    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBeUndefined()
-    await updatePaymentMethod(a.apple, { notifyCardId: a.debit }, d, now)
-    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBe(a.debit)
-    // Dropping that card from the list clears the choice.
-    await updatePaymentMethod(a.apple, { cards: [a.card] }, d, now)
-    expect((await d.paymentMethods.get(a.apple))!.notifyCardId).toBe(a.card)
+  it('D-135: linksByName links a kind of notice to the one 行動支付 / 其他 named like it, never guessing between two', () => {
+    const m = (id: string, name: string, type: 'mobile' | 'other' | 'credit_card' = 'mobile') => ({ id, name, type })
+    expect(linksByName([m('a', 'LINE Pay'), m('b', 'Apple Pay')], {})).toEqual({ linepay: 'a' })
+    expect(linksByName([m('a', ' linepay ', 'other')], {})).toEqual({ linepay: 'a' })
+    expect(linksByName([m('a', 'LINE Pay'), m('b', 'line pay', 'other')], {})).toEqual({})
+    expect(linksByName([m('a', 'LINE Pay')], { linepay: 'z' })).toEqual({})
+    expect(linksByName([m('c', 'LINE Pay', 'credit_card')], {})).toEqual({})
   })
 
   it('describes how it was paid', async () => {
@@ -196,10 +194,11 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
     await addTransaction(spend({ amount: 120, paymentMethodId: a.apple, cardId: a.debit }), d, now)
     const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
-    expect(file.schemaVersion).toBe(7)
+    expect(file.schemaVersion).toBe(8)
     const parsed = parseBackup(JSON.stringify(file))
     expect(parsed.paymentMethods.find((p) => p.id === a.apple)!.cards).toEqual([a.card, a.debit])
-    expect(parsed.paymentMethods.find((p) => p.id === a.line)!.notifyCardId).toBe(a.card)
+    // A file of this version is not linked by name (the user's link, or none, is kept as it is).
+    expect(parsed.settings.find((s) => s.key === 'noticeMethods')).toBeUndefined()
     const other = new MoneyDB(`pay-other-${n++}`)
     await other.open()
     await restoreBackup(parsed, other, now)
@@ -212,9 +211,11 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     const broken = JSON.parse(JSON.stringify(file))
     broken.paymentMethods.find((p: { id: string }) => p.id === a.apple).cards = [a.card, 'nope', a.taishin, a.card]
     broken.paymentMethods.find((p: { id: string }) => p.id === a.line).notifyCardId = a.debit
+    broken.settings.push({ key: 'noticeMethods', value: { linepay: a.card, gone: 'nope', ok: a.line } })
     const p2 = parseBackup(JSON.stringify(broken))
     expect(p2.paymentMethods.find((p) => p.id === a.apple)!.cards).toEqual([a.card])
-    expect(p2.paymentMethods.find((p) => p.id === a.line)!.notifyCardId).toBeUndefined()
+    expect('notifyCardId' in p2.paymentMethods.find((p) => p.id === a.line)!).toBe(false)
+    expect(p2.settings.find((s) => s.key === 'noticeMethods')!.value).toEqual({ ok: a.line })
     broken.transactions[0].cardId = a.taishin
     expect(() => parseBackup(JSON.stringify(broken))).toThrow('信用卡不正確')
 
@@ -241,10 +242,12 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     line.boundTo = a.taishin
     file.transactions.push({ ...file.transactions[0], id: 'old-line', amount: 60, paymentMethodId: a.line, sourceAccountId: a.taishin, cardId: undefined })
     const parsed = parseBackup(JSON.stringify(file))
-    expect(parsed.paymentMethods.find((p) => p.id === a.apple)).toMatchObject({ cards: [a.card], notifyCardId: a.card })
+    expect(parsed.paymentMethods.find((p) => p.id === a.apple)).toMatchObject({ cards: [a.card] })
     // Bound to 台新, which has one debit card: it now holds that card.
-    expect(parsed.paymentMethods.find((p) => p.id === a.line)).toMatchObject({ cards: [a.debit], notifyCardId: a.debit })
-    expect(parsed.paymentMethods.some((p) => 'boundTo' in p)).toBe(false)
+    expect(parsed.paymentMethods.find((p) => p.id === a.line)).toMatchObject({ cards: [a.debit] })
+    expect(parsed.paymentMethods.some((p) => 'boundTo' in p || 'notifyCardId' in p)).toBe(false)
+    // D-135: the one named LINE Pay takes LINE Pay notices.
+    expect(parsed.settings.find((s) => s.key === 'noticeMethods')!.value).toEqual({ linepay: a.line })
     const old = parsed.transactions.find((t) => t.id === 'old-line')!
     expect([old.cardId, old.sourceAccountId]).toEqual([a.debit, undefined])
   })
@@ -262,8 +265,8 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     expect(r.transactions).toEqual([])
   })
 
-  it('database v6 → v7 converts the bindings and the records through them', async () => {
-    const name = `pay-up-${n++}`
+  /** The database as an older app version left it (no upgrade code: the data is written as it was then). */
+  const legacyDb = (name: string, upTo: 6 | 7) => {
     const old = new Dexie(name)
     old.version(1).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, [source+externalId]', categories: 'id, type', paymentMethods: 'id', settings: 'key' })
     old.version(2).stores({ salaryItems: 'id, kind', payslips: 'id, &month, payDate' })
@@ -271,6 +274,13 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     old.version(4).stores({ monthlyPlans: 'month', planTemplates: 'id', plannedExpenses: 'id, month, &[month+templateId], transactionId' })
     old.version(5).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, toAccountId, sourceAccountId, feeOf, [source+externalId]', adjustments: 'id, accountId, occurredAt' })
     old.version(6).stores({})
+    if (upTo === 7) old.version(7).stores({})
+    return old
+  }
+
+  it('database v6 → v8 converts the bindings and the records through them', async () => {
+    const name = `pay-up-${n++}`
+    const old = legacyDb(name, 6)
     await old.open()
     await old.table('paymentMethods').bulkAdd([
       { id: 'bank', name: '台新', type: 'bank', isActive: true, sortOrder: 0 },
@@ -287,14 +297,54 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     old.close()
     const up = new MoneyDB(name)
     await up.open()
-    expect(await up.paymentMethods.get('ap')).toMatchObject({ cards: ['cc'], notifyCardId: 'cc' })
-    expect(await up.paymentMethods.get('lp')).toMatchObject({ cards: ['dc'], notifyCardId: 'dc' })
+    expect(await up.paymentMethods.get('ap')).toMatchObject({ cards: ['cc'] })
+    expect(await up.paymentMethods.get('lp')).toMatchObject({ cards: ['dc'] })
     expect('boundTo' in (await up.paymentMethods.get('ap'))!).toBe(false)
+    expect('notifyCardId' in (await up.paymentMethods.get('ap'))!).toBe(false)
     expect(await up.transactions.get('t1')).toMatchObject({ cardId: 'cc' })
     const t2 = (await up.transactions.get('t2'))!
     expect([t2.cardId, t2.sourceAccountId]).toEqual(['dc', undefined])
-    expect((await up.settings.get('schemaVersion'))!.value).toBe(7)
+    expect((await up.settings.get('noticeMethods'))!.value).toEqual({ linepay: 'lp' })
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(8)
     up.close()
+  })
+
+  it('database v7 → v8 drops the card chosen for notices, keeps the cards and an existing link', async () => {
+    const name = `pay-up8-${n++}`
+    const old = legacyDb(name, 7)
+    await old.open()
+    await old.table('paymentMethods').bulkAdd([
+      { id: 'bank', name: '台新', type: 'bank', isActive: true, sortOrder: 0 },
+      { id: 'cc', name: '卡', type: 'credit_card', isActive: true, sortOrder: 1, payFromId: 'bank' },
+      { id: 'dc', name: '金融卡', type: 'debit_card', isActive: true, sortOrder: 2, payFromId: 'bank' },
+      { id: 'ap', name: 'Apple Pay', type: 'mobile', isActive: true, sortOrder: 3, cards: ['cc', 'dc'], notifyCardId: 'dc' },
+      { id: 'lp', name: 'LINE Pay', type: 'mobile', isActive: true, sortOrder: 4, cards: ['cc'], notifyCardId: 'cc' },
+    ])
+    await old.table('settings').put({ key: 'schemaVersion', value: 7 })
+    old.close()
+    const up = new MoneyDB(name)
+    await up.open()
+    const ap = (await up.paymentMethods.get('ap'))!
+    expect(ap.cards).toEqual(['cc', 'dc'])
+    expect('notifyCardId' in ap || 'notifyCardId' in (await up.paymentMethods.get('lp'))!).toBe(false)
+    expect((await up.settings.get('noticeMethods'))!.value).toEqual({ linepay: 'lp' })
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(8)
+    up.close()
+
+    // A link the user already has is never replaced.
+    const name2 = `pay-up8-${n++}`
+    const old2 = legacyDb(name2, 7)
+    await old2.open()
+    await old2.table('paymentMethods').bulkAdd([
+      { id: 'lp', name: 'LINE Pay', type: 'mobile', isActive: true, sortOrder: 0 },
+      { id: 'mine', name: '我的錢包', type: 'other', isActive: true, sortOrder: 1 },
+    ])
+    await old2.table('settings').put({ key: 'noticeMethods', value: { linepay: 'mine' } })
+    old2.close()
+    const up2 = new MoneyDB(name2)
+    await up2.open()
+    expect((await up2.settings.get('noticeMethods'))!.value).toEqual({ linepay: 'mine' })
+    up2.close()
   })
 
   it('a range restore keeps the bank of a card and the cards of a 行動支付 that come back together', async () => {
@@ -318,6 +368,38 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     const groups = payGroups(await d.paymentMethods.toArray())
     expect(groups.find((g) => g.account?.id === 'cash')!.options.map((o) => o.paymentMethodId)).toEqual(['cash'])
     expect(groups.find((g) => g.title === '還沒指定帳戶')!.options.some((o) => o.paymentMethodId === a.card)).toBe(true)
+  })
+
+  it('D-138: cash spending counts only what left a 現金 account', async () => {
+    const a = await setup()
+    await addTransaction(spend({ amount: 120, paymentMethodId: 'cash' }), d, now)
+    await addTransaction(spend({ amount: 80, paymentMethodId: 'cash', time: '13:00' }), d, now)
+    await addTransaction(spend({ amount: 300, paymentMethodId: a.card }), d, now)
+    await addTransaction(spend({ amount: 50, paymentMethodId: 'easycard' }), d, now)
+    await addTransaction(spend({ amount: 200, paymentMethodId: a.apple, cardId: a.debit }), d, now)
+    await addTransaction({ ...spend({ amount: 1000, paymentMethodId: 'cash' }), type: 'income', categoryId: 'salary' }, d, now)
+    await addTransaction({ ...spend({}), type: 'transfer', categoryId: '', paymentMethodId: 'cash', toAccountId: a.taishin, amount: 500 }, d, now)
+    const all = await readAllData(d)
+    expect(cashSpent(all.transactions, all.paymentMethods)).toBe(200)
+  })
+
+  it('D-139: cash on hand adds up the 現金 accounts in use that count a balance', async () => {
+    await setup()
+    const extra = await addPaymentMethod({ name: '零錢包', type: 'cash', start: { date: '2026-10-01', amount: 300 } }, d, now)
+    const unset = await addPaymentMethod({ name: '撲滿', type: 'cash' }, d, now)
+    await addTransaction(spend({ amount: 120, paymentMethodId: 'cash' }), d, now)
+    let all = await readAllData(d)
+    let b = computeBalances(all.paymentMethods, all.transactions, all.adjustments)
+    const on = cashOnHand(all.paymentMethods, b)
+    expect([...on.ids].sort()).toEqual(['cash', extra.id].sort())
+    expect(on.total).toBe(1500 - 120 + 300)
+    expect(cashOnHand(all.paymentMethods, b).ids).not.toContain(unset.id)
+    // A disabled one no longer counts; none counting = nothing to show.
+    await updatePaymentMethod(extra.id, { isActive: false }, d, now)
+    all = await readAllData(d)
+    b = computeBalances(all.paymentMethods, all.transactions, all.adjustments)
+    expect(cashOnHand(all.paymentMethods, b).ids).not.toContain(extra.id)
+    expect(cashOnHand(all.paymentMethods, undefined)).toEqual({ ids: [], total: 0 })
   })
 
   it('the charged card is the one a statement lists (chargedTo)', () => {

@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
 import { captureFingerprint } from '../card/notificationFile'
+import { linksByName } from '../card/notificationAdapters'
 import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
 import type {
   BalanceAdjustment,
@@ -21,7 +22,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -124,6 +125,23 @@ export class MoneyDB extends Dexie {
         if (moved.methods.length) await tx.table('paymentMethods').bulkPut(moved.methods)
         if (moved.transactions.length) await tx.table('transactions').bulkPut(moved.transactions)
         await tx.table('settings').put({ key: 'schemaVersion', value: 7 })
+      })
+    // v8 (D-135, D-136): the single card chosen for a 行動支付's notices (`notifyCardId`) goes; notices go to
+    // a card by the user's keyword rules instead. The one 行動支付 named "LINE Pay" (if exactly one) is
+    // remembered by id as the place LINE Pay notices go, so renaming it does not break the link.
+    this.version(8)
+      .stores({})
+      .upgrade(async (tx) => {
+        const methods = (await tx.table('paymentMethods').toArray()) as LegacyPaymentMethod[]
+        const transactions = (await tx.table('transactions').toArray()) as Transaction[]
+        const moved = migrateWalletLinks(methods, transactions)
+        if (moved.methods.length) await tx.table('paymentMethods').bulkPut(moved.methods)
+        if (moved.transactions.length) await tx.table('transactions').bulkPut(moved.transactions)
+        const v = (await tx.table('settings').get('noticeMethods'))?.value
+        const current = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, string>) : {}
+        const add = linksByName(methods, current)
+        if (Object.keys(add).length) await tx.table('settings').put({ key: 'noticeMethods', value: { ...current, ...add } })
+        await tx.table('settings').put({ key: 'schemaVersion', value: 8 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

@@ -34,6 +34,8 @@ import { fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { isMonthKey } from '../lib/months'
 import { captureFingerprint } from '../card/notificationFile'
 import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
+import { linksByName } from '../card/notificationAdapters'
+import { NOTICE_TYPES_SETTING, readNoticeTypes } from '../card/noticeTypes'
 
 export const BACKUP_APP = 'money'
 export const BACKUP_FORMAT = 1
@@ -205,6 +207,7 @@ export function parseBackup(text: string): BackupFile {
       // Before D-132 a 行動支付 was bound to one card or account (`boundTo`); converted below.
       ...(isStr(p.boundTo) ? { boundTo: p.boundTo } : {}),
       ...(Array.isArray(p.cards) ? { cards: p.cards as string[] } : {}),
+      // Before D-136 its notices went to one chosen card; dropped below (migrateWalletLinks).
       ...(isStr(p.notifyCardId) ? { notifyCardId: p.notifyCardId } : {}),
     }
   })
@@ -225,7 +228,6 @@ export function parseBackup(text: string): BackupFile {
       if (held.length) p.cards = held
       else delete p.cards
     }
-    if (p.notifyCardId !== undefined && !(p.cards ?? []).includes(p.notifyCardId)) delete p.notifyCardId
   }
 
   // D-15: the restored data must leave the app usable.
@@ -301,6 +303,32 @@ export function parseBackup(text: string): BackupFile {
     if (!isObj(s) || !isStr(s.key) || !('value' in s)) fail(`第 ${i + 1} 個設定不正確`)
     return { key: s.key, value: s.value }
   })
+  // D-135: where each kind of notice goes must be a 行動支付 / 其他 in this file; a file from before the
+  // link (schema < 8) links the one named like it, as the database upgrade does.
+  {
+    const at = settings.findIndex((s) => s.key === 'noticeMethods')
+    const v = at >= 0 ? settings[at].value : undefined
+    const links: Record<string, string> = {}
+    if (isObj(v)) {
+      for (const [k, id] of Object.entries(v)) {
+        const p = isStr(id) ? payById.get(id) : undefined
+        if (p && (p.type === 'mobile' || p.type === 'other')) links[k] = p.id
+      }
+    }
+    if (raw.schemaVersion < 8) Object.assign(links, linksByName(paymentMethods, links))
+    if (at >= 0) settings.splice(at, 1)
+    if (Object.keys(links).length) settings.push({ key: 'noticeMethods', value: links })
+  }
+  // D-136: notice types, read leniently (a damaged one is left out, not the whole file); one whose
+  // 行動支付 or card is not in the file stays and shows as unusable (Q127 A).
+  {
+    const at = settings.findIndex((s) => s.key === NOTICE_TYPES_SETTING)
+    if (at >= 0) {
+      const types = readNoticeTypes(settings[at].value)
+      if (types.length) settings[at] = { key: NOTICE_TYPES_SETTING, value: types }
+      else settings.splice(at, 1)
+    }
+  }
 
   // Salary data arrived with schema v2; older backups restore with the default items and no payslips.
   let salaryItems: SalaryItem[] = DEFAULT_SALARY_ITEMS.map((i) => ({ ...i }))

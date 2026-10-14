@@ -8,6 +8,18 @@ import { chargedTo, isAsset, isCard } from '../lib/accounts'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
 import { isValidAmount } from '../lib/money'
 import type { PlanRow } from './importPlan'
+import {
+  keywordKey,
+  NOTICE_KEYWORD_MAX,
+  NOTICE_KEYWORDS_MAX,
+  NOTICE_NAME_MAX,
+  NOTICE_TYPES_MAX,
+  NOTICE_TYPES_SETTING,
+  normKeyword,
+  readNoticeTypes,
+  targetProblem,
+  type NoticeType,
+} from './noticeTypes'
 import type { DraftEntry } from './statementParser'
 import { txDate } from './reconcile'
 
@@ -17,9 +29,67 @@ export const STATEMENT_SOURCE = 'statement'
 export const DEFAULT_CARDS_SETTING = 'notificationDefaultCards'
 
 export async function getDefaultCards(d: MoneyDB = db): Promise<Record<string, string>> {
-  const v = (await d.settings.get(DEFAULT_CARDS_SETTING))?.value
+  return stringMap(d, DEFAULT_CARDS_SETTING)
+}
+
+/** D-135: { 'linepay': paymentMethodId }, the payment method each kind of notice was recorded to. */
+export const NOTICE_METHODS_SETTING = 'noticeMethods'
+
+export async function getNoticeMethods(d: MoneyDB = db): Promise<Record<string, string>> {
+  return stringMap(d, NOTICE_METHODS_SETTING)
+}
+
+async function stringMap(d: MoneyDB, key: string): Promise<Record<string, string>> {
+  const v = (await d.settings.get(key))?.value
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
   return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === 'string'))
+}
+
+/** D-136: the user's payment notice types. */
+export async function getNoticeTypes(d: MoneyDB = db): Promise<NoticeType[]> {
+  return readNoticeTypes((await d.settings.get(NOTICE_TYPES_SETTING))?.value)
+}
+
+export type NoticeTypeInput = Omit<NoticeType, 'id'> & { id?: string }
+
+/**
+ * D-136: add or change a notice type. A name (≤ 12), 1–5 keywords (≤ 10 each, none blank or repeated),
+ * keywords no other type has (Q120 A: they are what tells the types apart), at most 10 types, and a
+ * 行動支付 with one of its cards that can be used now (Q119 A, Q126 A).
+ */
+export async function saveNoticeType(input: NoticeTypeInput, d: MoneyDB = db): Promise<NoticeType> {
+  const name = input.name.trim()
+  if (!name) throw new MoneyError('請輸入名稱')
+  if (name.length > NOTICE_NAME_MAX) throw new MoneyError(`名稱最多 ${NOTICE_NAME_MAX} 個字`)
+  const keywords = input.keywords.map((k) => k.trim())
+  if (!keywords.length) throw new MoneyError('至少要有一個關鍵字')
+  if (keywords.length > NOTICE_KEYWORDS_MAX) throw new MoneyError(`關鍵字最多 ${NOTICE_KEYWORDS_MAX} 個`)
+  if (keywords.some((k) => !k)) throw new MoneyError('關鍵字不能空白')
+  const long = keywords.find((k) => k.length > NOTICE_KEYWORD_MAX)
+  if (long) throw new MoneyError(`關鍵字最多 ${NOTICE_KEYWORD_MAX} 個字（「${long}」太長）`)
+  const twice = keywords.find((k, i) => keywords.findIndex((x) => normKeyword(x) === normKeyword(k)) !== i)
+  if (twice) throw new MoneyError(`關鍵字「${twice}」重複了`)
+  return d.transaction('rw', d.settings, d.paymentMethods, async () => {
+    const all = await getNoticeTypes(d)
+    const others = all.filter((t) => t.id !== input.id)
+    if (input.id && others.length === all.length) throw new MoneyError('這個通知類型已經不存在')
+    if (!input.id && all.length >= NOTICE_TYPES_MAX) throw new MoneyError(`通知類型最多 ${NOTICE_TYPES_MAX} 個`)
+    const same = others.find((t) => keywordKey(t.keywords) === keywordKey(keywords))
+    if (same) throw new MoneyError(`「${same.name}」已經用了一樣的關鍵字，請換一組`)
+    const problem = targetProblem(input, await d.paymentMethods.toArray())
+    if (problem) throw new MoneyError(`請重新選擇記到哪張卡（${problem}）`)
+    const saved: NoticeType = { id: input.id ?? newId(), name, keywords, paymentMethodId: input.paymentMethodId, cardId: input.cardId }
+    const next = input.id ? all.map((t) => (t.id === input.id ? saved : t)) : [...all, saved]
+    await d.settings.put({ key: NOTICE_TYPES_SETTING, value: next })
+    return saved
+  })
+}
+
+export async function deleteNoticeType(id: string, d: MoneyDB = db): Promise<void> {
+  await d.transaction('rw', d.settings, async () => {
+    const all = await getNoticeTypes(d)
+    await d.settings.put({ key: NOTICE_TYPES_SETTING, value: all.filter((t) => t.id !== id) })
+  })
 }
 
 function newId(): string {
@@ -61,6 +131,8 @@ export async function commitNotificationImport(
     const seenInBatch = new Set<string>()
     /** The 行動支付 method per channel name, found or created once per import. */
     const channelIds = new Map<string, string>()
+    /** D-135: kind of notice → payment method, saved with the import. */
+    const linked: Record<string, string> = {}
     const channelMethodId = async (label: string, preferred: string | null): Promise<string> => {
       if (preferred && (await d.paymentMethods.get(preferred))) return preferred
       const hit = channelIds.get(label)
@@ -99,6 +171,9 @@ export async function commitNotificationImport(
           else if (src?.sourceAccountId && isAsset(target)) link = { sourceAccountId: src.sourceAccountId }
           else throw new MoneyError(`請選擇「${row.merchant || '這筆消費'}」的付款來源`)
           paymentMethodId = await channelMethodId(row.channel, row.paymentMethodId)
+          // D-135: remember it by id, so the next notice of this kind finds it even after a rename (not when a
+          // notice type recorded it under another 行動支付).
+          if (row.channelKey && row.paymentMethodId === row.channelMethodId) linked[row.channelKey] = paymentMethodId
         } else {
           if (!row.paymentMethodId || !(await d.paymentMethods.get(row.paymentMethodId))) throw new MoneyError('請選擇這些刷卡紀錄的信用卡')
           paymentMethodId = row.paymentMethodId
@@ -159,6 +234,9 @@ export async function commitNotificationImport(
       })
     }
     await d.importBatches.add({ id: batchId, kind: 'notifications', createdAt: stamp, files: opts.files, imported: summary.imported, duplicates: summary.duplicates, skipped: summary.skipped, failed: summary.failed })
+    if (Object.keys(linked).length) {
+      await d.settings.put({ key: NOTICE_METHODS_SETTING, value: { ...(await getNoticeMethods(d)), ...linked } })
+    }
     if (opts.rememberCards && Object.keys(opts.rememberCards).length) {
       await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { ...(await getDefaultCards(d)), ...opts.rememberCards } })
     }
