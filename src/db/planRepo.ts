@@ -6,6 +6,7 @@
 import { db, type MoneyDB } from './db'
 import { addTransaction, MoneyError, type TxInput } from './repo'
 import type { MonthlyPlan, PlannedExpense, PlanTemplate, Transaction } from './types'
+import type { DeleteImpact } from './deletion'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { currentMonthKey } from '../lib/months'
 import { monthOfIso } from '../lib/plan'
@@ -126,6 +127,31 @@ export async function updatePlanTemplate(id: string, input: PlanItemInput, d: Mo
     await d.planTemplates.put({ ...t, ...clean, updatedAt: stamp })
     if (!t.isActive) return
     for (const x of await followers(d, id, now)) await d.plannedExpenses.put({ ...x, ...clean, updatedAt: stamp })
+  })
+}
+
+/**
+ * D-140: deleting a fixed item. Its untouched items from this month on go (as 停用 did, D-107); if no item
+ * is left (none recorded, skipped, edited or in an earlier month) the template itself is removed for good,
+ * else it is 已刪除 and can be restored.
+ */
+async function templateImpactIn(d: MoneyDB, id: string, now: Date): Promise<DeleteImpact> {
+  if (!(await d.planTemplates.get(id))) throw new MoneyError('這個固定項目已不存在')
+  const going = new Set((await followers(d, id, now)).map((x) => x.id))
+  const uses = await d.plannedExpenses.filter((x) => x.templateId === id && !going.has(x.id)).count()
+  return { mode: uses ? 'soft' : 'hard', uses, blocked: '', owed: 0, cascade: [] }
+}
+
+export async function planTemplateDeleteImpact(id: string, d: MoneyDB = db, now = new Date()): Promise<DeleteImpact> {
+  return d.transaction('r', [d.planTemplates, d.plannedExpenses], () => templateImpactIn(d, id, now))
+}
+
+export async function deletePlanTemplate(id: string, d: MoneyDB = db, now = new Date()): Promise<DeleteImpact> {
+  return d.transaction('rw', [d.planTemplates, d.plannedExpenses, d.monthlyPlans], async () => {
+    const impact = await templateImpactIn(d, id, now)
+    await setPlanTemplateActive(id, false, d, now)
+    if (impact.mode === 'hard') await d.planTemplates.delete(id)
+    return impact
   })
 }
 

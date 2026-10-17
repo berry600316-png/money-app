@@ -94,6 +94,11 @@ export interface PaymentMethod {
    * holds no card yet (counts in no account).
    */
   cards?: string[]
+  /**
+   * D-140 / Q136 B: a card deleted together with its bank keeps that bank's id, so restoring the bank
+   * restores the card too. Absent for anything deleted on its own (or in use).
+   */
+  deletedWith?: string
 }
 
 /** D-118: a correction of one account's balance; never income, expense or a transfer. */
@@ -135,6 +140,8 @@ export interface PayslipLine {
   name: string
   /** Integer NTD, 0 or more; deductions are positive too (D-66). */
   amount: number
+  /** D-141: the user's note for this item this month ("10/3、10/12 加班"), up to 50 characters. */
+  note?: string
 }
 
 export interface Payslip {

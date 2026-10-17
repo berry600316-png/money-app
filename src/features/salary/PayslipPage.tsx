@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../../db/db'
 import { useSalaryItems } from '../../db/hooks'
@@ -7,8 +8,9 @@ import { fmt } from '../../lib/money'
 import { monthKeyLabel } from '../../lib/months'
 import { Icon } from '../../ui/Icon'
 import { useRefData } from '../../ui/refData'
+import { PayslipNoteSheet } from './PayslipNoteSheet'
 
-/** One payslip: net pay, totals, every line (tap → item history), and the income it created. */
+/** One payslip: net pay, totals, every line (tap → item history) with its note (D-141), and the income it created. */
 export function PayslipPage({
   id,
   onBack,
@@ -25,6 +27,7 @@ export function PayslipPage({
   const ref = useRefData()
   const slip = useLiveQuery(async () => (await db.payslips.get(id)) ?? null, [id])
   const items = useSalaryItems()
+  const [notesOpen, setNotesOpen] = useState(false)
 
   const head = (title: string, editable: boolean) => (
     <div className="page-head">
@@ -69,12 +72,14 @@ export function PayslipPage({
                 {it?.nature === 'fixed' ? '固定' : '變動'}
                 {it && it.name !== l.name ? `　當時：${l.name}` : ''}
               </span>
+              {l.note && <span className="line-note">{l.note}</span>}
             </span>
             <span className={'line-amt num' + (l.amount === 0 ? ' zero' : '')}>{fmt(l.amount)}</span>
             <Icon name="chev" className="chev" />
           </button>
         )
       })
+  const noteCount = slip.lines.filter((l) => l.note).length
   const earnLines = lines('earning')
   const dedLines = lines('deduction')
 
@@ -126,6 +131,14 @@ export function PayslipPage({
       ) : (
         <div className="linked off">實領金額為 0 或負數，不計入收入。</div>
       )}
+
+      {/* D-141: one place to add, change or delete the notes of this payslip. */}
+      <button type="button" className="add-line note-btn" onClick={() => setNotesOpen(true)}>
+        <Icon name="note" />
+        備註
+        {noteCount > 0 && <small>· {noteCount} 則</small>}
+      </button>
+      <PayslipNoteSheet slip={slip} items={items} open={notesOpen} onClose={() => setNotesOpen(false)} />
     </>
   )
 }

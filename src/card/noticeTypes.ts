@@ -70,9 +70,9 @@ export function targetProblem(t: Pick<NoticeType, 'paymentMethodId' | 'cardId'>,
   const card = methods.find((p) => p.id === t.cardId)
   if (!wallet) return '記到的支付方式已刪除'
   if (wallet.type !== 'mobile' && wallet.type !== 'other') return `「${wallet.name}」不是行動支付`
-  if (!wallet.isActive) return `「${wallet.name}」已停用`
+  if (!wallet.isActive) return `「${wallet.name}」已刪除`
   if (!card || !(isCard(card) || card.type === 'debit_card')) return '記到的卡已刪除'
-  if (!card.isActive) return `「${card.name}」已停用`
+  if (!card.isActive) return `「${card.name}」已刪除`
   if (!(wallet.cards ?? []).includes(card.id)) return `「${card.name}」已不在「${wallet.name}」底下`
   return ''
 }

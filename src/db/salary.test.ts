@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB, SCHEMA_VERSION } from './db'
 import { DEFAULT_SALARY_ITEMS } from './defaults'
 import { deleteTransaction, MoneyError, updateTransaction } from './repo'
-import { addSalaryItem, deletePayslip, restorePayslip, savePayslip, updateSalaryItem, type PayslipInput } from './salary'
+import { addSalaryItem, deletePayslip, restorePayslip, savePayslip, setPayslipNote, updateSalaryItem, type PayslipInput } from './salary'
+import { buildBackup, parseBackup } from '../backup/format'
+import { readAllData } from '../backup/store'
 
 let d: MoneyDB
 let n = 0
@@ -138,5 +140,52 @@ describe('salary items (D-68)', () => {
     await expect(addSalaryItem({ name: '交通津貼', kind: 'earning', nature: 'fixed' }, d)).rejects.toThrow('已經有')
     await updateSalaryItem(it1.id, { name: '車馬費', nature: 'variable', isActive: false }, d)
     expect(await d.salaryItems.get(it1.id)).toMatchObject({ name: '車馬費', nature: 'variable', isActive: false, kind: 'earning' })
+  })
+})
+
+describe('notes on payslip lines (D-141)', () => {
+  it('one note per item: add, change, delete; at most 50 characters; only items on the payslip', async () => {
+    const s = await savePayslip(null, oct, d, now)
+    await setPayslipNote(s.id, 'BONUS_PERFORMANCE', '  10/3、10/12 加班\n共 9 小時 ', d, now)
+    let slip = (await d.payslips.get(s.id))!
+    expect(slip.lines.find((l) => l.itemId === 'BONUS_PERFORMANCE')!.note).toBe('10/3、10/12 加班\n共 9 小時')
+    await setPayslipNote(s.id, 'BONUS_PERFORMANCE', '10/20 加班', d, now)
+    slip = (await d.payslips.get(s.id))!
+    expect(slip.lines.find((l) => l.itemId === 'BONUS_PERFORMANCE')!.note).toBe('10/20 加班')
+    // Blank text removes it.
+    await setPayslipNote(s.id, 'BONUS_PERFORMANCE', '   ', d, now)
+    slip = (await d.payslips.get(s.id))!
+    expect('note' in slip.lines.find((l) => l.itemId === 'BONUS_PERFORMANCE')!).toBe(false)
+    await expect(setPayslipNote(s.id, 'BASE_SALARY', 'x'.repeat(51), d, now)).rejects.toThrow('備註最多 50 個字')
+    await setPayslipNote(s.id, 'BASE_SALARY', '字'.repeat(50), d, now)
+    await expect(setPayslipNote(s.id, 'OVERTIME', '不在這張', d, now)).rejects.toThrow('這張薪資單上沒有這個項目')
+    await expect(setPayslipNote('nope', 'BASE_SALARY', 'x', d, now)).rejects.toThrow('已不存在')
+  })
+
+  it('editing amounts keeps the notes; an item left off takes its note with it; undo of a delete brings them back', async () => {
+    const s = await savePayslip(null, oct, d, now)
+    await setPayslipNote(s.id, 'BASE_SALARY', '含調薪', d, now)
+    await setPayslipNote(s.id, 'BONUS_PERFORMANCE', '9 月績效', d, now)
+    await savePayslip(s.id, { ...oct, lines: [{ itemId: 'BASE_SALARY', amount: 46000 }, { itemId: 'LABOR_INSURANCE', amount: 1145 }] }, d, now)
+    const slip = (await d.payslips.get(s.id))!
+    expect(slip.lines.map((l) => [l.itemId, l.note ?? ''])).toEqual([
+      ['BASE_SALARY', '含調薪'],
+      ['LABOR_INSURANCE', ''],
+    ])
+    const saved = await deletePayslip(s.id, d)
+    await restorePayslip(saved, d)
+    expect((await d.payslips.get(s.id))!.lines[0].note).toBe('含調薪')
+  })
+
+  it('notes go with a full backup; a note that is not text is left out, a long one is cut to 50', async () => {
+    const s = await savePayslip(null, oct, d, now)
+    await setPayslipNote(s.id, 'BASE_SALARY', '含調薪', d, now)
+    const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(parseBackup(JSON.stringify(file)).payslips[0].lines[0].note).toBe('含調薪')
+    file.payslips[0].lines[0].note = 'x'.repeat(80)
+    file.payslips[0].lines[1].note = 12
+    const p = parseBackup(JSON.stringify(file))
+    expect(p.payslips[0].lines[0].note).toBe('x'.repeat(50))
+    expect('note' in p.payslips[0].lines[1]).toBe(false)
   })
 })

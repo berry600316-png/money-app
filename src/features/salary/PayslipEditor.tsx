@@ -165,7 +165,7 @@ export function PayslipEditor({
               {it.name}
               <small>
                 {it.nature === 'fixed' ? (isNew ? '固定・沿用上一張' : '固定') : '變動'}
-                {!it.isActive && '・已停用'}
+                {!it.isActive && '・已刪除'}
               </small>
             </label>
             <input
