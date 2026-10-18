@@ -70,7 +70,7 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
       </>
     ) : (
       <>
-        {monthKeyLabel(c.month)}　{c.state === 'gap' ? '尚無薪資單' : '尚未有此項目'}
+        {monthKeyLabel(c.month)}　{c.state === 'gap' ? '尚無薪資單' : '這個月沒有此項目'}
       </>
     )
 
@@ -162,7 +162,7 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
             {cells.map((c, i) => {
               let inner
               if (c.state === 'gap') inner = <span className="gapbox">無</span>
-              else if (c.state === 'before') inner = <span className="before">—</span>
+              else if (c.state === 'none') inner = <span className="before">—</span>
               else if (c.amount === 0) inner = <span className="hbar zero" />
               else
                 inner = (
@@ -173,7 +173,7 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
                 )
               const showLabel = cells.length <= 6 || i % 2 === cells.length % 2 || c.month === selected
               const aria =
-                monthKeyLabel(c.month) + (c.state === 'value' ? ` ${fmt(c.amount)} 元` : c.state === 'gap' ? ' 尚無薪資單' : ' 尚未有此項目')
+                monthKeyLabel(c.month) + (c.state === 'value' ? ` ${fmt(c.amount)} 元` : c.state === 'gap' ? ' 尚無薪資單' : ' 這個月沒有此項目')
               return (
                 <button
                   type="button"
@@ -203,6 +203,7 @@ export function ItemHistoryPage({ itemId, onBack, backLabel }: { itemId: string;
         </div>
       </div>
       {stats.gaps > 0 && <p className="set-foot">期間內有 {stats.gaps} 個月尚無薪資單，不列入累計與平均。</p>}
+      {stats.none > 0 && <p className="set-foot">期間內有 {stats.none} 個月的薪資單沒有這個項目（顯示「—」），不列入累計與平均。</p>}
 
       <div className="sec-head">
         <h2>逐月紀錄</h2>

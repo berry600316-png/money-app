@@ -13,6 +13,7 @@ import {
   periodStats,
   previousValue,
   defaultNewMonth,
+  dropOldZeroLines,
 } from './salaryHistory'
 
 function slip(month: string, lines: [string, number, string?][], extra: Partial<Payslip> = {}): Payslip {
@@ -41,18 +42,23 @@ const slips = Object.entries(perf).map(([m, v]) =>
 )
 const idx = indexPayslips(slips)
 
-describe('cells: 0 vs no data (spec §6, D-71)', () => {
+describe('cells: 0 vs no data (spec §6, D-143)', () => {
   it('a month without a payslip is a gap, never 0', () => {
     expect(cellFor('BONUS_PERFORMANCE', '2026-03', idx)).toEqual({ month: '2026-03', state: 'gap' })
   })
   it('a recorded 0 is a value', () => {
     expect(cellFor('BONUS_PERFORMANCE', '2026-07', idx)).toMatchObject({ state: 'value', amount: 0 })
   })
-  it('before an item first appears it is "before", afterwards a missing line is 0', () => {
-    expect(cellFor('POSITION_ALLOWANCE', '2026-07', idx).state).toBe('before')
+  it('D-143: a month whose payslip does not have the item is "none" (「—」), before or after it first appears; never 0', () => {
+    expect(cellFor('POSITION_ALLOWANCE', '2026-07', idx)).toEqual({ month: '2026-07', state: 'none' })
     expect(cellFor('POSITION_ALLOWANCE', '2026-08', idx)).toMatchObject({ state: 'value', amount: 2000 })
     const withMissing = indexPayslips([...slips, slip('2026-11', [['BASE_SALARY', 45000]])])
-    expect(cellFor('POSITION_ALLOWANCE', '2026-11', withMissing)).toMatchObject({ state: 'value', amount: 0 })
+    expect(cellFor('POSITION_ALLOWANCE', '2026-11', withMissing)).toEqual({ month: '2026-11', state: 'none' })
+    // Averages and 較上次 skip it.
+    const months = ['2026-08', '2026-09', '2026-10', '2026-11']
+    const s = periodStats(months.map((m) => cellFor('POSITION_ALLOWANCE', m, withMissing)))
+    expect([s.counted, s.average, s.none, s.gaps]).toEqual([3, 2000, 1, 0])
+    expect(previousValue('POSITION_ALLOWANCE', '2026-12', withMissing)).toMatchObject({ month: '2026-10', amount: 2000 })
   })
   it('keeps the name the month was saved with', () => {
     expect(cellFor('BONUS_PERFORMANCE', '2026-05', idx)).toMatchObject({ name: '績效獎金' })
@@ -127,13 +133,22 @@ describe('new payslip defaults (D-62, D-63)', () => {
     const end31 = { ...prev, payDate: '2026-10-31' }
     expect(newPayslipDraft('2026-10', [end31], items, 'cash', new Date(2026, 11, 20)).payDate).toBe('2026-11-30')
   })
-  it('editing drops added lines left empty, keeps original lines (D-71)', () => {
+  it('D-143: empty = the month does not have the item (new or edited); 0 typed = the item with 0', () => {
     const draft = editPayslipDraft(prev, items)
     expect(draft.lines.filter((l) => l.onSlip)).toHaveLength(3)
-    const lines = draftToLines(draft, false)
-    expect(lines.map((l) => l.itemId)).toEqual(['BASE_SALARY', 'BONUS_PERFORMANCE', 'LABOR_INSURANCE'])
+    expect(draftToLines(draft).map((l) => l.itemId)).toEqual(['BASE_SALARY', 'BONUS_PERFORMANCE', 'LABOR_INSURANCE'])
     draft.lines.find((l) => l.itemId === 'OVERTIME_PAY')!.amount = '0'
-    expect(draftToLines(draft, false).map((l) => l.itemId)).toContain('OVERTIME_PAY')
-    expect(draftToLines(newPayslipDraft('2026-10', [prev], items, 'cash', new Date(2026, 10, 20)), true)).toHaveLength(13)
+    expect(draftToLines(draft).find((l) => l.itemId === 'OVERTIME_PAY')).toEqual({ itemId: 'OVERTIME_PAY', amount: 0 })
+    // An item that was on the payslip, emptied: taken off.
+    draft.lines.find((l) => l.itemId === 'BONUS_PERFORMANCE')!.amount = ''
+    expect(draftToLines(draft).map((l) => l.itemId)).not.toContain('BONUS_PERFORMANCE')
+    // A new payslip keeps only what is filled in: fixed items copied from the last one, variable ones empty.
+    const fresh = newPayslipDraft('2026-10', [prev], items, 'cash', new Date(2026, 10, 20))
+    const filled = fresh.lines.filter((l) => l.amount !== '').map((l) => l.itemId)
+    expect(draftToLines(fresh).map((l) => l.itemId)).toEqual(filled)
+    expect(draftToLines(fresh).every((l) => items.find((i) => i.id === l.itemId)!.nature === 'fixed')).toBe(true)
+  })
+  it('D-143: an old payslip\'s 0 meant "left empty"; a 0 with a note stays', () => {
+    expect(dropOldZeroLines([{ amount: 0 }, { amount: 5 }, { amount: 0, note: '這月沒加班' }, { amount: 0, note: '' }])).toEqual([{ amount: 5 }, { amount: 0, note: '這月沒加班' }])
   })
 })

@@ -18,6 +18,7 @@ import type { NoticeType } from './noticeTypes'
 import { capture } from './fixtures'
 import { planImport, type PlanRow } from './importPlan'
 import { LINE_PAY_ADAPTER, matchTemplate } from './notificationAdapters'
+import { routeNotice } from './noticeTypes'
 import { MAX_CAPTURES, MAX_FILE_BYTES, readCaptureFile, readCaptureFiles, type NotificationCapture } from './notificationFile'
 import { parseNotification } from './notificationParser'
 
@@ -155,6 +156,86 @@ describe('A. reading notification files (D-81, D-131)', () => {
     const r = await readCaptureFiles([file('many.json', json(many))])
     expect(r.captures).toHaveLength(MAX_CAPTURES)
     expect(r.errors.join('')).toContain('另外 5 則這次沒有讀')
+  })
+})
+
+describe('B2. LINE Pay in Japanese (D-142)', () => {
+  // The user's capture of 2026-10-17 had this shape; shop names and amounts here are changed.
+  const ja = (amount: string, shop: string) => `LINE Pay お支払い NT$ ${amount} お支払いが完了しました。 加盟店: ${shop}`
+
+  it('reads the amount and the shop in every spacing, with or without the full stop', () => {
+    for (const [body, amount] of [
+      [ja('270', '示範餐館'), 270],
+      [ja('1,280', '示範餐館'), 1280],
+      ['LINE Pay お支払い NT$270 お支払いが完了しました。加盟店:示範餐館', 270],
+      ['LINE Pay お支払い NT$ 1,280 お支払いが完了しました 加盟店：示範餐館', 1280],
+      ['ＬＩＮＥ Ｐａｙ お支払い ＮＴ＄ ２７０ お支払いが完了しました。 加盟店： 示範餐館', 270],
+      ['LINE Pay お支払い NT$ 270 お支払いが完了しました。\n加盟店:\n示範餐館', 270],
+    ] as const) {
+      const r = parsed(line(body))
+      expect(r, body).toMatchObject({ kind: 'spend', doubt: null, adapter: 'linepay-v1', channel: { label: 'LINE Pay' } })
+      if (r.kind === 'spend') expect([r.spend.amount, r.spend.merchant], body).toEqual([amount, '示範餐館'])
+    }
+  })
+  it('the shop runs to the first colon or line break; what follows is ignored (the user\'s choice)', () => {
+    for (const body of [
+      `${ja('270', '示範餐館')}: 還元: LINE Pay カード 1%`,
+      `${ja('270', '示範餐館')}\n還元 1% 最大 16%`,
+      `${ja('270', '示範餐館')}：ポイント 3 付与`,
+    ]) {
+      const r = parsed(line(body))
+      expect(r.kind === 'spend' && [r.spend.amount, r.spend.merchant], body).toEqual([270, '示範餐館'])
+    }
+    // Letters, digits and full-width marks of the shop are kept.
+    const r = parsed(line(ja('88', '7-ELEVEN 示範門市（A棟）')))
+    expect(r.kind === 'spend' && r.spend.merchant).toBe('7-ELEVEN 示範門市（A棟）')
+  })
+  it('a cancel, refund or failure word anywhere, a missing field or a second payment sentence is not imported', () => {
+    for (const body of [
+      `${ja('270', '示範餐館')}\nこの取引はキャンセルされました`,
+      `${ja('270', '示範餐館 返金')}`,
+      `${ja('270', '示範餐館')}: 払い戻し済み`,
+      'LINE Pay お支払い NT$ 270 お支払いに失敗しました。 加盟店: 示範餐館',
+      'LINE Pay お支払いが完了しました。 加盟店: 示範餐館',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: ',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: NT$ 300',
+      `${ja('270', '示範餐館')}\nLINE Pay お支払い NT$ 300 お支払いが完了しました`,
+      `${ja('270', '示範餐館')}：LINE Pay 付款 NT$ 300 付款完成`,
+      'LINE Pay お支払い NT$ 2,70 お支払いが完了しました。 加盟店: 示範餐館',
+      // A missing shop is never read as an empty name.
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: :x',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: 。',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: ：還元',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: 　:x',
+      'LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店: \n:\nx',
+    ]) {
+      expect(parsed(line(body)).kind, body).toBe('unparsed')
+    }
+    // Words that refuse the notice count in the subtitle too.
+    for (const subtitle of ['キャンセル', '返金', 'LINE Pay お支払い NT$ 300 お支払いが完了しました。']) {
+      expect(parsed(line(ja('270', '示範餐館'), { subtitle })).kind, subtitle).toBe('unparsed')
+    }
+    const ok = parsed(line(ja('270', '示範餐館'), { subtitle: '還元 1%' }))
+    expect(ok.kind === 'spend' && [ok.spend.amount, ok.spend.merchant]).toEqual([270, '示範餐館'])
+    // The shop is never taken from the subtitle.
+    for (const subtitle of ['還元 1%', '店Z']) {
+      expect(parsed(line('LINE Pay お支払い NT$ 270 お支払いが完了しました。 加盟店:', { subtitle })).kind, subtitle).toBe('unparsed')
+    }
+  })
+  it('only under the LINE 錢包 title: the same words in a chat are not a purchase', () => {
+    expect(parsed(line(ja('270', '示範餐館'), { title: '王小明' })).kind).toBe('unparsed')
+    expect(matchTemplate(line(ja('270', '示範餐館')), LINE_PAY_ADAPTER)).toMatchObject({ kind: 'spend', amount: 270, merchant: '示範餐館' })
+  })
+  it('goes through notice types like the Chinese notice (「LINE Pay」 matches both; 「付款」 only the Chinese one)', () => {
+    const c = line(ja('270', '示範餐館'))
+    const t = (keywords: string[]) => ({ id: keywords.join(), name: 'x', keywords, paymentMethodId: 'w', cardId: 'c' })
+    const methods = [
+      { id: 'w', name: 'LINE Pay', type: 'mobile' as const, isActive: true, sortOrder: 0, cards: ['c'] },
+      { id: 'c', name: '卡', type: 'credit_card' as const, isActive: true, sortOrder: 1 },
+    ]
+    expect(routeNotice(c, [t(['LINE Pay'])], methods).source).toEqual({ cardId: 'c' })
+    expect(routeNotice(c, [t(['付款'])], methods).source).toBeNull()
   })
 })
 

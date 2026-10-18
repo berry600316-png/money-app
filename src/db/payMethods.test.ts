@@ -194,7 +194,7 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     await addTransaction(spend({ amount: 300, paymentMethodId: a.apple, cardId: a.card }), d, now)
     await addTransaction(spend({ amount: 120, paymentMethodId: a.apple, cardId: a.debit }), d, now)
     const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
-    expect(file.schemaVersion).toBe(8)
+    expect(file.schemaVersion).toBe(9)
     const parsed = parseBackup(JSON.stringify(file))
     expect(parsed.paymentMethods.find((p) => p.id === a.apple)!.cards).toEqual([a.card, a.debit])
     // A file of this version is not linked by name (the user's link, or none, is kept as it is).
@@ -305,7 +305,7 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     const t2 = (await up.transactions.get('t2'))!
     expect([t2.cardId, t2.sourceAccountId]).toEqual(['dc', undefined])
     expect((await up.settings.get('noticeMethods'))!.value).toEqual({ linepay: 'lp' })
-    expect((await up.settings.get('schemaVersion'))!.value).toBe(8)
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(9)
     up.close()
   })
 
@@ -328,7 +328,7 @@ describe('cards under accounts; 行動支付 hold cards (D-125, D-132)', () => {
     expect(ap.cards).toEqual(['cc', 'dc'])
     expect('notifyCardId' in ap || 'notifyCardId' in (await up.paymentMethods.get('lp'))!).toBe(false)
     expect((await up.settings.get('noticeMethods'))!.value).toEqual({ linepay: 'lp' })
-    expect((await up.settings.get('schemaVersion'))!.value).toBe(8)
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(9)
     up.close()
 
     // A link the user already has is never replaced.

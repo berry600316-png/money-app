@@ -3,7 +3,7 @@ import { db } from '../../db/db'
 import { usePayslips, useSalaryItems } from '../../db/hooks'
 import { MoneyError } from '../../db/repo'
 import { COMPANY_MAX, deletePayslip, payslipTotals, restorePayslip, savePayslip } from '../../db/salary'
-import type { SalaryKind } from '../../db/types'
+import type { PayslipLine, SalaryKind } from '../../db/types'
 import { toYmd } from '../../lib/dates'
 import { fmt } from '../../lib/money'
 import { currentMonthKey, monthKeyLabel } from '../../lib/months'
@@ -12,6 +12,8 @@ import { useRefData } from '../../ui/refData'
 import { isAsset } from '../../lib/accounts'
 import { useToast } from '../../ui/Toast'
 import { useCloseGuard, useDirtyCheck } from '../../ui/discard'
+import { ActionSheet } from '../../ui/ActionSheet'
+import { Overlay } from '../../ui/overlay'
 
 export type PayslipEditorTarget = { payslipId: string } | { month: string }
 
@@ -34,6 +36,8 @@ export function PayslipEditor({
   const [draft, setDraft] = useState<PayslipDraft | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  /** D-141 / D-143: items taken off this payslip that have a note, asked about before saving. */
+  const [losing, setLosing] = useState<PayslipLine[] | null>(null)
   const [shown, setShown] = useState(false)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const open = target !== null
@@ -88,7 +92,7 @@ export function PayslipEditor({
   if (!items || !slips) return null
   const isNew = editId === null
   const kindOf = (id: string) => items.find((i) => i.id === id)?.kind
-  const totals = draft ? payslipTotals(draftToLines(draft, true), kindOf) : { earning: 0, deduction: 0, net: 0 }
+  const totals = draft ? payslipTotals(draftToLines(draft), kindOf) : { earning: 0, deduction: 0, net: 0 }
   // Income goes into an account that holds money (D-117); an older payslip's choice still shows.
   const payOptions = ref.payments.filter((p) => (p.isActive && isAsset(p)) || p.id === draft?.paymentMethodId)
   const today = toYmd(new Date())
@@ -112,8 +116,18 @@ export function PayslipEditor({
     patch({ month, payDate: payDateFor(month, offset, Number(draft.payDate.slice(8))) })
   }
 
-  const save = async () => {
+  const save = async (confirmed = false) => {
     if (!draft || saving) return
+    const lines = draftToLines(draft)
+    // D-143: an item emptied here leaves the payslip, and its note goes with it: say so first.
+    if (!confirmed && editId) {
+      const keep = new Set(lines.map((l) => l.itemId))
+      const gone = (slips?.find((s) => s.id === editId)?.lines ?? []).filter((l) => l.note && !keep.has(l.itemId))
+      if (gone.length) {
+        setLosing(gone)
+        return
+      }
+    }
     setSaving(true)
     try {
       const s = await savePayslip(editId, {
@@ -121,7 +135,7 @@ export function PayslipEditor({
         payDate: draft.payDate,
         company: draft.company,
         paymentMethodId: draft.paymentMethodId,
-        lines: draftToLines(draft, isNew),
+        lines,
       })
       const net = payslipTotals(s.lines, kindOf).net
       toast(net > 0 ? `已儲存，收入記入 NT$${fmt(net)}` : '已儲存（實領為 0，不記入收入）')
@@ -131,6 +145,9 @@ export function PayslipEditor({
       setSaving(false)
     }
   }
+
+  const nameOfLine = (l: PayslipLine) => items?.find((i) => i.id === l.itemId)?.name ?? l.name
+  const short = (s: string) => (s.length > 16 ? `${s.slice(0, 16)}…` : s)
 
   const remove = async () => {
     if (!editId || saving) return
@@ -176,7 +193,7 @@ export function PayslipEditor({
               pattern="[0-9]*"
               autoComplete="off"
               enterKeyHint="next"
-              placeholder={!isNew && !l.onSlip ? '—' : '0'}
+              placeholder="—"
               value={l.amount}
               onChange={(e) => setAmount(l.itemId, e.target.value)}
             />
@@ -241,8 +258,8 @@ export function PayslipEditor({
             <div className="field-card">{rows('deduction')}</div>
             <p className="set-foot">
               {isNew
-                ? '固定項目沿用上一張的金額，變動項目從 0 開始，只要填這個月實際有的。'
-                : '這張原本沒有的項目留空就不會加進去；要記為 0 元請輸入 0。'}
+                ? '固定項目沿用上一張的金額，變動項目先空著，只要填這個月實際有的。留空＝這個月沒有這個項目；要記 0 元請輸入 0。'
+                : '留空＝這個月沒有這個項目（原本有的會從這張拿掉）；要記 0 元請輸入 0。'}
             </p>
             {!isNew && (
               <button type="button" className="btn-del" onClick={remove} disabled={saving}>
@@ -256,12 +273,34 @@ export function PayslipEditor({
               <span className={'net' + (totals.net <= 0 ? ' neg' : '')}>NT${fmt(totals.net)}</span>
             </div>
             {totals.net <= 0 && <div className="ed-warn">實領為 0 或負數，儲存後不會記入收入</div>}
-            <button type="button" className="btn-primary" onClick={save} disabled={saving}>
+            <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving}>
               儲存
             </button>
           </div>
         </>
       )}
+      <Overlay>
+        <ActionSheet
+          open={losing !== null}
+          onClose={() => setLosing(null)}
+          title={losing && losing.length === 1 ? `${nameOfLine(losing[0])}的備註也會刪除` : `${losing?.length ?? 0} 個項目的備註也會刪除`}
+          message={
+            losing
+              ? `${losing.map((l) => `「${nameOfLine(l)}」`).join('、')}留空後不會留在這張薪資單上，${losing.length === 1 ? `它的備註「${short(losing[0].note!)}」` : '它們的備註'}也會一起刪除。`
+              : ''
+          }
+          actions={[
+            {
+              label: '仍要儲存',
+              danger: true,
+              onClick: () => {
+                setLosing(null)
+                void save(true)
+              },
+            },
+          ]}
+        />
+      </Overlay>
     </section>
   )
 }

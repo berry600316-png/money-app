@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie'
 import { DEFAULT_CATEGORIES, DEFAULT_PAYMENT_METHODS, DEFAULT_SALARY_ITEMS } from './defaults'
 import { captureFingerprint } from '../card/notificationFile'
 import { linksByName } from '../card/notificationAdapters'
+import { dropOldZeroLines } from '../lib/salaryHistory'
 import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
 import type {
   BalanceAdjustment,
@@ -22,7 +23,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 8
+export const SCHEMA_VERSION = 9
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -142,6 +143,19 @@ export class MoneyDB extends Dexie {
         const add = linksByName(methods, current)
         if (Object.keys(add).length) await tx.table('settings').put({ key: 'noticeMethods', value: { ...current, ...add } })
         await tx.table('settings').put({ key: 'schemaVersion', value: 8 })
+      })
+    // v9 (D-143): a payslip saved before kept every item, an empty one as 0. Now 0 is "the item with 0" and
+    // an empty one is left off, so the old 0 lines go (one with a note stays). Totals do not change.
+    this.version(9)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx
+          .table('payslips')
+          .toCollection()
+          .modify((s: Payslip) => {
+            if (Array.isArray(s.lines)) s.lines = dropOldZeroLines(s.lines)
+          })
+        await tx.table('settings').put({ key: 'schemaVersion', value: 9 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

@@ -35,6 +35,7 @@ import { isMonthKey } from '../lib/months'
 import { captureFingerprint } from '../card/notificationFile'
 import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
 import { linksByName } from '../card/notificationAdapters'
+import { dropOldZeroLines } from '../lib/salaryHistory'
 import { NOTICE_TYPES_SETTING, readNoticeTypes } from '../card/noticeTypes'
 
 export const BACKUP_APP = 'money'
@@ -374,13 +375,15 @@ export function parseBackup(text: string): BackupFile {
         const note = isStr(l.note) ? l.note.trim().slice(0, 50) : ''
         return { itemId: l.itemId, name: l.name, amount: a, ...(note ? { note } : {}) }
       })
+      // D-143: a file from before keeps every item, an empty one as 0; those lines go, as in the database upgrade.
+      const kept = (raw.schemaVersion as number) < 9 ? dropOldZeroLines(lines) : lines
       return {
         id: p.id,
         month: p.month,
         payDate: p.payDate,
         company: p.company,
         paymentMethodId: p.paymentMethodId,
-        lines,
+        lines: kept,
         transactionId: p.transactionId as string | null,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,

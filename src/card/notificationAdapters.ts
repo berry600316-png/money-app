@@ -29,6 +29,11 @@ export interface NotificationTemplate {
   title?: RegExp
   /** Shown for not_spending ("退款通知"). */
   reason?: string
+  /**
+   * D-142: the notice is refused when any of these is found anywhere in it (title, subtitle and body,
+   * half-width). Only for checking: the fields are still read from what `pattern` matches.
+   */
+  refuse?: RegExp[]
 }
 
 export interface NotificationAdapter {
@@ -58,6 +63,15 @@ export interface NotificationAdapter {
  * promotion after 「回饋:」; a second payment sentence anywhere makes the whole message unmatched. The shop
  * name stops at the next colon or line; a name broken over two lines is not guessed, and a name with
  * 取消 / 退款 / 失敗… in it (「好鄰居超市 此筆交易已取消」) makes the message unmatched rather than a purchase.
+ *
+ * D-142: the same notice in Japanese (user's capture of 2026-10-17, a phone set to Japanese):
+ *
+ *   LINE Pay お支払い NT$ 350 お支払いが完了しました。 加盟店: 示範餐館
+ *
+ * The amount is the one in 「お支払い NT$… お支払いが完了しました」. The shop runs to the first colon or line
+ * break and anything after it is ignored (the user's choice: the Japanese promotion has not been seen yet).
+ * Because that tail is not read, the whole message is refused when a cancel / refund / failure word appears
+ * anywhere in it, or a second payment sentence.
  */
 export const LINE_PAY_ADAPTER: NotificationAdapter = {
   id: 'linepay-v1',
@@ -71,6 +85,15 @@ export const LINE_PAY_ADAPTER: NotificationAdapter = {
       title: /^LINE\s*錢包$/i,
       pattern:
         /^LINE\s*Pay\s*付款\s*NT\$\s*(?<amount>\d{1,3}(?:,\d{3})+|\d+)\s*付款完成\s*[。.]?\s*商店名稱\s*:\s*(?<merchant>(?:(?!NT\$|取消|退款|退貨|退刷|失敗|未成功|不成功|撤銷)[^:\n])+?)\s*(?::\s*)?(?:回饋\s*:(?![\s\S]*付款\s*NT\$)[\s\S]*)?$/,
+    },
+    {
+      // D-142: Japanese. Cancel / refund / failure words or a second payment sentence anywhere in the notice
+      // (subtitle too) refuse it; the amount and the shop come from the body only.
+      kind: 'spend',
+      refuse: [/キャンセル|取り消し|取消|返金|払い戻し|払戻|退款|退貨|退刷|失敗|未成功|不成功|撤銷/, /(?:お支払い|付款)\s*NT\$[\s\S]*(?:お支払い|付款)\s*NT\$/],
+      title: /^LINE\s*錢包$/i,
+      pattern:
+        /^LINE\s*Pay\s*お支払い\s*NT\$\s*(?<amount>\d{1,3}(?:,\d{3})+|\d+)\s*お支払いが完了しました\s*[。.]?\s*加盟店\s*:\s*(?<merchant>(?!NT\$)[^\s:。.,、;；](?:(?!NT\$)[^:\n])*?)\s*(?:[:\n](?![\s\S]*(?:お支払い|付款)\s*NT\$)[\s\S]*)?$/,
     },
   ],
 }
@@ -117,6 +140,7 @@ export function matchTemplate(c: NotificationCapture, adapter: NotificationAdapt
   const body = toHalfWidth(rawBody)
   for (const t of adapter.templates) {
     if (t.title && !t.title.test(toHalfWidth(raw(c.title ?? '')))) continue
+    if (t.refuse?.some((r) => r.test(whole))) continue
     const re = new RegExp(t.pattern.source, t.pattern.flags.includes('d') ? t.pattern.flags : t.pattern.flags + 'd')
     let m: RegExpExecArray | null = null
     let source = ''

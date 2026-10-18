@@ -10,31 +10,26 @@ export type Cell =
   | { month: string; state: 'value'; amount: number; name: string | null }
   /** No payslip for this month: a gap, never 0 (spec §6). */
   | { month: string; state: 'gap' }
-  /** Payslip exists but the item hadn't appeared yet (D-71). */
-  | { month: string; state: 'before' }
+  /** D-143: the month's payslip does not have this item (left empty), which is not 0. */
+  | { month: string; state: 'none' }
 
 export interface SlipIndex {
   byMonth: Map<string, Payslip>
   months: string[]
-  first: Map<string, string>
 }
 
 export function indexPayslips(slips: readonly Payslip[]): SlipIndex {
   const byMonth = new Map(slips.map((s) => [s.month, s]))
-  const months = [...byMonth.keys()].sort()
-  const first = new Map<string, string>()
-  for (const m of months) for (const l of byMonth.get(m)!.lines) if (!first.has(l.itemId)) first.set(l.itemId, m)
-  return { byMonth, months, first }
+  return { byMonth, months: [...byMonth.keys()].sort() }
 }
 
+/** D-143: a line on the payslip is its amount (0 included); an item not on it is 「—」, never 0. */
 export function cellFor(itemId: string, month: string, idx: SlipIndex): Cell {
   const slip = idx.byMonth.get(month)
   if (!slip) return { month, state: 'gap' }
   const line = slip.lines.find((l) => l.itemId === itemId)
   if (line) return { month, state: 'value', amount: line.amount, name: line.name }
-  const first = idx.first.get(itemId)
-  if (!first || month < first) return { month, state: 'before' }
-  return { month, state: 'value', amount: 0, name: null } // on the payslip's month, but not listed → 0
+  return { month, state: 'none' }
 }
 
 type ValueCell = Extract<Cell, { state: 'value' }>
@@ -89,10 +84,12 @@ export function periodStats(cells: readonly Cell[]) {
   const total = values.reduce((s, c) => s + c.amount, 0)
   return {
     total,
-    /** Number of months that count: those with a payslip (0 included), gaps excluded (D-71). */
+    /** Number of months that count: those with this item (0 included); gaps and months without it excluded (D-143). */
     counted: values.length,
     average: values.length ? Math.round(total / values.length) : null,
     gaps: cells.filter((c) => c.state === 'gap').length,
+    /** D-143: months whose payslip does not have this item. */
+    none: cells.filter((c) => c.state === 'none').length,
     max: values.reduce((m, c) => Math.max(m, c.amount), 0),
   }
 }
@@ -136,7 +133,7 @@ export function payDateFor(month: string, offset: number, day: number, now = new
 
 /**
  * Draft for a new payslip: fixed items copy the most recent earlier payslip, variable items start
- * empty (saved as 0); pay day, company and account follow that payslip too.
+ * empty (left off unless filled in, D-143); pay day, company and account follow that payslip too.
  */
 export function newPayslipDraft(
   month: string,
@@ -172,12 +169,14 @@ export function editPayslipDraft(slip: Payslip, items: readonly SalaryItem[]): P
 }
 
 /**
- * Lines to save. New payslips keep every line (empty = 0). On an existing payslip, a line that
- * wasn't on it and is left empty is dropped, so editing never makes an item "appear" in a month
- * it wasn't on (D-71).
+ * D-143: lines to save. Empty = this month does not have the item (left off, or taken off an existing
+ * payslip); 0 typed = the item with 0.
  */
-export function draftToLines(draft: PayslipDraft, isNew: boolean): { itemId: string; amount: number }[] {
-  return draft.lines
-    .filter((l) => isNew || l.onSlip || l.amount !== '')
-    .map((l) => ({ itemId: l.itemId, amount: l.amount === '' ? 0 : Number(l.amount) }))
+export function draftToLines(draft: PayslipDraft): { itemId: string; amount: number }[] {
+  return draft.lines.filter((l) => l.amount !== '').map((l) => ({ itemId: l.itemId, amount: Number(l.amount) }))
+}
+
+/** D-143: what a payslip saved before held as 0 meant "left empty": those lines go (a line with a note stays). */
+export function dropOldZeroLines<L extends { amount: number; note?: string }>(lines: readonly L[]): L[] {
+  return lines.filter((l) => l.amount !== 0 || !!l.note)
 }

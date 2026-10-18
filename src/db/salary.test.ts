@@ -189,3 +189,50 @@ describe('notes on payslip lines (D-141)', () => {
     expect('note' in p.payslips[0].lines[1]).toBe(false)
   })
 })
+
+describe('empty vs 0 (D-143)', () => {
+  it('a 0 line is kept as "the item with 0"; an item not sent is not on the payslip', async () => {
+    const s = await savePayslip(null, { ...oct, lines: [{ itemId: 'BASE_SALARY', amount: 45000 }, { itemId: 'BONUS_PERFORMANCE', amount: 0 }] }, d, now)
+    expect(s.lines.map((l) => [l.itemId, l.amount])).toEqual([
+      ['BASE_SALARY', 45000],
+      ['BONUS_PERFORMANCE', 0],
+    ])
+  })
+
+  it('upgrading to database v9 turns old 0 lines into "not on this payslip" (a 0 with a note stays); totals unchanged', async () => {
+    const name = `salary-v9-${n++}`
+    const old = new Dexie(name)
+    old.version(1).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, [source+externalId]', categories: 'id, type', paymentMethods: 'id', settings: 'key' })
+    old.version(2).stores({ salaryItems: 'id, kind', payslips: 'id, &month, payDate' })
+    old.version(3).stores({ importedNotifications: 'id, &captureId, batchId, transactionId', importBatches: 'id, createdAt', cardStatements: 'id, paymentMethodId, &fileHash, statementMonth', statementEntries: 'id, statementId', reconciliations: 'id, statementId, entryId, transactionId' })
+    old.version(4).stores({ monthlyPlans: 'month', planTemplates: 'id', plannedExpenses: 'id, month, &[month+templateId], transactionId' })
+    old.version(5).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, toAccountId, sourceAccountId, feeOf, [source+externalId]', adjustments: 'id, accountId, occurredAt' })
+    old.version(6).stores({})
+    old.version(7).stores({})
+    old.version(8).stores({})
+    await old.open()
+    await old.table('payslips').add({
+      id: 'p1', month: '2026-08', payDate: '2026-09-05', company: '', paymentMethodId: 'cash', transactionId: null, createdAt: '', updatedAt: '',
+      lines: [
+        { itemId: 'BASE_SALARY', name: '本薪', amount: 45000 },
+        { itemId: 'OVERTIME_PAY', name: '加班費', amount: 0 },
+        { itemId: 'BONUS_PERFORMANCE', name: '績效獎金', amount: 0, note: '這月沒有績效' },
+      ],
+    })
+    await old.table('settings').put({ key: 'schemaVersion', value: 8 })
+    old.close()
+    const up = new MoneyDB(name)
+    await up.open()
+    expect((await up.payslips.get('p1'))!.lines.map((l) => l.itemId)).toEqual(['BASE_SALARY', 'BONUS_PERFORMANCE'])
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(9)
+    up.close()
+  })
+
+  it('a backup from before v9 has its 0 lines dropped the same way; a v9 backup keeps a 0', async () => {
+    const s = await savePayslip(null, { ...oct, lines: [{ itemId: 'BASE_SALARY', amount: 45000 }, { itemId: 'BONUS_PERFORMANCE', amount: 0 }] }, d, now)
+    const file = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(parseBackup(JSON.stringify(file)).payslips.find((p) => p.id === s.id)!.lines).toHaveLength(2)
+    file.schemaVersion = 8
+    expect(parseBackup(JSON.stringify(file)).payslips.find((p) => p.id === s.id)!.lines.map((l) => l.itemId)).toEqual(['BASE_SALARY'])
+  })
+})
