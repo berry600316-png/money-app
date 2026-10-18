@@ -72,7 +72,11 @@ export function PayslipPage({
                 {it?.nature === 'fixed' ? '固定' : '變動'}
                 {it && it.name !== l.name ? `　當時：${l.name}` : ''}
               </span>
-              {l.note && <span className="line-note">{l.note}</span>}
+              {l.note && (
+                <span className="line-note">
+                  <span>{l.note}</span>
+                </span>
+              )}
             </span>
             <span className={'line-amt num' + (l.amount === 0 ? ' zero' : '')}>{fmt(l.amount)}</span>
             <Icon name="chev" className="chev" />

@@ -224,7 +224,7 @@ describe('empty vs 0 (D-143)', () => {
     const up = new MoneyDB(name)
     await up.open()
     expect((await up.payslips.get('p1'))!.lines.map((l) => l.itemId)).toEqual(['BASE_SALARY', 'BONUS_PERFORMANCE'])
-    expect((await up.settings.get('schemaVersion'))!.value).toBe(9)
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(SCHEMA_VERSION)
     up.close()
   })
 

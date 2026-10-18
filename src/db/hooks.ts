@@ -160,7 +160,14 @@ export function useAccountFlow(id: string): FlowRow[] | undefined {
 }
 
 export function usePlanTemplates(): PlanTemplate[] | undefined {
-  return useLiveQuery(async () => (await db.planTemplates.toArray()).sort((a, b) => a.day - b.day || a.name.localeCompare(b.name)), [])
+  // D-144: fixed days in order, then the ones without a fixed day.
+  return useLiveQuery(
+    async () =>
+      (await db.planTemplates.toArray()).sort(
+        (a, b) => Number(!a.fixedDate) - Number(!b.fixedDate) || (a.fixedDate ? a.day - b.day : 0) || a.name.localeCompare(b.name),
+      ),
+    [],
+  )
 }
 
 /** D-110: the latest payslip's net pay (its income record), offered as a first estimate. */

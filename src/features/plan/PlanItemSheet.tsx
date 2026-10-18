@@ -4,7 +4,7 @@ import { linkPlannedExpense, removeOneOffExpense, skipPlannedExpense, unlinkPlan
 import { MoneyError } from '../../db/repo'
 import { dayLabel, timeLabel } from '../../lib/dates'
 import { fmt } from '../../lib/money'
-import { linkCandidates, type PlanItemView } from '../../lib/plan'
+import { linkCandidates, planDayLabel, type PlanItemView } from '../../lib/plan'
 import { BottomSheet } from '../../ui/BottomSheet'
 import { Icon } from '../../ui/Icon'
 import { Overlay } from '../../ui/overlay'
@@ -92,7 +92,7 @@ export function PlanItemSheet({
           <div className="it-body">
             <div className="it-hero">
               <p className="s">
-                每月 {v.item.day} 日 · {catName(v.item.categoryId)} · {payName(v.item.paymentMethodId)} ·{' '}
+                {planDayLabel(v.item)} · {catName(v.item.categoryId)} · {payName(v.item.paymentMethodId)} ·{' '}
                 {v.state === 'linked' ? '已記帳' : v.state === 'skipped' ? '本月略過' : '待記帳'}
               </p>
               <span className={'num big' + (v.state === 'skipped' ? ' muted' : '')}>NT$ {fmt(v.state === 'linked' ? v.value : v.item.amount)}</span>

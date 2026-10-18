@@ -3,7 +3,7 @@
  * is "recorded" is worked out here from its link and the real transactions, every time (D-108).
  */
 import type { MonthlyPlan, PlannedExpense, Transaction } from '../db/types'
-import { daysInMonth } from './dates'
+import { daysInMonth, toYmd } from './dates'
 import { merchantSimilarity } from '../card/text'
 
 export type PlanItemState = 'pending' | 'linked' | 'skipped'
@@ -54,6 +54,23 @@ export const monthOfIso = (iso: string): string => {
 export function dueDayIn(month: string, day: number): number {
   const [y, m] = month.split('-').map(Number)
   return Math.min(day, daysInMonth({ y, m: m - 1 }))
+}
+
+/** D-144: how an item's day reads in lists. */
+export function planDayLabel(x: { day: number; fixedDate: boolean }): string {
+  return x.fixedDate ? `每月 ${x.day} 日` : '日期不固定'
+}
+
+/**
+ * D-144: the date offered when a planned expense is recorded. A fixed one: its day in the item's month
+ * (the month's last day when shorter, D-111), or today while that day is still to come (D-22: no future
+ * dates). Not fixed: today.
+ */
+export function recordDateFor(item: Pick<PlannedExpense, 'month' | 'day' | 'fixedDate'>, now = new Date()): string {
+  const today = toYmd(now)
+  if (!item.fixedDate) return today
+  const due = `${item.month}-${String(dueDayIn(item.month, item.day)).padStart(2, '0')}`
+  return due <= today ? due : today
 }
 
 /**
@@ -110,9 +127,17 @@ export function summarizePlan(
   }
 }
 
-/** By due day only: recording or skipping an item never moves it in the list (D-113). */
+/**
+ * By due day only: recording or skipping an item never moves it in the list (D-113). Items without a
+ * fixed day come after the fixed ones (D-144).
+ */
 function byDay(a: PlanItemView, b: PlanItemView): number {
-  return a.dueDay - b.dueDay || a.item.name.localeCompare(b.item.name) || a.item.id.localeCompare(b.item.id)
+  return (
+    Number(!a.item.fixedDate) - Number(!b.item.fixedDate) ||
+    (a.item.fixedDate ? a.dueDay - b.dueDay : 0) ||
+    a.item.name.localeCompare(b.item.name) ||
+    a.item.id.localeCompare(b.item.id)
+  )
 }
 
 /**

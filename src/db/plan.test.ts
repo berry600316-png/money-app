@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import Dexie from 'dexie'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from './db'
 import { addTransaction, deleteTransaction, MoneyError, updateTransaction, type TxInput } from './repo'
@@ -17,7 +18,7 @@ import {
   updatePlanTemplate,
   type PlanItemInput,
 } from './planRepo'
-import { linkCandidates, summarizePlan } from '../lib/plan'
+import { linkCandidates, planDayLabel, recordDateFor, summarizePlan } from '../lib/plan'
 
 let d: MoneyDB
 let n = 0
@@ -28,9 +29,9 @@ beforeEach(async () => {
 })
 afterEach(() => d.close())
 
-const rent: PlanItemInput = { name: '房租', amount: 15000, day: 5, categoryId: 'home', paymentMethodId: 'transfer' }
-const power: PlanItemInput = { name: '水電費', amount: 2000, day: 8, categoryId: 'home', paymentMethodId: 'transfer' }
-const phone: PlanItemInput = { name: '電話費', amount: 1000, day: 10, categoryId: 'home', paymentMethodId: 'card' }
+const rent: PlanItemInput = { name: '房租', amount: 15000, day: 5, fixedDate: true, categoryId: 'home', paymentMethodId: 'transfer' }
+const power: PlanItemInput = { name: '水電費', amount: 2000, day: 8, fixedDate: true, categoryId: 'home', paymentMethodId: 'transfer' }
+const phone: PlanItemInput = { name: '電話費', amount: 1000, day: 10, fixedDate: true, categoryId: 'home', paymentMethodId: 'card' }
 const spend = (p: Partial<TxInput>): TxInput => ({ type: 'expense', amount: 100, merchant: '', categoryId: 'food', paymentMethodId: 'card', date: '2026-10-03', time: '12:00', note: '', ...p })
 
 async function summary(month = '2026-10') {
@@ -235,7 +236,7 @@ describe('templates and month independence (D-107)', () => {
   })
   it('one-off items belong to one month; validation', async () => {
     await setupOctober()
-    await addOneOffExpense('2026-10', { name: '牙醫', amount: 800, day: 31, categoryId: 'medical', paymentMethodId: 'cash' }, d, now)
+    await addOneOffExpense('2026-10', { name: '牙醫', amount: 800, day: 31, fixedDate: true, categoryId: 'medical', paymentMethodId: 'cash' }, d, now)
     expect((await summary()).necessary).toBe(18000 + 800)
     await expect(addOneOffExpense('2026-10', { ...rent, name: ' ' }, d, now)).rejects.toThrow('請輸入名稱')
     await expect(addOneOffExpense('2026-10', { ...rent, day: 32 }, d, now)).rejects.toThrow('每月日期')
@@ -246,5 +247,73 @@ describe('templates and month independence (D-107)', () => {
     await addPlanTemplate({ ...rent, day: 31 }, '2026-11', d, now)
     await startPlan('2026-11', d, now)
     expect((await summary('2026-11')).items[0].dueDay).toBe(30)
+  })
+})
+
+describe('支出日期 固定｜不固定 (D-144)', () => {
+  const item = (month: string, day: number, fixedDate: boolean) => ({ month, day, fixedDate })
+  it('the date offered when recording: a fixed day, the month\'s last day, or today', () => {
+    // now = 2026-10-11 16:12
+    expect(recordDateFor(item('2026-10', 5, true), now)).toBe('2026-10-05')
+    expect(recordDateFor(item('2026-10', 11, true), now)).toBe('2026-10-11')
+    // Still to come (D-22: no future dates): today.
+    expect(recordDateFor(item('2026-10', 20, true), now)).toBe('2026-10-11')
+    expect(recordDateFor(item('2026-11', 5, true), now)).toBe('2026-10-11')
+    // An earlier month: its day, the month's last day when shorter (D-111), leap years too.
+    expect(recordDateFor(item('2026-09', 31, true), now)).toBe('2026-09-30')
+    expect(recordDateFor(item('2026-02', 31, true), now)).toBe('2026-02-28')
+    expect(recordDateFor(item('2028-02', 30, true), new Date(2028, 5, 1))).toBe('2028-02-29')
+    expect(recordDateFor(item('2026-01', 1, true), now)).toBe('2026-01-01')
+    // Not fixed: today, whatever its day and month.
+    expect(recordDateFor(item('2026-10', 5, false), now)).toBe('2026-10-11')
+    expect(recordDateFor(item('2026-09', 5, false), now)).toBe('2026-10-11')
+  })
+  it('labels, and fixed days first in the list', async () => {
+    expect(planDayLabel({ day: 5, fixedDate: true })).toBe('每月 5 日')
+    expect(planDayLabel({ day: 5, fixedDate: false })).toBe('日期不固定')
+    await addPlanTemplate({ ...rent, name: '加油', day: 1, fixedDate: false }, '2026-10', d, now)
+    await addPlanTemplate({ ...rent, name: '買菜', day: 2, fixedDate: false }, '2026-10', d, now)
+    await addPlanTemplate(phone, '2026-10', d, now)
+    await addPlanTemplate(rent, '2026-10', d, now)
+    await startPlan('2026-10', d, now)
+    expect((await summary()).items.map((v) => v.item.name)).toEqual(['房租', '電話費', '加油', '買菜'])
+  })
+  it('kept on items made from a template, follows a template change (D-107), and is required', async () => {
+    const tpl = await addPlanTemplate({ ...rent, fixedDate: false }, '2026-10', d, now)
+    await startPlan('2026-10', d, now)
+    const x = (await d.plannedExpenses.toArray())[0]
+    expect([x.fixedDate, x.day]).toEqual([false, 5])
+    await updatePlanTemplate(tpl.id, { ...rent, fixedDate: true, day: 25 }, d, now)
+    expect(await d.plannedExpenses.get(x.id)).toMatchObject({ fixedDate: true, day: 25 })
+    expect(await d.planTemplates.get(tpl.id)).toMatchObject({ fixedDate: true, day: 25 })
+    await editPlannedExpense(x.id, { ...rent, fixedDate: false }, d, now)
+    expect(await d.plannedExpenses.get(x.id)).toMatchObject({ fixedDate: false, edited: true })
+    const bad = { ...rent, fixedDate: undefined } as unknown as PlanItemInput
+    await expect(addOneOffExpense('2026-10', bad, d, now)).rejects.toThrow('支出日期')
+  })
+  it('upgrading to database v10 makes every item 日期不固定 and keeps its day', async () => {
+    const name = `plan-v10-${n++}`
+    const old = new Dexie(name)
+    old.version(1).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, [source+externalId]', categories: 'id, type', paymentMethods: 'id', settings: 'key' })
+    old.version(2).stores({ salaryItems: 'id, kind', payslips: 'id, &month, payDate' })
+    old.version(3).stores({ importedNotifications: 'id, &captureId, batchId, transactionId', importBatches: 'id, createdAt', cardStatements: 'id, paymentMethodId, &fileHash, statementMonth', statementEntries: 'id, statementId', reconciliations: 'id, statementId, entryId, transactionId' })
+    old.version(4).stores({ monthlyPlans: 'month', planTemplates: 'id', plannedExpenses: 'id, month, &[month+templateId], transactionId' })
+    old.version(5).stores({ transactions: 'id, occurredAt, type, categoryId, paymentMethodId, toAccountId, sourceAccountId, feeOf, [source+externalId]', adjustments: 'id, accountId, occurredAt' })
+    for (const v of [6, 7, 8, 9]) old.version(v).stores({})
+    await old.open()
+    const stamp = now.toISOString()
+    await old.table('planTemplates').add({ id: 't1', name: '房租', amount: 15000, day: 5, categoryId: 'home', paymentMethodId: 'transfer', isActive: true, createdAt: stamp, updatedAt: stamp })
+    await old.table('plannedExpenses').add({
+      id: 'x1', month: '2026-10', templateId: 't1', name: '房租', amount: 15000, day: 5, categoryId: 'home', paymentMethodId: 'transfer',
+      status: 'pending', transactionId: null, edited: false, createdAt: stamp, updatedAt: stamp,
+    })
+    await old.table('settings').put({ key: 'schemaVersion', value: 9 })
+    old.close()
+    const up = new MoneyDB(name)
+    await up.open()
+    expect(await up.planTemplates.get('t1')).toMatchObject({ fixedDate: false, day: 5 })
+    expect(await up.plannedExpenses.get('x1')).toMatchObject({ fixedDate: false, day: 5 })
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(10)
+    up.close()
   })
 })

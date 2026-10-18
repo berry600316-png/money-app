@@ -160,7 +160,7 @@ describe('salary items and fixed items', () => {
   })
   it('a fixed item whose only items were untouched is removed; one with a skipped month is 已刪除', async () => {
     await startPlan('2026-10', d, now)
-    const input = { name: '房租', amount: 12000, day: 5, categoryId: 'home', paymentMethodId: 'cash' }
+    const input = { name: '房租', amount: 12000, day: 5, fixedDate: true, categoryId: 'home', paymentMethodId: 'cash' }
     const fresh = await addPlanTemplate(input, '2026-10', d, now)
     expect(await planTemplateDeleteImpact(fresh.id, d, now)).toMatchObject({ mode: 'hard', uses: 0 })
     await deletePlanTemplate(fresh.id, d, now)

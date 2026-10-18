@@ -304,8 +304,10 @@ export interface PlanTemplate {
   id: string
   name: string
   amount: number
-  /** 1–31 (clamped to the month's last day, D-111). */
+  /** 1–31 (clamped to the month's last day, D-111). Kept while not fixed, for when it is fixed again. */
   day: number
+  /** D-144: recorded on `day` (true) or on the day it is recorded (false). */
+  fixedDate: boolean
   categoryId: string
   paymentMethodId: string
   isActive: boolean
@@ -325,6 +327,8 @@ export interface PlannedExpense {
   name: string
   amount: number
   day: number
+  /** D-144: as on its template. */
+  fixedDate: boolean
   categoryId: string
   paymentMethodId: string
   status: 'pending' | 'skipped'

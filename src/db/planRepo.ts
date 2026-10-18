@@ -26,6 +26,8 @@ export interface PlanItemInput {
   amount: number
   /** 1–31; later than the month's last day means that last day (D-111). */
   day: number
+  /** D-144: true = recorded on `day`; false = 日期不固定, recorded on the day it is recorded. */
+  fixedDate: boolean
   categoryId: string
   paymentMethodId: string
 }
@@ -35,13 +37,14 @@ async function checkItem(d: MoneyDB, input: PlanItemInput): Promise<PlanItemInpu
   if (!name) throw new MoneyError('請輸入名稱')
   if (!isValidAmount(input.amount)) throw new MoneyError(`金額需為 1 到 ${MAX_AMOUNT.toLocaleString('en-US')} 的整數`)
   if (!Number.isInteger(input.day) || input.day < 1 || input.day > 31) throw new MoneyError('每月日期需為 1 到 31')
+  if (typeof input.fixedDate !== 'boolean') throw new MoneyError('請選擇支出日期固定或不固定')
   const [cat, pay] = await Promise.all([d.categories.get(input.categoryId), d.paymentMethods.get(input.paymentMethodId)])
   if (!cat || cat.type !== 'expense') throw new MoneyError('請選擇支出分類')
   if (!pay) throw new MoneyError('請選擇付款方式')
   return { ...input, name }
 }
 
-function itemFrom(month: string, t: Pick<PlanTemplate, 'id' | 'name' | 'amount' | 'day' | 'categoryId' | 'paymentMethodId'> | null, input: PlanItemInput, stamp: string): PlannedExpense {
+function itemFrom(month: string, t: Pick<PlanTemplate, 'id'> | null, input: PlanItemInput, stamp: string): PlannedExpense {
   return {
     id: newId(),
     month,
@@ -49,6 +52,7 @@ function itemFrom(month: string, t: Pick<PlanTemplate, 'id' | 'name' | 'amount' 
     name: input.name,
     amount: input.amount,
     day: input.day,
+    fixedDate: input.fixedDate,
     categoryId: input.categoryId,
     paymentMethodId: input.paymentMethodId,
     status: 'pending',

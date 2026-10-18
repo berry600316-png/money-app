@@ -5,6 +5,7 @@ import { EntrySheet, type EntryPrefill } from './features/EntrySheet'
 import { PlanPage } from './features/plan/PlanPage'
 import { PlanTemplatesPage } from './features/plan/PlanTemplatesPage'
 import { recordPlannedExpense } from './db/planRepo'
+import { recordDateFor } from './lib/plan'
 import type { TxInput } from './db/repo'
 import { HomeScreen } from './features/HomeScreen'
 import { emptyFilters, ListScreen, type ListFilters } from './features/ListScreen'
@@ -406,7 +407,14 @@ function Shell() {
                     setPlanEntry({
                       itemId: v.item.id,
                       name: v.item.name,
-                      prefill: { amount: v.item.amount, merchant: v.item.name, categoryId: v.item.categoryId, paymentMethodId: v.item.paymentMethodId },
+                      // D-144: its fixed day, or today.
+                      prefill: {
+                        amount: v.item.amount,
+                        merchant: v.item.name,
+                        categoryId: v.item.categoryId,
+                        paymentMethodId: v.item.paymentMethodId,
+                        date: recordDateFor(v.item),
+                      },
                     })
                     setEntry({ open: true, id: null })
                   }}

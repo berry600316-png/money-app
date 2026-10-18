@@ -466,10 +466,22 @@ function parsePlanData(raw: Record<string, unknown>, catById: Map<string, Catego
     if (!isStr(o.name) || !o.name.trim()) fail(`${what}缺少名稱`)
     if (!isValidAmount(o.amount)) fail(`${what}的金額不正確`)
     if (!isDay(o.day)) fail(`${what}的每月日期不正確`)
+    // D-144: a file from before has no such field: 日期不固定, as the database upgrade does.
+    const old = (raw.schemaVersion as number) < 10
+    if (!old && typeof o.fixedDate !== 'boolean') fail(`${what}的支出日期設定不正確`)
     if (!isStr(o.categoryId) || catById.get(o.categoryId)?.type !== 'expense') fail(`${what}的分類不存在`)
     if (!isStr(o.paymentMethodId) || !payIds.has(o.paymentMethodId)) fail(`${what}的付款方式不存在`)
     if (!isIso(o.createdAt) || !isIso(o.updatedAt)) fail(`${what}的時間不正確`)
-    return { name: o.name, amount: o.amount as number, day: o.day as number, categoryId: o.categoryId, paymentMethodId: o.paymentMethodId, createdAt: o.createdAt, updatedAt: o.updatedAt }
+    return {
+      name: o.name,
+      amount: o.amount as number,
+      day: o.day as number,
+      fixedDate: old ? false : (o.fixedDate as boolean),
+      categoryId: o.categoryId,
+      paymentMethodId: o.paymentMethodId,
+      createdAt: o.createdAt,
+      updatedAt: o.updatedAt,
+    }
   }
 
   const planTemplates = (raw.planTemplates as unknown[]).map((o, i): PlanTemplate => {

@@ -7,6 +7,7 @@ import { Overlay } from '../../ui/overlay'
 import { MoneyError } from '../../db/repo'
 import { currentMonthKey } from '../../lib/months'
 import { fmt } from '../../lib/money'
+import { planDayLabel } from '../../lib/plan'
 import { Icon } from '../../ui/Icon'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
@@ -42,7 +43,7 @@ export function PlanTemplatesPage({ backLabel, onBack }: { backLabel: string; on
       <button type="button" className="row-main as-btn" onClick={() => setEditor({ kind: 'template', template: t, fromMonth: cur })}>
         <span className="row-title">{t.name}</span>
         <span className="row-sub">
-          每月 {t.day} 日 · {ref.category(t.categoryId).name} · {ref.payment(t.paymentMethodId).name}
+          {planDayLabel(t)} · {ref.category(t.categoryId).name} · {ref.payment(t.paymentMethodId).name}
         </span>
       </button>
       <span className="row-amt num">{fmt(t.amount)}</span>

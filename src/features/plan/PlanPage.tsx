@@ -4,7 +4,7 @@ import { startPlan } from '../../db/planRepo'
 import { MoneyError } from '../../db/repo'
 import { addMonthKey, currentMonthKey, monthKeyLabel } from '../../lib/months'
 import { fmt } from '../../lib/money'
-import type { PlanItemView } from '../../lib/plan'
+import { planDayLabel, type PlanItemView } from '../../lib/plan'
 import { AnimatedNumber } from '../../ui/AnimatedNumber'
 import { Icon } from '../../ui/Icon'
 import { useRefData } from '../../ui/refData'
@@ -230,7 +230,7 @@ export function PlanPage({
 
 function PlanRow({ v, month, onOpen, hint }: { v: PlanItemView; month: string; onOpen: () => void; hint: string | null }) {
   const [, m] = month.split('-').map(Number)
-  let sub = `每月 ${v.item.day} 日`
+  let sub = planDayLabel(v.item)
   if (v.state === 'linked') sub += ' · 已記帳'
   else if (v.state === 'skipped') sub += ' · 本月略過'
   else if (v.broken) sub = v.broken.kind === 'deleted' ? '原本對應的記帳已刪除' : v.broken.kind === 'moved' ? `原本對應的記帳已移到 ${Number(v.broken.month.slice(5))} 月` : '原本對應的記帳已不是支出'
