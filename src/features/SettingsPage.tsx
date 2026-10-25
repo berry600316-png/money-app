@@ -3,6 +3,7 @@ import { usePwaState } from '../pwa/pwa'
 import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
 import { BackupSection } from './BackupSection'
+import { AppLockSection } from './lock/AppLockSection'
 
 export function SettingsPage({
   open,
@@ -42,6 +43,8 @@ export function SettingsPage({
         <h1>設定</h1>
         <span />
       </div>
+
+      <AppLockSection />
 
       <div className="set-sec">
         <h2>資料保存</h2>

@@ -49,6 +49,8 @@ export const DEVICE_SETTING_KEYS = new Set([
   'txCountAtLastBackup',
   'backupReminderDismissedAt',
   'preRestoreSnapshot',
+  // D-146: the App 鎖 (its PIN and passkey id) belongs to this iPhone: never in a file, never replaced by a restore.
+  'appLock',
 ])
 
 export interface MoneyData {

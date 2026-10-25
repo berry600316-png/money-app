@@ -56,6 +56,8 @@ const PATHS: Record<string, string> = {
   up: '<path d="m6 14.5 6-6 6 6"/>',
   down: '<path d="m6 9.5 6 6 6-6"/>',
   out: '<path d="M12 19V7M7 12l5-5 5 5"/>',
+  // D-146: Face ID (App 鎖)
+  faceId: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9v1.5M15 9v1.5M12 9v4h-1M9.5 16a3.5 3.5 0 0 0 5 0"/>',
 }
 
 /**

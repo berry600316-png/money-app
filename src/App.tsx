@@ -19,6 +19,7 @@ import { Icon } from './ui/Icon'
 import { usePayslips } from './db/hooks'
 import { SALARY_CATEGORY_ID } from './db/defaults'
 import { ItemHistoryPage } from './features/salary/ItemHistoryPage'
+import { AppLockGate } from './features/lock/LockScreen'
 import { PayslipEditor, payslipIdForTransaction, type PayslipEditorTarget } from './features/salary/PayslipEditor'
 import { PayslipListPage } from './features/salary/PayslipListPage'
 import { PayslipPage } from './features/salary/PayslipPage'
@@ -79,13 +80,17 @@ export function App() {
   const payments = usePaymentMethods()
   if (!categories || !payments) return <div className="device" aria-busy="true" />
   return (
-    <RefDataProvider categories={categories} payments={payments}>
-      <ReconProvider>
-        <DiscardProvider>
-          <Shell />
-        </DiscardProvider>
-      </ReconProvider>
-    </RefDataProvider>
+    <>
+      <RefDataProvider categories={categories} payments={payments}>
+        <ReconProvider>
+          <DiscardProvider>
+            <Shell />
+          </DiscardProvider>
+        </ReconProvider>
+      </RefDataProvider>
+      {/* D-146: App 鎖, in front of the app; the app underneath keeps its state (an unsaved entry stays). */}
+      <AppLockGate />
+    </>
   )
 }
 

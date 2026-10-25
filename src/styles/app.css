@@ -988,3 +988,45 @@ button.lrow:active { background: var(--row-press); }
 .frow-sub { display: block; font-size: 0.75rem; color: var(--ink-2); margin-top: 1px; }
 .frow-val { font-size: 1.125rem; }
 .frow-val.muted { color: var(--muted-ink); }
+
+/* ---------- D-146: App 鎖 — in front of everything, toasts included; the launch mark (300) still plays over it ---------- */
+.lock { position: fixed; inset: 0; z-index: 260; display: flex; flex-direction: column; align-items: center; padding: calc(var(--sat) + 12px) 28px calc(var(--sab) + 32px); background: linear-gradient(170deg, #1A3A6B, #10264A); color: #fff; text-align: center; overflow-y: auto; }
+.lock-cover { justify-content: center; }
+.lk-icon { width: 72px; height: 72px; border-radius: 17px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); }
+.lk-top { display: flex; flex-direction: column; align-items: center; margin-top: 22vh; }
+.lk-name { font-size: 1.375rem; font-weight: 700; margin: 14px 0 0; }
+.lk-msg { font-size: 0.875rem; line-height: 1.6; color: rgba(255, 255, 255, 0.72); margin: 6px 0 0; }
+.lk-err { font-size: 0.8125rem; line-height: 1.5; color: #FFD18A; margin: 12px 0 0; }
+.lk-act { margin-top: auto; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 14px; }
+.lk-btn { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; border: 0; border-radius: 16px; background: #fff; color: var(--brand); font-size: 1rem; font-weight: 600; }
+.lk-btn svg { width: 22px; height: 22px; }
+.lk-btn:disabled { opacity: 0.6; }
+.lk-btn.ghost { background: var(--card); color: var(--brand); box-shadow: 0 0 0 1px var(--line) inset; }
+.lk-link { border: 0; background: none; min-height: 44px; color: rgba(255, 255, 255, 0.88); font-size: 0.9375rem; }
+.lk-cancel { position: absolute; top: calc(var(--sat) + 6px); left: 8px; border: 0; background: none; min-height: 44px; padding: 0 12px; color: rgba(255, 255, 255, 0.88); font-size: 1rem; }
+/* The PIN screens are light, like the rest of the app. */
+.lock.lock-pin { background: var(--bg); color: var(--ink); }
+.lock-pin .lk-cancel, .lock-pin .lk-link { color: var(--brand); }
+.lock-pin .lk-link.sub { color: var(--ink-2); font-size: 0.875rem; }
+.pin { flex: 1; width: 100%; max-width: 360px; display: flex; flex-direction: column; align-items: center; padding-top: 10vh; }
+.pin-title { font-size: 1.0625rem; font-weight: 600; margin: 0; }
+.pin-sub { font-size: 0.8125rem; line-height: 1.55; color: var(--ink-2); margin: 6px 0 0; }
+.pin-dots { display: flex; gap: 14px; margin-top: 26px; }
+.pin-dots i { width: 13px; height: 13px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--brand) inset; }
+.pin-dots i.on { background: var(--brand); }
+.pin-dots.shake { animation: shake 0.38s; }
+.pin-err { min-height: 1.5em; font-size: 0.8125rem; color: var(--danger); margin: 10px 0 12px; }
+.pin-pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 14px 24px; }
+.pin-key { width: 72px; height: 72px; border: 0; border-radius: 50%; background: var(--card); color: var(--ink); font-family: var(--font-num); font-variant-numeric: lining-nums tabular-nums; font-size: 1.75rem; box-shadow: 0 1px 0 rgba(19, 35, 61, 0.06); }
+.pin-key:active { background: var(--fill-press); }
+.pin-key.fn { background: none; box-shadow: none; font-family: var(--font-ui); font-size: 0.875rem; color: var(--brand); }
+.pin-foot { margin-top: auto; padding-top: 12px; }
+.lk-help { width: 100%; max-width: 360px; text-align: left; padding-top: 8vh; }
+.lk-help h2 { font-size: 1.0625rem; margin: 0 0 12px; }
+.lk-help p, .lk-help ol { font-size: 0.875rem; line-height: 1.7; margin: 0 0 10px; }
+.lk-help ol { padding-left: 20px; }
+.lk-warn { color: #A66A00; }
+.s-sub.lock-warn { color: #A66A00; }
+@media (prefers-reduced-motion: reduce) {
+  .pin-dots.shake { animation: none; }
+}
