@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../../db/db'
 import { useSalaryItems } from '../../db/hooks'
@@ -28,6 +28,9 @@ export function PayslipPage({
   const slip = useLiveQuery(async () => (await db.payslips.get(id)) ?? null, [id])
   const items = useSalaryItems()
   const [notesOpen, setNotesOpen] = useState(false)
+  // D-145: the items this payslip does not have, shown on request; folded again on every payslip.
+  const [shownEmpty, setShownEmpty] = useState<Record<SalaryKind, boolean>>({ earning: false, deduction: false })
+  useEffect(() => setShownEmpty({ earning: false, deduction: false }), [id])
 
   const head = (title: string, editable: boolean) => (
     <div className="page-head">
@@ -72,13 +75,55 @@ export function PayslipPage({
                 {it?.nature === 'fixed' ? '固定' : '變動'}
                 {it && it.name !== l.name ? `　當時：${l.name}` : ''}
               </span>
-              {l.note && <span className="line-note">{l.note}</span>}
+              {l.note && (
+                <span className="line-note">
+                  <span>{l.note}</span>
+                </span>
+              )}
             </span>
             <span className={'line-amt num' + (l.amount === 0 ? ' zero' : '')}>{fmt(l.amount)}</span>
             <Icon name="chev" className="chev" />
           </button>
         )
       })
+  /** D-145: active items of this kind that are not on this payslip (empty this month), in their usual order. */
+  const emptyLines = (kind: SalaryKind) => {
+    const on = new Set(slip.lines.map((l) => l.itemId))
+    const missing = (items ?? []).filter((i) => i.kind === kind && i.isActive && !on.has(i.id))
+    if (!missing.length) return null
+    const label = kind === 'earning' ? '應發' : '應扣'
+    if (!shownEmpty[kind]) {
+      return (
+        <button
+          type="button"
+          className="row more-row"
+          aria-expanded={false}
+          aria-label={`顯示這個月沒有的 ${missing.length} 個${label}項目`}
+          onClick={() => setShownEmpty((s) => ({ ...s, [kind]: true }))}
+        >
+          <span className="more-dots" aria-hidden="true">
+            •••
+          </span>
+        </button>
+      )
+    }
+    return (
+      <>
+        {missing.map((i) => (
+          <button type="button" className="row empty-line" key={i.id} aria-label={`${i.name}，這個月沒有，看項目歷史`} onClick={() => onHistory(i.id)}>
+            <span className="row-main">
+              <span className="line-name">{i.name}</span>
+            </span>
+            <span className="line-amt num">—</span>
+            <Icon name="chev" className="chev" />
+          </button>
+        ))}
+        <button type="button" className="row more-row" aria-expanded={true} onClick={() => setShownEmpty((s) => ({ ...s, [kind]: false }))}>
+          收起
+        </button>
+      </>
+    )
+  }
   const noteCount = slip.lines.filter((l) => l.note).length
   const earnLines = lines('earning')
   const dedLines = lines('deduction')
@@ -114,11 +159,17 @@ export function PayslipPage({
         <h2>應發</h2>
         <span className="eyebrow">點項目看歷史</span>
       </div>
-      <div className="card">{earnLines.length ? earnLines : <div className="row row-sub">沒有應發項目</div>}</div>
+      <div className="card">
+        {earnLines.length ? earnLines : <div className="row row-sub">沒有應發項目</div>}
+        {emptyLines('earning')}
+      </div>
       <div className="sec-head">
         <h2>應扣</h2>
       </div>
-      <div className="card">{dedLines.length ? dedLines : <div className="row row-sub">沒有應扣項目</div>}</div>
+      <div className="card">
+        {dedLines.length ? dedLines : <div className="row row-sub">沒有應扣項目</div>}
+        {emptyLines('deduction')}
+      </div>
 
       {slip.transactionId ? (
         <div className="linked">

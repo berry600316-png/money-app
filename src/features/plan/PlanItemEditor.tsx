@@ -4,6 +4,7 @@ import { MoneyError } from '../../db/repo'
 import type { PlannedExpense, PlanTemplate } from '../../db/types'
 import { looksLikeCardBill } from '../../lib/plan'
 import { BottomSheet } from '../../ui/BottomSheet'
+import { Seg } from '../../ui/Seg'
 import { useCloseGuard, useDirtyCheck } from '../../ui/discard'
 import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
@@ -18,11 +19,19 @@ interface Draft {
   name: string
   amount: string
   day: string
+  /** D-144 */
+  dateMode: DateMode
   categoryId: string
   paymentMethodId: string
   /** New item only: also a fixed monthly item (D-107). */
   everyMonth: boolean
 }
+
+type DateMode = 'fixed' | 'any'
+const DATE_MODES = [
+  { value: 'fixed', label: '固定' },
+  { value: 'any', label: '不固定' },
+] as const
 
 /** Add or change a planned expense (one month) or a fixed monthly item (D-105, D-107, D-111). */
 export function PlanItemEditor({ target, onClose }: { target: PlanEditorTarget | null; onClose: () => void }) {
@@ -41,8 +50,16 @@ export function PlanItemEditor({ target, onClose }: { target: PlanEditorTarget |
     const firstPay = ref.payments.find((p) => p.id === 'transfer' && p.isActive) ?? ref.payments.find((p) => p.isActive)
     const src = target.kind === 'item' ? target.item : target.kind === 'template' ? target.template : null
     const next: Draft = src
-      ? { name: src.name, amount: String(src.amount), day: String(src.day), categoryId: src.categoryId, paymentMethodId: src.paymentMethodId, everyMonth: false }
-      : { name: '', amount: '', day: '1', categoryId: firstCat?.id ?? '', paymentMethodId: firstPay?.id ?? '', everyMonth: true }
+      ? {
+          name: src.name,
+          amount: String(src.amount),
+          day: String(src.day),
+          dateMode: src.fixedDate ? 'fixed' : 'any',
+          categoryId: src.categoryId,
+          paymentMethodId: src.paymentMethodId,
+          everyMonth: false,
+        }
+      : { name: '', amount: '', day: '1', dateMode: 'any', categoryId: firstCat?.id ?? '', paymentMethodId: firstPay?.id ?? '', everyMonth: true }
     opened.current = JSON.stringify(next)
     setD(next)
     // Only when a new target arrives.
@@ -59,7 +76,14 @@ export function PlanItemEditor({ target, onClose }: { target: PlanEditorTarget |
 
   const save = async () => {
     if (!d || !t || busy) return
-    const input: PlanItemInput = { name: d.name, amount: Number(d.amount || 0), day: Number(d.day || 0), categoryId: d.categoryId, paymentMethodId: d.paymentMethodId }
+    const input: PlanItemInput = {
+      name: d.name,
+      amount: Number(d.amount || 0),
+      day: Number(d.day || 0),
+      fixedDate: d.dateMode === 'fixed',
+      categoryId: d.categoryId,
+      paymentMethodId: d.paymentMethodId,
+    }
     setBusy(true)
     try {
       if (t.kind === 'new') {
@@ -125,16 +149,22 @@ export function PlanItemEditor({ target, onClose }: { target: PlanEditorTarget |
                   onChange={(e) => set({ amount: e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '').slice(0, 8) })}
                 />
               </label>
-              <label className="frow" htmlFor="pe-day">
-                <span>每月預計日期</span>
-                <select id="pe-day" value={d.day} onChange={(e) => set({ day: e.target.value })}>
-                  {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((v) => (
-                    <option key={v} value={v}>
-                      {v} 日
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="frow">
+                <span>支出日期</span>
+                <Seg label="支出日期" className="date-seg" options={DATE_MODES} value={d.dateMode} onChange={(dateMode) => set({ dateMode })} />
+              </div>
+              {d.dateMode === 'fixed' && (
+                <label className="frow" htmlFor="pe-day">
+                  <span>每月日期</span>
+                  <select id="pe-day" value={d.day} onChange={(e) => set({ day: e.target.value })}>
+                    {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((v) => (
+                      <option key={v} value={v}>
+                        {v} 日
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="frow" htmlFor="pe-cat">
                 <span>分類</span>
                 <select id="pe-cat" value={d.categoryId} onChange={(e) => set({ categoryId: e.target.value })}>
@@ -156,7 +186,11 @@ export function PlanItemEditor({ target, onClose }: { target: PlanEditorTarget |
                 </select>
               </label>
             </div>
-            {Number(d.day) > 28 && <p className="note">月份天數不夠時，算在該月最後一天。</p>}
+            <p className="note">
+              {d.dateMode === 'fixed'
+                ? `記錄這筆支出時，日期帶入每月 ${d.day} 日${Number(d.day) > 28 ? '（月份天數不夠時，算在該月最後一天）' : ''}；那天還沒到就帶今天。`
+                : '記錄這筆支出時，日期帶入當天。'}
+            </p>
             {looksLikeCardBill(d.name) && (
               <p className="note warn-inline">刷卡時已經記過每一筆消費，繳卡費不要再列為必要支出，否則會重複計算。</p>
             )}

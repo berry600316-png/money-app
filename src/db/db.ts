@@ -23,7 +23,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 10
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -156,6 +156,21 @@ export class MoneyDB extends Dexie {
             if (Array.isArray(s.lines)) s.lines = dropOldZeroLines(s.lines)
           })
         await tx.table('settings').put({ key: 'schemaVersion', value: 9 })
+      })
+    // v10 (D-144): a planned expense is recorded on its fixed day, or on the day it is recorded. Everything
+    // made before is 日期不固定 (as it behaved); its day stays, for when it is set to fixed.
+    this.version(10)
+      .stores({})
+      .upgrade(async (tx) => {
+        for (const name of ['planTemplates', 'plannedExpenses']) {
+          await tx
+            .table(name)
+            .toCollection()
+            .modify((x: { fixedDate?: boolean }) => {
+              x.fixedDate = false
+            })
+        }
+        await tx.table('settings').put({ key: 'schemaVersion', value: 10 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

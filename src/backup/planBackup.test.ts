@@ -24,8 +24,8 @@ afterEach(() => {
 const spend = (p: Partial<TxInput>): TxInput => ({ type: 'expense', amount: 100, merchant: '', categoryId: 'home', paymentMethodId: 'transfer', date: '2026-10-05', time: '09:00', note: '', ...p })
 
 async function seedPlan(d: MoneyDB) {
-  await addPlanTemplate({ name: '房租', amount: 15000, day: 5, categoryId: 'home', paymentMethodId: 'transfer' }, '2026-10', d, now)
-  await addPlanTemplate({ name: '電話費', amount: 1000, day: 10, categoryId: 'home', paymentMethodId: 'card' }, '2026-10', d, now)
+  await addPlanTemplate({ name: '房租', amount: 15000, day: 5, fixedDate: true, categoryId: 'home', paymentMethodId: 'transfer' }, '2026-10', d, now)
+  await addPlanTemplate({ name: '電話費', amount: 1000, day: 10, fixedDate: false, categoryId: 'home', paymentMethodId: 'card' }, '2026-10', d, now)
   await startPlan('2026-10', d, now)
   await setPlanNumbers('2026-10', { income: 55000, saving: 12000 }, d, now)
   const rent = (await d.plannedExpenses.toArray()).find((x) => x.name === '房租')!
@@ -43,7 +43,7 @@ describe('planning in backups (D-114)', () => {
   it('a full backup restores plans, templates, items and their links', async () => {
     await seedPlan(a)
     const file = parseBackup(JSON.stringify(buildBackup(await readAllData(a), now)))
-    expect(file.schemaVersion).toBe(9)
+    expect(file.schemaVersion).toBe(10)
     await restoreBackup(file, b, now)
     const s = await summary(b)
     expect([s.income, s.saving, s.necessary, s.recorded, s.spendable]).toEqual([55000, 12000, 16000, 15000, 55000 - 16000 - 0 - 12000])
@@ -57,6 +57,25 @@ describe('planning in backups (D-114)', () => {
     await undoRestore(b)
     expect(await b.monthlyPlans.count()).toBe(1)
     expect(await b.plannedExpenses.count()).toBe(2)
+  })
+  it('D-144: 支出日期 is kept; a file from before v10 has every item 日期不固定; a v10 file must say', async () => {
+    await seedPlan(a)
+    const snapshot = await readAllData(a)
+    const raw = () => JSON.parse(JSON.stringify(buildBackup(snapshot, now)))
+    const kept = parseBackup(JSON.stringify(raw()))
+    expect(kept.planTemplates.map((t) => [t.name, t.fixedDate, t.day]).sort()).toEqual([['房租', true, 5], ['電話費', false, 10]])
+    expect(kept.plannedExpenses.find((x) => x.name === '房租')!.fixedDate).toBe(true)
+    const old = raw()
+    old.schemaVersion = 9
+    for (const k of ['planTemplates', 'plannedExpenses']) for (const x of old[k]) delete x.fixedDate
+    const was = parseBackup(JSON.stringify(old))
+    const all = [...was.planTemplates, ...was.plannedExpenses]
+    expect(all).toHaveLength(4)
+    expect(all.every((x) => x.fixedDate === false)).toBe(true)
+    expect(all.map((x) => [x.name, x.day]).sort()).toEqual([['房租', 5], ['房租', 5], ['電話費', 10], ['電話費', 10]])
+    const bad = raw()
+    delete bad.plannedExpenses[0].fixedDate
+    expect(() => parseBackup(JSON.stringify(bad))).toThrow('支出日期')
   })
   it('older backups (schema 3) restore with no plans', async () => {
     await seedPlan(a)
