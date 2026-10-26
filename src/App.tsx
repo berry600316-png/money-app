@@ -15,6 +15,7 @@ import { StatsScreen } from './features/StatsScreen'
 import { fromYmd, sameYm, ymOf, type YearMonth } from './lib/dates'
 import { useToday } from './lib/useToday'
 import { initPwa } from './pwa/pwa'
+import { UpdatePrompt } from './pwa/UpdatePrompt'
 import { Icon } from './ui/Icon'
 import { usePayslips } from './db/hooks'
 import { SALARY_CATEGORY_ID } from './db/defaults'
@@ -157,11 +158,9 @@ function Shell() {
     if (!sameYm(prev, cur)) setMonth((m) => (sameYm(m, prev) ? cur : m))
   }, [today])
 
-  // D-43: only let a new version reload the app when nothing is being edited.
-  const busy = useRef(false)
-  busy.current = entry.open || editor !== null || slipEditor !== null
+  // D-43: updates require an explicit refresh action.
   useEffect(() => {
-    void initPwa(() => !busy.current)
+    void initPwa()
   }, [])
 
   // D-136: no card to record notices to yet: open the 行動支付 whose cards are bound (LINE Pay first).
@@ -496,6 +495,7 @@ function Shell() {
         />
         <div className="overlay-root" ref={setOverlayEl} />
         <DiscardHost />
+        <UpdatePrompt />
       </ToastProvider>
       </OverlayContext.Provider>
     </div>

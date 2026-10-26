@@ -2,8 +2,7 @@ import { useSyncExternalStore } from 'react'
 
 /*
  * Service worker + storage status shared with the settings page.
- * D-43: a new version is applied only at a safe moment — right at launch, or when the
- * app goes to the background with no sheet open — never while the user is typing.
+ * D-43: apply updates only after the user explicitly chooses to refresh.
  */
 
 export interface PwaState {
@@ -13,9 +12,10 @@ export interface PwaState {
   offlineReady: boolean
   /** null = unknown / API missing */
   persisted: boolean | null
+  updateAvailable: boolean
 }
 
-let state: PwaState = { supported: false, offlineReady: false, persisted: null }
+let state: PwaState = { supported: false, offlineReady: false, persisted: null, updateAvailable: false }
 const listeners = new Set<() => void>()
 
 function set(patch: Partial<PwaState>) {
@@ -33,36 +33,46 @@ export function usePwaState(): PwaState {
   )
 }
 
-const LAUNCH_WINDOW_MS = 4000
+let initialized = false
+let updateSW: ((reloadPage?: boolean) => Promise<void>) | undefined
 
-export async function initPwa(canReloadNow: () => boolean): Promise<void> {
+export function dismissUpdate(): void {
+  set({ updateAvailable: false })
+}
+
+export async function applyUpdate(): Promise<void> {
+  await updateSW?.(true)
+}
+
+export async function initPwa(): Promise<void> {
   void refreshPersisted()
-  if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return
+  if (!('serviceWorker' in navigator) || !import.meta.env.PROD || initialized) return
+  initialized = true
   set({ supported: true, offlineReady: !!navigator.serviceWorker.controller })
-
-  const startedAt = Date.now()
-  let pending = false
-  const { registerSW } = await import('virtual:pwa-register')
-  const updateSW = registerSW({
-    immediate: true,
-    onOfflineReady() {
-      set({ offlineReady: true })
-    },
-    onNeedRefresh() {
-      pending = true
-      if (Date.now() - startedAt < LAUNCH_WINDOW_MS && canReloadNow()) void updateSW(true)
-    },
-    onRegisteredSW(_url, reg) {
-      // iOS keeps standalone apps alive for days; look for updates when the app comes back.
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') void reg?.update()
-      })
-    },
-  })
-  navigator.serviceWorker.ready.then(() => set({ offlineReady: true }))
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && pending && canReloadNow()) void updateSW(true)
-  })
+  try {
+    const { registerSW } = await import('virtual:pwa-register')
+    updateSW = registerSW({
+      immediate: true,
+      onOfflineReady() { set({ offlineReady: true }) },
+      onNeedRefresh() { set({ updateAvailable: true }) },
+      onRegisteredSW(_url, reg) {
+        if (!reg) return
+        const check = () => {
+          if (document.visibilityState === 'visible' && navigator.onLine !== false) {
+            void reg.update().catch(() => undefined)
+          }
+        }
+        document.addEventListener('visibilitychange', check)
+        window.addEventListener('online', check)
+        window.setInterval(check, 60 * 60 * 1000)
+        check()
+      },
+      onRegisterError() { initialized = false },
+    })
+    void navigator.serviceWorker.ready.then(() => set({ offlineReady: true })).catch(() => undefined)
+  } catch {
+    initialized = false
+  }
 }
 
 export async function refreshPersisted(): Promise<void> {
