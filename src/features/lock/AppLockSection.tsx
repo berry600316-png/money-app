@@ -16,7 +16,7 @@ import {
 } from '../../lib/appLock'
 import { Icon } from '../../ui/Icon'
 import { useToast } from '../../ui/Toast'
-import { LockPanel, PinPad, Screen } from './LockScreen'
+import { LockHead, LockPanel, PinPad, Screen } from './LockScreen'
 
 type Flow =
   | { step: 'verify'; next: 'off' | 'pin' | 'face' }
@@ -34,34 +34,31 @@ function FaceStep({ enabling, error, onAdd, onSkip }: { enabling: boolean; error
           取消
         </button>
       )}
-      <div className="lk-top">
-        <h2 className="lk-name">加入 Face ID</h2>
-        <p className="lk-msg">
-          之後打開 App 用 Face ID 就能進去；
-          <br />
-          Face ID 不成功時，可以輸入 iPhone 密碼。
-        </p>
-        {error && <p className="lk-err">{error}</p>}
-      </div>
-      <div className="lk-act">
-        <button
-          type="button"
-          className="lk-btn"
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            void onAdd().finally(() => setBusy(false))
-          }}
-        >
-          <Icon name="faceId" />
-          {error ? '再試一次' : '加入 Face ID'}
-        </button>
-        {enabling && (
-          <button type="button" className="lk-link" onClick={onSkip}>
-            先不要，只用 App 密碼
+      <LockHead state="App 鎖" glyph />
+      {/* While the iPhone's "save passkey" sheet is up it covers the lower half: the card waits (D-146, B). */}
+      {!busy && (
+        <div className="lk-card">
+          <h3>加入 Face ID</h3>
+          <p>之後打開 App 用 Face ID 就能進去；Face ID 不成功時，可以輸入 iPhone 密碼。</p>
+          {error && <p className="lk-err">{error}</p>}
+          <button
+            type="button"
+            className="lk-primary"
+            onClick={() => {
+              setBusy(true)
+              void onAdd().finally(() => setBusy(false))
+            }}
+          >
+            <Icon name="faceId" />
+            {error ? '再試一次' : '加入 Face ID'}
           </button>
-        )}
-      </div>
+          {enabling && (
+            <button type="button" className="lk-secondary" onClick={onSkip}>
+              先不要，只用 App 密碼
+            </button>
+          )}
+        </div>
+      )}
     </Screen>
   )
 }

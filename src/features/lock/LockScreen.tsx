@@ -215,12 +215,15 @@ export function LockPanel({
   const [view, setView] = useState<'face' | 'pin' | 'help'>(canFace ? 'face' : 'pin')
   const [failed, setFailed] = useState(false)
   const [faceGone, setFaceGone] = useState(false)
-  const [busy, setBusy] = useState(false)
+  // The iPhone's passkey sheet is (about to be) up and covers the lower half: draw nothing there meanwhile.
+  const [asking, setAsking] = useState(canFace)
+  const askingNow = useRef(false)
   const cancel = mode === 'verify' && onCancel ? onCancel : null
 
   const tryFace = async (byTap: boolean) => {
-    if (!cfg.credentialId || busy) return
-    setBusy(true)
+    if (!cfg.credentialId || askingNow.current) return
+    askingNow.current = true
+    setAsking(true)
     const started = performance.now()
     try {
       if (await verifyPasskey(cfg.credentialId)) return onUnlocked()
@@ -235,7 +238,8 @@ export function LockPanel({
         setFailed(true)
       }
     } finally {
-      setBusy(false)
+      askingNow.current = false
+      setAsking(false)
     }
   }
 
@@ -276,6 +280,9 @@ export function LockPanel({
         />
       </Screen>
     )
+  // D-146 (2026-10-26, User chose B): the mark at the top; the lower half belongs to the iPhone's passkey sheet
+  // while it is up, and to a card of the same shape when it is not (cancelled, failed, or iOS wants a tap first).
+  const faceLabel = mode === 'unlock' ? '用 Face ID 解鎖' : '用 Face ID 驗證'
   return (
     <Screen label={label} onEsc={cancel}>
       {cancel && (
@@ -283,23 +290,44 @@ export function LockPanel({
           取消
         </button>
       )}
-      <div className="lk-top">
-        <img className="lk-icon" src={ICON_SRC} alt="" />
-        <h2 className="lk-name">Cai Jie</h2>
-        <p className="lk-msg">{failed ? '沒有完成驗證' : mode === 'unlock' ? '已上鎖' : '請先驗證身分'}</p>
-      </div>
-      <div className="lk-act">
-        <button type="button" className="lk-btn" disabled={busy} onClick={() => void tryFace(true)}>
-          <Icon name="faceId" />
-          {failed ? '再試一次 Face ID' : mode === 'unlock' ? '用 Face ID 解鎖' : '用 Face ID 驗證'}
-        </button>
-        {failed && (
-          <button type="button" className="lk-link" onClick={() => setView('pin')}>
-            改用 App 密碼
+      <LockHead state={mode === 'unlock' ? '已上鎖' : '請先驗證身分'} />
+      {!asking && (
+        <div className="lk-card">
+          <h3>{failed ? '沒有完成驗證' : mode === 'unlock' ? '解鎖 Cai Jie' : '驗證身分'}</h3>
+          <p>{failed ? '可以再用 Face ID 試一次，或改用 App 密碼。' : 'Face ID 不成功時，可以輸入 iPhone 密碼。'}</p>
+          <button type="button" className="lk-primary" onClick={() => void tryFace(true)}>
+            <Icon name="faceId" />
+            {failed ? '再試一次 Face ID' : faceLabel}
           </button>
-        )}
-      </div>
+          {failed && (
+            <button type="button" className="lk-secondary" onClick={() => setView('pin')}>
+              改用 App 密碼
+            </button>
+          )}
+        </div>
+      )}
     </Screen>
+  )
+}
+
+const LOCK_GLYPH = (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <rect x="5" y="11" width="14" height="9" rx="2" />
+    <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+  </svg>
+)
+
+/** The app's mark in the upper part of a lock screen, above where the iPhone's sheet comes up. */
+export function LockHead({ state, title = 'Cai Jie', glyph = true }: { state: ReactNode; title?: string; glyph?: boolean }) {
+  return (
+    <div className="lk-head">
+      <img className="lk-icon" src={ICON_SRC} alt="" />
+      <h2 className="lk-name">{title}</h2>
+      <p className="lk-state">
+        {glyph && LOCK_GLYPH}
+        {state}
+      </p>
+    </div>
   )
 }
 
