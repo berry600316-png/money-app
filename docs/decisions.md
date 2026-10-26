@@ -242,3 +242,8 @@
 - Category 在第 0 章欄位之外多一個 `sortOrder`（整數），用來固定顯示順序；新增的分類排在同類型最後。
 - PaymentMethod 同樣多一個 `sortOrder`。
 - （D-117–D-124，資料庫版本 5）Transaction 新增選填 `toAccountId`（互轉的轉入帳戶）、`sourceAccountId`（用轉帳／行動支付付款時錢從哪個帳戶出）、`feeOf`（手續費所屬的互轉 id）；`type` 多了 `transfer`。PaymentMethod 新增選填 `balanceFrom`（起算時間，ISO）、`openingBalance`、`payFromId`。新資料表 `adjustments`（餘額調整：帳戶、時間、調整前、調整後、差額、原因）。升級時不改任何舊資料。
+
+
+### 首頁金額隱藏
+
+首頁本月支出與收入預設以四顆圓點隱藏，共用眼睛按鈕切換。App 內切換分頁保留當次狀態，進入背景、離開頁面或解鎖時恢復隱藏。其他金額維持原樣；不儲存顯示偏好，隱藏時不在文字或無障礙標籤保留真實金額。

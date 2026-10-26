@@ -1038,3 +1038,21 @@ button.lrow:active { background: var(--row-press); }
 @media (prefers-reduced-motion: reduce) {
   .pin-dots.shake, .lk-card { animation: none; }
 }
+
+/* Home privacy: only the monthly expense and income figures. */
+.hero-label { display: flex; align-items: center; gap: 6px; min-height: 44px; }
+.amount-toggle { width: 44px; height: 44px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; color: var(--brand); background: radial-gradient(circle, var(--brand-soft) 0 16px, transparent 17px); transition: transform .15s ease; }
+.amount-toggle svg { width: 19px; height: 19px; }
+.amount-toggle:active { transform: scale(.92); }
+.amount-toggle:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }
+.amount-mask { display: inline-block; height: 1em; line-height: 1; vertical-align: baseline; }
+.amount-mask > span { display: inline-flex; align-items: center; gap: .16em; height: 100%; }
+.amount-mask i { display: block; width: .2em; height: .2em; border-radius: 50%; background: currentColor; }
+.home-private-overview .hero-amt { min-height: 3.9875rem; }
+.home-private-overview .trio dd { min-height: 1.78125rem; }
+.private-value, .amount-mask > span { animation: amount-appear .16s ease-out; }
+@keyframes amount-appear { from { opacity: .45; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .private-value, .amount-mask > span { animation: none; }
+  .amount-toggle { transition: none; }
+}

@@ -5,6 +5,8 @@ import { fmt } from '../lib/money'
 import { cashOnHand, cashSpent } from '../lib/accounts'
 import { sortDesc, summarize } from '../lib/stats'
 import { useToday } from '../lib/useToday'
+import { useHomeAmounts } from '../lib/useHomeAmounts'
+import { PrivateAmount } from '../ui/PrivateAmount'
 import { Icon } from '../ui/Icon'
 import { TxRow } from '../ui/TxRows'
 import { useRefData } from '../ui/refData'
@@ -48,6 +50,7 @@ export function HomeScreen({
   onSeeDay: (ymd: string) => void
   onSettings: () => void
 }) {
+  const amounts = useHomeAmounts()
   const today = useToday()
   const now = new Date()
   const ref = useRefData()
@@ -113,12 +116,23 @@ export function HomeScreen({
       </header>
       <BackupBanner onBackup={onBackup} />
 
-      <section className="hero">
-        <div className="eyebrow">本月支出</div>
+      <section className="hero home-private-overview">
+        <div className="hero-label">
+          <div className="eyebrow">本月支出</div>
+          <button
+            type="button"
+            className="amount-toggle"
+            aria-label={amounts.visible ? '隱藏本月支出與收入' : '顯示本月支出與收入'}
+            aria-pressed={amounts.visible}
+            onClick={amounts.toggle}
+          >
+            <Icon name={amounts.visible ? 'eye' : 'eyeOff'} />
+          </button>
+        </div>
         <div className="hero-row">
           <div className="hero-amt num">
             <span className="cur">NT$</span>
-            <span>{fmt(view.expense)}</span>
+            <PrivateAmount value={view.expense} visible={amounts.visible} />
           </div>
           {/* D-138 / D-139: cash left and this month's cash spending, beside the figure behind a hairline. */}
           {cashIds.length > 0 ? (
@@ -148,7 +162,7 @@ export function HomeScreen({
           </div>
           <div>
             <dt>收入</dt>
-            <dd className="num pos">{fmt(view.income)}</dd>
+            <dd className="num pos"><PrivateAmount value={view.income} visible={amounts.visible} /></dd>
           </div>
           <div>
             <dt>結餘</dt>

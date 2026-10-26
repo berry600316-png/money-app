@@ -18,6 +18,7 @@ import {
   verifyPasskey,
   type AppLockConfig,
 } from '../../lib/appLock'
+import { hideHomeAmounts } from '../../lib/useHomeAmounts'
 import { Icon } from '../../ui/Icon'
 
 const ICON_SRC = `${import.meta.env.BASE_URL}pwa-192x192.png`
@@ -372,6 +373,6 @@ export function AppLockGate() {
   }, [])
 
   if (cfg === undefined || phase === 'start') return <LockCover />
-  if (phase === 'locked' && cfg) return <LockPanel key={round} mode="unlock" cfg={cfg} onUnlocked={() => setPhase('open')} />
+  if (phase === 'locked' && cfg) return <LockPanel key={round} mode="unlock" cfg={cfg} onUnlocked={() => { hideHomeAmounts(); setPhase('open') }} />
   return covered ? <LockCover /> : null
 }
