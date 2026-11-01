@@ -97,13 +97,13 @@ export function SettingsPage({
         </div>
       </div>
 
+      <AppLockSection />
+
       <p className="colophon">
         Cai Jie {__APP_VERSION__}
         <br />
         {count !== undefined && `共 ${count.toLocaleString('en-US')} 筆紀錄`}
       </p>
-
-      <AppLockSection />
     </section>
   )
 }
