@@ -131,6 +131,11 @@ button.hero-side:active { opacity: 0.6; }
 .trio dt, .trio .lbl { font-size: 0.75rem; color: var(--ink-2); letter-spacing: 0.04em; }
 .trio dd, .trio .v { display: block; margin: 4px 0 0; font-size: 1.1875rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .trio.big .v { font-size: 1.5rem; }
+.trio-link-cell { position: relative; }
+.trio-link { position: absolute; inset: -7px 0 -7px 0; width: 100%; min-height: 44px; border: 0; border-radius: 12px; background: transparent; }
+.trio-link:active { background: rgba(26, 58, 107, .08); }
+.trio-link-cell dt { display: flex; align-items: center; gap: 2px; }
+.trio-link-cell dt svg { width: 12px; height: 12px; color: var(--brand); }
 .pos { color: var(--sky); }
 .neg { color: var(--danger); }
 
@@ -317,6 +322,40 @@ button.hero-side:active { opacity: 0.6; }
 .back svg { width: 22px; height: 22px; }
 .page-head h1 { font-size: 1.0625rem; font-weight: 600; margin: 0; }
 .head-action { justify-self: end; border: 0; background: none; color: var(--brand); font-size: 1rem; font-weight: 600; min-height: 44px; padding: 0 12px; border-radius: 12px; }
+
+/* Monthly cashflow: the month's result and each account's activity are separate figures. */
+.mc-month { display: flex; justify-content: center; margin: 18px 0 12px; }
+.mc-summary { padding: 20px 18px 16px; border-radius: 22px; background: var(--card); box-shadow: 0 1px 2px rgba(19, 35, 61, 0.04); }
+.mc-summary-title { font-size: .75rem; color: var(--ink-2); }
+.mc-result { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.mc-result > span { font-size: 1rem; font-weight: 600; }
+.mc-result strong { font-size: clamp(1.3rem, 7vw, 2rem); color: var(--brand); white-space: nowrap; }
+.mc-result strong.neg { color: var(--danger); }
+.mc-math { display: flex; justify-content: space-between; align-items: center; gap: 3px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.mc-math > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.mc-math > div > span, .mc-math > span { color: var(--ink-2); font-size: .75rem; }
+.mc-math b { font-size: clamp(.8rem, 3.6vw, 1rem); white-space: nowrap; }
+.mc-summary p, .mc-section > p { margin: 12px 0 0; color: var(--ink-2); font-size: .8125rem; line-height: 1.5; }
+.mc-empty { margin-top: 14px; }
+.mc-section { margin-top: 24px; }
+.mc-section h2 { margin: 0 0 5px; font-size: .9375rem; font-weight: 600; }
+.mc-section > p { margin: 0 0 10px; }
+.mc-card { overflow: hidden; border-radius: 18px; background: var(--card); }
+.mc-account { display: flex; flex-direction: column; gap: 9px; width: 100%; min-height: 64px; padding: 14px 16px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
+.mc-account:first-child { border-top: 0; }
+.mc-account:active, .mc-unknown-tx:active { background: var(--row-press); }
+.mc-account-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; }
+.mc-account-top strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9375rem; font-weight: 600; }
+.mc-account-total { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--brand); font-weight: 600; }
+.mc-account-total svg { width: 14px; height: 14px; }
+.mc-account-parts { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ink-2); font-size: .75rem; }
+.mc-account-parts .num, .mc-adjust .num { color: var(--ink); }
+.mc-account-parts .neg, .mc-adjust .neg { color: var(--danger); }
+.mc-adjust { font-size: .75rem; color: var(--ink-2); }
+.mc-none { padding: 14px 16px; border-radius: 16px; background: var(--card); color: var(--ink-2); font-size: .875rem; }
+.mc-unassigned { display: flex; justify-content: space-between; padding: 14px 16px; font-size: .875rem; font-weight: 600; }
+.mc-unknown-tx { display: flex; justify-content: space-between; gap: 10px; width: 100%; min-height: 44px; padding: 10px 16px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); text-align: left; font-size: .875rem; }
+.mc-unknown-tx > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .set-sec { margin-top: 22px; }
 .set-sec h2 { font-size: 0.75rem; color: var(--ink-2); font-weight: 500; letter-spacing: 0.06em; margin: 0 0 8px 16px; }
 .set-card { background: var(--card); border-radius: 18px; overflow: hidden; }

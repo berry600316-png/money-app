@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from './db'
-import type { Category, PaymentMethod, Payslip, PlanTemplate, SalaryItem, Transaction } from './types'
+import type { BalanceAdjustment, Category, PaymentMethod, Payslip, PlanTemplate, SalaryItem, Transaction } from './types'
 import { linkCandidates, summarizePlan, type PlanSummary } from '../lib/plan'
 import { addMonths, fromYmd, monthRangeIso, type YearMonth } from '../lib/dates'
 import { accountFlow, computeBalances, isMethod, isTracked, type FlowRow } from '../lib/accounts'
@@ -11,6 +11,13 @@ export function useMonthTx(ym: YearMonth): Transaction[] | undefined {
   return useLiveQuery(() => {
     const [start, end] = monthRangeIso(ym)
     return db.transactions.where('occurredAt').between(start, end, true, false).toArray()
+  }, [ym.y, ym.m])
+}
+
+export function useMonthAdjustments(ym: YearMonth): BalanceAdjustment[] | undefined {
+  return useLiveQuery(() => {
+    const [start, end] = monthRangeIso(ym)
+    return db.adjustments.where('occurredAt').between(start, end, true, false).toArray()
   }, [ym.y, ym.m])
 }
 

@@ -8,6 +8,7 @@ import { recordPlannedExpense } from './db/planRepo'
 import { recordDateFor } from './lib/plan'
 import type { TxInput } from './db/repo'
 import { HomeScreen } from './features/HomeScreen'
+import { MonthlyCashflowPage } from './features/MonthlyCashflowPage'
 import { emptyFilters, ListScreen, type ListFilters } from './features/ListScreen'
 import { ManagePage, type EditorTarget, type ManageKind } from './features/ManagePage'
 import { SettingsPage } from './features/SettingsPage'
@@ -55,6 +56,7 @@ type Route =
   | { kind: 'planTemplates' }
   | { kind: 'accounts' }
   | { kind: 'account'; id: string }
+  | { kind: 'monthlyCashflow' }
 
 const ROUTE_LABEL: Record<Route['kind'], string> = {
   payslips: '薪資單',
@@ -68,6 +70,7 @@ const ROUTE_LABEL: Record<Route['kind'], string> = {
   planTemplates: '固定項目',
   accounts: '我的帳戶',
   account: '帳戶',
+  monthlyCashflow: '月度收支',
 }
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -306,6 +309,7 @@ function Shell() {
             onPlan={() => push({ kind: 'plan', month: currentMonthKey() })}
             onAccounts={() => push({ kind: 'accounts' })}
             onOpenAccount={(id) => push({ kind: 'account', id })}
+            onMonthlyCashflow={() => push({ kind: 'monthlyCashflow' })}
           />
           <ListScreen
             active={tab === 'list'}
@@ -450,6 +454,14 @@ function Shell() {
                   onTransferFrom={(id) => startMove({ fromAccountId: id })}
                   onPayCard={payCard}
                   onOpenAccount={(id) => push({ kind: 'account', id })}
+                />
+              )}
+              {r.route.kind === 'monthlyCashflow' && (
+                <MonthlyCashflowPage
+                  backLabel={back}
+                  onBack={pop}
+                  onOpenAccount={(id) => push({ kind: 'account', id })}
+                  onOpenTx={openTx}
                 />
               )}
               {r.route.kind === 'reconcile' && (

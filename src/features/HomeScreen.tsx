@@ -33,11 +33,13 @@ export function HomeScreen({
   onPlan,
   onAccounts,
   onOpenAccount,
+  onMonthlyCashflow,
 }: {
   /** D-123 / Q79: 我的帳戶, from the button beside settings. */
   onAccounts: () => void
   /** D-139: one account's page (the 現金 account, from 現金餘額). */
   onOpenAccount: (id: string) => void
+  onMonthlyCashflow: () => void
   onBackup: () => void
   /** D-113: the month plan, under the month overview. */
   onPlan: () => void
@@ -164,9 +166,10 @@ export function HomeScreen({
             <dt>收入</dt>
             <dd className="num pos"><PrivateAmount value={view.income} visible={amounts.visible} /></dd>
           </div>
-          <div>
-            <dt>結餘</dt>
+          <div className="trio-link-cell">
+            <dt>結餘 <Icon name="chev" /></dt>
             <dd className={'num' + (view.balance < 0 ? ' neg' : '')}>{fmt(view.balance)}</dd>
+            <button type="button" className="trio-link" onClick={onMonthlyCashflow} aria-label={`本月結餘 ${fmt(view.balance)}，查看月度收支`} />
           </div>
         </dl>
       </section>
