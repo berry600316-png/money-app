@@ -139,11 +139,6 @@ export function AppLockSection() {
           </>
         )}
       </div>
-      <p className="set-foot">
-        {cfg
-          ? '關掉 App 鎖、更改密碼、重新設定 Face ID 前，都要先驗證一次。App 鎖只擋畫面，資料本身沒有加密，也不會放進備份檔。'
-          : '開啟後，打開 App 先用 Face ID（不成功時可輸入 iPhone 密碼）解鎖；App 密碼只在 Face ID 不能用時才用。'}
-      </p>
 
       {flow?.step === 'verify' && cfg && <LockPanel mode="verify" cfg={cfg} onUnlocked={() => void afterVerify(flow.next)} onCancel={close} />}
       {flow?.step === 'pin1' && (

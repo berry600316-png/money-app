@@ -44,8 +44,6 @@ export function SettingsPage({
         <span />
       </div>
 
-      <AppLockSection />
-
       <div className="set-sec">
         <h2>資料保存</h2>
         <div className="set-card">
@@ -104,6 +102,8 @@ export function SettingsPage({
         <br />
         {count !== undefined && `共 ${count.toLocaleString('en-US')} 筆紀錄`}
       </p>
+
+      <AppLockSection />
     </section>
   )
 }
