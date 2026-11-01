@@ -102,15 +102,12 @@ export function AppLockSection() {
       <h2>隱私</h2>
       <div className="set-card">
         <div className="srow">
-          <span className="s-main">
-            App 鎖
-            <small className="s-sub">{cfg ? '離開超過 1 分鐘回來也要解鎖' : '打開 App 時要先驗證才看得到資料'}</small>
-          </span>
+          <span className="s-main">數字鎖</span>
           <label className="switch">
             <input
               type="checkbox"
               role="switch"
-              aria-label="App 鎖"
+              aria-label="數字鎖"
               checked={!!cfg}
               onChange={() => setFlow(cfg ? { step: 'verify', next: 'off' } : { step: 'pin1', enabling: true })}
             />
@@ -126,14 +123,14 @@ export function AppLockSection() {
               onClick={() => setFlow(cfg.credentialId ? { step: 'verify', next: 'face' } : { step: 'face', enabling: false })}
             >
               <span className="s-main">
-                Face ID
+                臉部辨識
                 {!cfg.credentialId && <small className="s-sub lock-warn">{canFace ? '尚未啟用，目前只用 App 密碼' : '這個裝置無法使用'}</small>}
               </span>
               <span className="s-val">{cfg.credentialId ? '已啟用' : canFace ? '加入' : ''}</span>
               {canFace && <Icon name="chev" className="chev" />}
             </button>
             <button type="button" className="srow" onClick={() => setFlow({ step: 'verify', next: 'pin' })}>
-              <span className="s-main">更改 App 密碼</span>
+              <span className="s-main">更改密碼</span>
               <Icon name="chev" className="chev" />
             </button>
           </>
