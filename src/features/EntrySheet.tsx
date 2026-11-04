@@ -43,6 +43,8 @@ interface Draft {
   /** Transfer fee digits (D-121). */
   fee: string
   showFee: boolean
+  fundingOpen: boolean
+  funding: { month: string; amount: string; earnedAmount?: number }[]
   date: string
   /** "HH:MM" (D-99). */
   time: string
@@ -62,6 +64,7 @@ const fieldsOf = (d: Draft) =>
     d.paymentMethodId,
     d.type === 'expense' ? [d.sourceAccountId, d.cardId] : '',
     d.type === 'transfer' ? [d.toAccountId, d.fee] : '',
+    d.fundingOpen ? d.funding : '',
     d.date,
     d.time,
     d.type === 'transfer' ? '' : d.merchant.trim(),
@@ -206,6 +209,8 @@ export function EntrySheet({
           toAccountId: t.toAccountId ?? '',
           fee: fee ? String(fee) : '',
           showFee: fee > 0,
+          fundingOpen: !!t.funding?.length && !t.feeOf,
+          funding: t.funding?.map((a) => ({ month: a.month, amount: String(a.amount), earnedAmount: a.earnedAmount })) ?? [],
           date: toYmd(at),
           time: timeLabel(at),
           timeSource: t.timeSource,
@@ -232,6 +237,8 @@ export function EntrySheet({
         toAccountId: to,
         fee: '',
         showFee: false,
+        fundingOpen: false,
+        funding: [],
         // A day chosen on the calendar (never later than today), at the current clock time (D-115).
         date: prefill?.date && prefill.date <= toYmd(now) ? prefill.date : toYmd(now),
         time: timeLabel(now),
@@ -281,11 +288,11 @@ export function EntrySheet({
     if (!draft || type === draft.type) return
     if (type === 'transfer') {
       const from = pickFor('from', [isAsset(ref.payment(draft.paymentMethodId)) ? draft.paymentMethodId : undefined, lastFrom])
-      patch({ type, paymentMethodId: from, toAccountId: pickFor('to', [draft.toAccountId, lastTo], from) })
+      patch({ type, paymentMethodId: from, toAccountId: pickFor('to', [draft.toAccountId, lastTo], from), fundingOpen: false, funding: [] })
     } else if (type === 'income') {
-      patch({ type, categoryId: activeCategory('income', DEFAULT_CATEGORY_ID.income), paymentMethodId: pickFor('into', [lastInto, draft.paymentMethodId]) })
+      patch({ type, categoryId: activeCategory('income', DEFAULT_CATEGORY_ID.income), paymentMethodId: pickFor('into', [lastInto, draft.paymentMethodId]), fundingOpen: false, funding: [] })
     } else {
-      patch({ type, categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense), ...payFields(lastPay) })
+      patch({ type, categoryId: activeCategory('expense', DEFAULT_CATEGORY_ID.expense), ...payFields(lastPay), fundingOpen: false, funding: [] })
     }
   }
 
@@ -314,10 +321,21 @@ export function EntrySheet({
 
   const toCard = !!draft && draft.type === 'transfer' && isCard(ref.payment(draft.toAccountId))
 
+  const editFunding = (index: number, field: 'month' | 'amount', value: string) => {
+    if (!draft) return
+    patch({ funding: draft.funding.map((row, i) => i === index ? { ...row, [field]: value, earnedAmount: undefined } : row) })
+  }
+  const clearFundingProvenance = (rows: Draft['funding']) => rows.map(({ month, amount }) => ({ month, amount }))
+
   const save = async () => {
     if (!draft || saving) return
     if (!amount) {
       replay(amtWrapRef.current, 'shake')
+      return
+    }
+    const fundingTotal = draft.funding.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    if (draft.fundingOpen && (draft.funding.some((row) => !row.month || !/^[1-9]\d*$/.test(row.amount)) || fundingTotal !== amount || new Set(draft.funding.map((row) => row.month)).size !== draft.funding.length)) {
+      toast(`資金月份合計需為 NT$ ${fmt(amount)}`, { kind: 'error' })
       return
     }
     setSaving(true)
@@ -333,6 +351,7 @@ export function EntrySheet({
       ...(draft.type === 'transfer' ? { toAccountId: draft.toAccountId, fee: draft.showFee ? fee : 0 } : {}),
       ...(draft.type === 'expense' && draft.sourceAccountId ? { sourceAccountId: draft.sourceAccountId } : {}),
       ...(draft.type === 'expense' && draft.cardId ? { cardId: draft.cardId } : {}),
+      ...(draft.fundingOpen ? { funding: draft.funding.map((row) => ({ month: row.month, amount: Number(row.amount), ...(row.earnedAmount !== undefined ? { earnedAmount: row.earnedAmount } : {}) })) } : {}),
     }
     try {
       if (editId) {
@@ -420,7 +439,7 @@ export function EntrySheet({
     if (isMerchant) setMerchantFocused(false)
     window.setTimeout(() => {
       const a = document.activeElement
-      if (a !== merchantRef.current && a !== noteRef.current && a !== feeRef.current) setTyping(false)
+      if (!(a && sheetRef.current?.contains(a) && a.tagName === 'INPUT')) setTyping(false)
     }, 60)
   }
 
@@ -441,7 +460,7 @@ export function EntrySheet({
       // D-119: paying a card bill starts with the whole 預扣 (when nothing is typed yet).
       return patch({ toAccountId: id, ...(isCard(card) && !amount && pending > 0 ? { amount: String(pending) } : {}) })
     }
-    if (pick === 'from') return patch({ paymentMethodId: id, ...(id === draft.toAccountId ? { toAccountId: pickFor('to', [lastTo], id) } : {}) })
+    if (pick === 'from') return patch({ paymentMethodId: id, funding: clearFundingProvenance(draft.funding), ...(id === draft.toAccountId ? { toAccountId: pickFor('to', [lastTo], id) } : {}) })
     patch({ paymentMethodId: id })
   }
 
@@ -451,7 +470,7 @@ export function EntrySheet({
   const recent = { into: [lastInto], from: [lastFrom], to: [lastTo] }
   const payChoice = draft ? { paymentMethodId: draft.paymentMethodId, sourceAccountId: draft.sourceAccountId || undefined, cardId: draft.cardId || undefined } : null
   const pay = payChoice ? describePay(payChoice, (id) => ref.payments.find((p) => p.id === id)) : null
-  const onPay = (o: PayOption) => patch({ paymentMethodId: o.paymentMethodId, sourceAccountId: o.sourceAccountId ?? '', cardId: o.cardId ?? '' })
+  const onPay = (o: PayOption) => patch({ paymentMethodId: o.paymentMethodId, sourceAccountId: o.sourceAccountId ?? '', cardId: o.cardId ?? '', funding: draft ? clearFundingProvenance(draft.funding) : [] })
 
   const dateTimePills = draft && (
     <>
@@ -601,7 +620,7 @@ export function EntrySheet({
                   className="swap-btn"
                   aria-label="對調轉出和轉入"
                   disabled={toCard}
-                  onClick={() => patch({ paymentMethodId: draft.toAccountId, toAccountId: draft.paymentMethodId })}
+                  onClick={() => patch({ paymentMethodId: draft.toAccountId, toAccountId: draft.paymentMethodId, funding: clearFundingProvenance(draft.funding) })}
                 >
                   <Icon name="swap" />
                 </button>
@@ -741,6 +760,31 @@ export function EntrySheet({
                 {notePill}
               </div>
             </>
+          )}
+
+          {!feeRecord && (draft.type === 'expense' || (draft.type === 'transfer' && !toCard)) && (
+            <section className="funding-editor" aria-label="資金月份">
+              <button type="button" className="funding-toggle" aria-expanded={draft.fundingOpen} onClick={() => patch({ fundingOpen: !draft.fundingOpen, funding: draft.fundingOpen ? [] : [{ month: draft.date.slice(0, 7), amount: draft.amount }] })}>
+                使用其他月份的錢 <span aria-hidden="true">{draft.fundingOpen ? '−' : '＋'}</span>
+              </button>
+              {draft.fundingOpen && (
+                <div className="funding-rows">
+                  <p>平常不用調整。只有要動用舊月份留下的錢，才在這裡分配。</p>
+                  {draft.funding.map((row, i) => (
+                    <div className="funding-row" key={i}>
+                      <label>來源月份<input type="month" max={draft.date.slice(0, 7)} value={row.month} onChange={(e) => editFunding(i, 'month', e.target.value)} onFocus={() => onFieldFocus(false)} onBlur={() => onFieldBlur(false)} /></label>
+                      <label>金額<input type="text" inputMode="numeric" pattern="[0-9]*" value={row.amount} onChange={(e) => editFunding(i, 'amount', e.target.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 9))} onFocus={() => onFieldFocus(false)} onBlur={() => onFieldBlur(false)} /></label>
+                      {draft.funding.length > 1 && <button type="button" className="funding-remove" aria-label={`移除第 ${i + 1} 個月份`} onClick={() => patch({ funding: draft.funding.filter((_, j) => j !== i) })}>×</button>}
+                    </div>
+                  ))}
+                  <div className="funding-actions">
+                    <button type="button" onClick={() => patch({ funding: [...draft.funding, { month: '', amount: '' }] })}>＋ 加入月份</button>
+                    <span>已分配 {fmt(draft.funding.reduce((sum, row) => sum + Number(row.amount || 0), 0))} / {fmt(amount)}</span>
+                  </div>
+                  <small>來源月份須早於或等於操作月份；若舊月帳戶餘額不足，儲存時會提示。</small>
+                </div>
+              )}
+            </section>
           )}
 
           {draft.showNote && (

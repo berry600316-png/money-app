@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useBalances, useMonthTx } from '../db/hooks'
+import { useAllTx, useMonthTx } from '../db/hooks'
 import { dayLabel, fromYmd, sameLocalDay, sameYm, toYmd, ymOf, type YearMonth } from '../lib/dates'
 import { fmt } from '../lib/money'
-import { cashOnHand, cashSpent } from '../lib/accounts'
+import { cashSpent } from '../lib/accounts'
+import { computeFunding, fundingAvailable, fundingMonthKey, fundingMonthReport } from '../lib/funding'
 import { sortDesc, summarize } from '../lib/stats'
 import { useToday } from '../lib/useToday'
 import { useHomeAmounts } from '../lib/useHomeAmounts'
@@ -32,13 +33,10 @@ export function HomeScreen({
   onBackup,
   onPlan,
   onAccounts,
-  onOpenAccount,
   onMonthlyCashflow,
 }: {
   /** D-123 / Q79: 我的帳戶, from the button beside settings. */
   onAccounts: () => void
-  /** D-139: one account's page (the 現金 account, from 現金餘額). */
-  onOpenAccount: (id: string) => void
   onMonthlyCashflow: () => void
   onBackup: () => void
   /** D-113: the month plan, under the month overview. */
@@ -58,21 +56,21 @@ export function HomeScreen({
   const ref = useRefData()
   const ym = ymOf(now)
   const monthTx = useMonthTx(ym)
+  const allTx = useAllTx(true)
+  const funding = useMemo(() => computeFunding(ref.payments, allTx ?? []), [ref.payments, allTx])
 
   // The overview always describes the current month (D-115: the calendar may show another one).
   const view = useMemo(() => {
     const list = monthTx ?? []
-    const s = summarize(list)
+    const s = fundingMonthReport(funding.transactions, ym)
     const todayOut = summarize(list.filter((t) => sameLocalDay(new Date(t.occurredAt), now))).expense
     return { ...s, today: todayOut, cash: cashSpent(list, ref.payments) }
     // `now` changes every render; only the calendar day it represents matters.
-  }, [monthTx, today, ref.payments]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [monthTx, today, ref.payments, funding]) // eslint-disable-line react-hooks/exhaustive-deps
   // D-138: shown while the user has a 現金 account in use, or spent cash this month.
-  const hasCash = view.cash > 0 || ref.payments.some((p) => p.type === 'cash' && p.isActive)
-  // D-139: what is left in the 現金 accounts; with none counting a balance the side shows only the spending.
-  const balances = useBalances()
-  const { ids: cashIds, total: cashLeft } = cashOnHand(ref.payments, balances)
-  const openCash = () => (cashIds.length === 1 ? onOpenAccount(cashIds[0]) : onAccounts())
+  const hasCash = view.cash > 0 || ref.payments.some((p) => p.type === 'cash' && (p.isActive || funding.buckets.has(`${fundingMonthKey(ym)}|${p.id}`)))
+  const currentCashIds = ref.payments.filter((p) => p.type === 'cash').map((p) => p.id)
+  const cashLeft = currentCashIds.reduce((sum, id) => sum + fundingAvailable(funding.buckets.get(`${fundingMonthKey(ym)}|${id}`)), 0)
 
   const [calYm, setCalYm] = useState<YearMonth>(ym)
   const [selected, setSelected] = useState(today)
@@ -137,10 +135,10 @@ export function HomeScreen({
             <PrivateAmount value={view.expense} visible={amounts.visible} />
           </div>
           {/* D-138 / D-139: cash left and this month's cash spending, beside the figure behind a hairline. */}
-          {cashIds.length > 0 ? (
-            <button type="button" className="hero-side" onClick={openCash} aria-label={`現金餘額 ${fmt(cashLeft)}，本月花費 ${fmt(view.cash)}，查看現金的進出`}>
+          {hasCash ? (
+            <button type="button" className="hero-side" onClick={onMonthlyCashflow} aria-label={`本月可用現金 ${fmt(cashLeft)}，本月花費 ${fmt(view.cash)}，查看月度收支`}>
               <span className="k">
-                現金餘額
+                本月可用現金
                 <Icon name="chev" />
               </span>
               <span className={'v num' + (cashLeft < 0 ? ' neg' : '')}>{fmt(cashLeft)}</span>
@@ -148,14 +146,7 @@ export function HomeScreen({
                 本月花費 <b className="num">{fmt(view.cash)}</b>
               </span>
             </button>
-          ) : (
-            hasCash && (
-              <div className="hero-side">
-                <span className="k">現金花費</span>
-                <span className="v num">{fmt(view.cash)}</span>
-              </div>
-            )
-          )}
+          ) : null}
         </div>
         <dl className="trio">
           <div>
@@ -172,6 +163,7 @@ export function HomeScreen({
             <button type="button" className="trio-link" onClick={onMonthlyCashflow} aria-label={`本月結餘 ${fmt(view.balance)}，查看月度收支`} />
           </div>
         </dl>
+        {funding.transactions.some((t) => t.funding?.some((a) => a.month !== toYmd(new Date(t.occurredAt)).slice(0, 7) && (a.month === fundingMonthKey(ym) || toYmd(new Date(t.occurredAt)).slice(0, 7) === fundingMonthKey(ym)))) && <p className="home-funding-hint">有跨月資金紀錄，月度金額依資金月份計算。</p>}
       </section>
 
       <HomePlanCard onOpen={onPlan} />

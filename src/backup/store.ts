@@ -1,4 +1,5 @@
 import { db, type MoneyDB } from '../db/db'
+import { validateFundingState } from '../db/repo'
 import { DEFAULT_SALARY_ITEMS } from '../db/defaults'
 import type { Category, PaymentMethod, Payslip, SalaryItem, Setting, Transaction } from '../db/types'
 import { fromYmd, toYmd } from '../lib/dates'
@@ -81,6 +82,7 @@ async function replaceData(d: MoneyDB, data: MoneyData) {
   await d.planTemplates.bulkAdd(data.planTemplates ?? [])
   await d.plannedExpenses.bulkAdd(data.plannedExpenses ?? [])
   await d.adjustments.bulkAdd(data.adjustments ?? [])
+  await validateFundingState(d)
   const userSettings: Setting[] = data.settings.filter((s) => !DEVICE_SETTING_KEYS.has(s.key))
   if (userSettings.length) await d.settings.bulkPut(userSettings)
 }
@@ -277,6 +279,7 @@ export async function restoreRange(backup: BackupFile, from: string, to: string,
     await d.payslips.bulkPut(plan.incomingSlips)
     await d.adjustments.bulkDelete(plan.currentAdj.map((a) => a.id))
     await d.adjustments.bulkPut(plan.incomingAdj)
+    await validateFundingState(d)
     return plan.preview
   })
 }

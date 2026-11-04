@@ -193,6 +193,7 @@ export function parseBackup(text: string): BackupFile {
     // D-118: a start date and an opening balance come together, or neither.
     const hasStart = p.balanceFrom !== undefined || p.openingBalance !== undefined
     if (hasStart && (!isIso(p.balanceFrom) || !isMoney0(p.openingBalance))) fail(`帳戶「${p.name}」的起始餘額不正確`)
+    if (p.openingFundingMonth !== undefined && (!hasStart || !isStr(p.openingFundingMonth) || !isMonthKey(p.openingFundingMonth))) fail(`帳戶「${p.name}」的期初資金月份不正確`)
     if (p.payFromId !== undefined && !isStr(p.payFromId)) fail(`「${p.name}」的所屬帳戶不正確`)
     if (p.boundTo !== undefined && !isStr(p.boundTo)) fail(`付款方式「${p.name}」的綁定不正確`)
     if (p.cards !== undefined && (!Array.isArray(p.cards) || !p.cards.every(isStr))) fail(`付款方式「${p.name}」綁定的卡片不正確`)
@@ -207,6 +208,7 @@ export function parseBackup(text: string): BackupFile {
       ...(isStr(p.bank) ? { bank: p.bank } : {}),
       ...(isStr(p.cardLast4) ? { cardLast4: p.cardLast4 } : {}),
       ...(hasStart ? { balanceFrom: p.balanceFrom as string, openingBalance: p.openingBalance as number } : {}),
+      ...(isStr(p.openingFundingMonth) ? { openingFundingMonth: p.openingFundingMonth } : {}),
       ...(isStr(p.payFromId) ? { payFromId: p.payFromId } : {}),
       // Before D-132 a 行動支付 was bound to one card or account (`boundTo`); converted below.
       ...(isStr(p.boundTo) ? { boundTo: p.boundTo } : {}),
@@ -273,6 +275,14 @@ export function parseBackup(text: string): BackupFile {
     if (!isStr(t.merchant) || !isStr(t.note) || !isStr(t.source)) fail(`第 ${n} 筆交易的文字欄位不正確`)
     if (t.externalId !== null && !isStr(t.externalId)) fail(`第 ${n} 筆交易的外部編號不正確`)
     if (t.timeSource !== undefined && t.timeSource !== 'notification' && t.timeSource !== 'date') fail(`第 ${n} 筆交易的時間來源不正確`)
+    if (t.funding !== undefined) {
+      if (t.type === 'income' || !Array.isArray(t.funding) || !t.funding.length) fail(`第 ${n} 筆交易的資金月份不正確`)
+      const parts = t.funding as unknown[]
+      if (parts.some((a) => !isObj(a) || !isStr(a.month) || !isMonthKey(a.month) || a.month > toYmd(new Date(t.occurredAt as string)).slice(0, 7) ||
+        !isValidAmount(a.amount) || !Number.isSafeInteger(a.earnedAmount) || (a.earnedAmount as number) < 0 || (a.earnedAmount as number) > (a.amount as number)) ||
+        parts.reduce<number>((sum, a) => sum + (a as { amount: number }).amount, 0) !== t.amount ||
+        new Set(parts.map((a) => (a as { month: string }).month)).size !== parts.length) fail(`第 ${n} 筆交易的資金月份分配不正確`)
+    }
     return {
       id: t.id,
       type: t.type as TxType,
@@ -291,6 +301,7 @@ export function parseBackup(text: string): BackupFile {
       ...(isStr(t.sourceAccountId) ? { sourceAccountId: t.sourceAccountId } : {}),
       ...(isStr(t.cardId) ? { cardId: t.cardId } : {}),
       ...(isStr(t.feeOf) ? { feeOf: t.feeOf } : {}),
+      ...(Array.isArray(t.funding) ? { funding: t.funding as Transaction['funding'] } : {}),
     }
   })
   checkUnique(transactions, '交易')

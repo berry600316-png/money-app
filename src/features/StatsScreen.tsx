@@ -1,10 +1,11 @@
 import { useMemo, useState, type RefObject } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
-import { useMonthsTx } from '../db/hooks'
+import { useAllTx } from '../db/hooks'
 import { addMonths, monthLabel, sameYm, type YearMonth } from '../lib/dates'
 import { compact, fmt } from '../lib/money'
-import { byCategory, filterMonth, monthOverMonth, summarize, trend, yearByMonth, yearTotals } from '../lib/stats'
+import { byCategory, monthOverMonth, summarize, trend, yearByMonth, yearTotals } from '../lib/stats'
+import { computeFunding, fundingMonthEntries, fundingMonthKey } from '../lib/funding'
 import { Seg } from '../ui/Seg'
 import { Icon } from '../ui/Icon'
 import { MonthSwitch } from '../ui/MonthSwitch'
@@ -31,13 +32,13 @@ export function StatsScreen({
   const ref = useRefData()
   const [mode, setMode] = useState<'month' | 'year'>('month')
   const [year, setYear] = useState(() => month.y)
-  const tx = useMonthsTx(month, 6)
+  const tx = useAllTx(true)
   const payslipCount = useLiveQuery(() => db.payslips.count(), [])
 
   const v = useMemo(() => {
-    const all = tx ?? []
-    const cur = filterMonth(all, month)
-    const prev = filterMonth(all, addMonths(month, -1))
+    const all = computeFunding(ref.payments, tx ?? []).transactions
+    const cur = fundingMonthEntries(all, month)
+    const prev = fundingMonthEntries(all, addMonths(month, -1))
     const s = summarize(cur)
     const exp = byCategory(cur, 'expense')
     // Colour follows the category's place in the settings order, so it stays stable month to month.
@@ -48,13 +49,13 @@ export function StatsScreen({
     }
     return {
       s,
-      mom: monthOverMonth(cur, prev, month),
+      mom: all.some((t) => t.funding?.some((a) => a.month === fundingMonthKey(month) || a.month === fundingMonthKey(addMonths(month, -1)))) ? null : monthOverMonth(cur, prev, month),
       exp: exp.map((e) => ({ ...e, color: color(e.categoryId) })),
       inc: byCategory(cur, 'income'),
-      trend: trend(all, month, 6),
+      trend: trend(Array.from({ length: 6 }, (_, i) => fundingMonthEntries(all, addMonths(month, i - 5))).flat(), month, 6),
     }
     // "比上月同期" depends on today's date, so recompute when the day changes.
-  }, [tx, month, ref.categories, new Date().getDate()]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tx, month, ref.categories, ref.payments, new Date().getDate()]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const maxCat = v.exp[0]?.amount ?? 1
   const maxTrend = Math.max(1, ...v.trend.map((t) => t.expense))
@@ -241,11 +242,15 @@ const MODE_OPTIONS = [
 
 /** D-104: real income and expense of one year; months that have not started show no numbers. */
 function YearView({ year, onYear, onMonth }: { year: number; onYear: (y: number) => void; onMonth: (ym: YearMonth) => void }) {
-  const tx = useMonthsTx({ y: year, m: 11 }, 12)
+  const tx = useAllTx(true)
   const first = useLiveQuery(() => db.transactions.orderBy('occurredAt').first(), [])
   const now = new Date()
   const minYear = Math.min(now.getFullYear(), first ? new Date(first.occurredAt).getFullYear() : now.getFullYear())
-  const months = useMemo(() => yearByMonth(tx ?? [], year), [tx, year, now.getMonth()]) // eslint-disable-line react-hooks/exhaustive-deps
+  const ref = useRefData()
+  const months = useMemo(() => {
+    const all = computeFunding(ref.payments, tx ?? []).transactions
+    return yearByMonth(Array.from({ length: 12 }, (_, m) => fundingMonthEntries(all, { y: year, m })).flat(), year)
+  }, [tx, year, ref.payments, now.getMonth()]) // eslint-disable-line react-hooks/exhaustive-deps
   const t = yearTotals(months)
   const max = Math.max(1, ...months.map((m) => Math.max(m.income, m.expense)))
 

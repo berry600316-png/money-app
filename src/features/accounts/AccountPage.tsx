@@ -12,6 +12,7 @@ import { Icon } from '../../ui/Icon'
 import { Overlay } from '../../ui/overlay'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
+import { fundingLabel } from '../../ui/TxRows'
 import { AdjustSheet, SetupSheet } from './AccountSheets'
 
 /**
@@ -96,12 +97,12 @@ export function AccountPage({
     if (t.type === 'transfer') {
       const toCard = isCard(ref.payment(t.toAccountId ?? ''))
       const other = t.paymentMethodId === acc.id ? `→ ${ref.payment(t.toAccountId ?? '').name}` : `← ${ref.payment(t.paymentMethodId).name}`
-      return { title: `${toCard ? '繳卡費' : '互轉'} ${other}`, sub: [time, t.note].filter(Boolean).join(' · ') }
+      return { title: `${toCard ? '繳卡費' : '互轉'} ${other}`, sub: [time, fundingLabel(t), t.note].filter(Boolean).join(' · ') }
     }
     const cat = ref.category(t.categoryId).name
     // How it was paid when that is not this account itself: 轉帳, 信用卡, Apple Pay… (D-125).
     const via = t.paymentMethodId !== acc.id ? ref.payment(t.paymentMethodId).name : ''
-    return { title: t.merchant || cat, sub: [time, cat, via, t.note].filter(Boolean).join(' · ') }
+    return { title: t.merchant || cat, sub: [time, cat, via, fundingLabel(t), t.note].filter(Boolean).join(' · ') }
   }
 
   // Group the history by local day, newest first.

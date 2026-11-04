@@ -308,7 +308,6 @@ function Shell() {
             }}
             onPlan={() => push({ kind: 'plan', month: currentMonthKey() })}
             onAccounts={() => push({ kind: 'accounts' })}
-            onOpenAccount={(id) => push({ kind: 'account', id })}
             onMonthlyCashflow={() => push({ kind: 'monthlyCashflow' })}
           />
           <ListScreen

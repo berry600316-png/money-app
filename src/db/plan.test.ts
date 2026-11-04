@@ -313,7 +313,7 @@ describe('支出日期 固定｜不固定 (D-144)', () => {
     await up.open()
     expect(await up.planTemplates.get('t1')).toMatchObject({ fixedDate: false, day: 5 })
     expect(await up.plannedExpenses.get('x1')).toMatchObject({ fixedDate: false, day: 5 })
-    expect((await up.settings.get('schemaVersion'))!.value).toBe(10)
+    expect((await up.settings.get('schemaVersion'))!.value).toBe(11)
     up.close()
   })
 })

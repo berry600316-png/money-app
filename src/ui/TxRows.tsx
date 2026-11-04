@@ -8,6 +8,13 @@ import { Icon } from './Icon'
 import { useIsReconciled } from './reconContext'
 import { useRefData } from './refData'
 
+export const fundingLabel = (tx: Transaction) => {
+  const operationMonth = `${new Date(tx.occurredAt).getFullYear()}-${String(new Date(tx.occurredAt).getMonth() + 1).padStart(2, '0')}`
+  return tx.funding?.some((a) => a.month !== operationMonth)
+    ? tx.funding.map((a) => `${a.month.slice(0, 4) === operationMonth.slice(0, 4) ? '' : `${a.month.slice(0, 4)} 年 `}${Number(a.month.slice(5))} 月 ${fmt(a.amount)}`).join('＋')
+    : ''
+}
+
 /** `showTime`: the day panel (D-115) lists one day, so the time leads the second line. */
 export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpen: (id: string) => void; showTime?: boolean }) {
   const { category, payment, payments } = useRefData()
@@ -17,7 +24,7 @@ export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpe
   // D-117: a transfer reads "from → to", has no sign and is never counted as income or expense.
   if (tx.type === 'transfer') {
     const to = payment(tx.toAccountId ?? '')
-    const sub = [time, isCard(to) ? '繳卡費' : '互轉', tx.note].filter(Boolean).join(' · ')
+    const sub = [time, isCard(to) ? '繳卡費' : '互轉', fundingLabel(tx), tx.note].filter(Boolean).join(' · ')
     return (
       <button type="button" className="row" onClick={() => onOpen(tx.id)}>
         <span className="ico ico-move">
@@ -41,7 +48,7 @@ export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpe
   // D-120 / D-125: the way to pay, with the account it draws on: "信用卡（台新 Richart）".
   const how = tx.type === 'expense' ? describePay(tx, (id) => payments.find((p) => p.id === id)) : null
   const pay = how ? how.name + (how.account ? `（${how.account}）` : '') : payment(tx.paymentMethodId).name
-  const sub = [time, c.name, pay, tx.note].filter(Boolean).join(' · ')
+  const sub = [time, c.name, pay, fundingLabel(tx), tx.note].filter(Boolean).join(' · ')
   const income = tx.type === 'income'
   return (
     <button type="button" className="row" onClick={() => onOpen(tx.id)}>

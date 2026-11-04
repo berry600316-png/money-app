@@ -2,7 +2,7 @@
  * All writes of the credit card module (spec §10): one place, each in a single IndexedDB transaction.
  */
 import { db, type MoneyDB } from '../db/db'
-import { MoneyError } from '../db/repo'
+import { MoneyError, validateFundingState } from '../db/repo'
 import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
 import { chargedTo, isAsset, isCard } from '../lib/accounts'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
@@ -240,6 +240,7 @@ export async function commitNotificationImport(
     if (opts.rememberCards && Object.keys(opts.rememberCards).length) {
       await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { ...(await getDefaultCards(d)), ...opts.rememberCards } })
     }
+    await validateFundingState(d)
     return summary
   })
 }
@@ -398,7 +399,7 @@ async function loadPair(statementId: string, entryId: string, transactionId: str
 
 /** User pairs an entry with a transaction (also accepts an amount difference as explained, §8.3). */
 export async function matchManually(statementId: string, entryId: string, transactionId: string, note = '', d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
     const { tx } = await loadPair(statementId, entryId, transactionId, d)
     await assertFree(entryId, transactionId, d)
     await pair(statementId, entryId, tx, 'manual', note, d, now)
@@ -422,12 +423,13 @@ export async function reconfirmPair(reconId: string, d: MoneyDB = db, now = new 
  * touched (D-92); the pair is made with the new amount in the same transaction.
  */
 export async function applyStatementAmount(statementId: string, entryId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
     const { tx, entry } = await loadPair(statementId, entryId, transactionId, d)
     if (!isValidAmount(entry.amount)) throw new MoneyError('帳單金額不能用於記帳')
     await assertFree(entryId, transactionId, d)
     const next = { ...tx, amount: entry.amount, updatedAt: now.toISOString() }
     await d.transactions.put(next)
+    await validateFundingState(d)
     await pair(statementId, entryId, next, 'manual', `金額由 ${tx.amount} 改為帳單金額`, d, now)
   })
 }
@@ -460,6 +462,7 @@ export async function recordFromEntry(statementId: string, entryId: string, cate
       updatedAt: stamp,
     }
     await d.transactions.add(tx)
+    await validateFundingState(d)
     await assertFree(entryId, tx.id, d)
     await pair(statementId, entryId, tx, 'created', '由帳單補記', d, now)
     return tx

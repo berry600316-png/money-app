@@ -1,8 +1,9 @@
 import { db, type MoneyDB } from './db'
-import type { BalanceAdjustment, Category, CategoryType, PaymentMethod, PaymentType, Transaction, TxType } from './types'
+import type { BalanceAdjustment, Category, CategoryType, FundingAllocation, PaymentMethod, PaymentType, Transaction, TxType } from './types'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { fromYmd, isValidHm, localIso, minuteKey, occurredAtFor, timeLabel, toYmd } from '../lib/dates'
 import { computeBalances, isAsset, isCard, isMethod, isTracked, startInstant } from '../lib/accounts'
+import { computeFunding, fundingSource } from '../lib/funding'
 import { PAYSLIP_SOURCE } from './defaults'
 
 /** An error whose message is safe to show to the user as-is. */
@@ -31,6 +32,8 @@ export interface TxInput {
   cardId?: string
   /** Transfers: a fee, saved as its own expense from the source account (D-121). 0 / absent = none. */
   fee?: number
+  /** Optional advanced choice; absent keeps the original transaction-month behavior. */
+  funding?: FundingAllocation[]
 }
 
 const TX_TYPES: TxType[] = ['expense', 'income', 'transfer']
@@ -70,6 +73,15 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
   if (input.time !== undefined) {
     if (!isValidHm(input.time)) throw new MoneyError('時間不正確')
     if (`${input.date} ${input.time}` > minuteKey(now)) throw new MoneyError('不能選未來的時間')
+  }
+  if (input.funding !== undefined) {
+    if (input.type === 'income' || !input.funding.length || input.funding.reduce((sum, a) => sum + a.amount, 0) !== input.amount ||
+      input.funding.some((a) => !/^\d{4}-(0[1-9]|1[0-2])$/.test(a.month) || a.month > input.date.slice(0, 7) || !isValidAmount(a.amount) ||
+        (a.earnedAmount !== undefined && (!Number.isSafeInteger(a.earnedAmount) || a.earnedAmount < 0 || a.earnedAmount > a.amount))) ||
+      new Set(input.funding.map((a) => a.month)).size !== input.funding.length) throw new MoneyError('資金月份分配金額不正確')
+    const methods = new Map((await d.paymentMethods.toArray()).map((m) => [m.id, m]))
+    if (!fundingSource(input, methods)) throw new MoneyError('請先選定有效的扣款帳戶，才能使用其他月份的錢')
+    if (input.type === 'transfer' && isCard(methods.get(input.toAccountId ?? ''))) throw new MoneyError('繳卡費不需再指定資金月份')
   }
   if (input.type === 'transfer') {
     const [from, to] = await Promise.all([d.paymentMethods.get(input.paymentMethodId), input.toAccountId ? d.paymentMethods.get(input.toAccountId) : undefined])
@@ -130,6 +142,7 @@ async function syncFee(d: MoneyDB, transfer: Transaction | null, transferId: str
     feeOf: transferId,
     createdAt: existing?.createdAt ?? stamp,
     updatedAt: stamp,
+    ...(transfer.funding?.length ? { funding: [{ month: [...transfer.funding].sort((a, b) => a.month.localeCompare(b.month))[0].month, amount: fee }] } : {}),
   }
   await d.transactions.put(next)
 }
@@ -169,6 +182,18 @@ function links(input: TxInput): Pick<Transaction, 'toAccountId' | 'sourceAccount
   return {}
 }
 
+/** Validate the complete ledger inside the caller's write transaction, then persist provenance splits. */
+export async function validateFundingState(d: MoneyDB): Promise<void> {
+  const [methods, records] = await Promise.all([d.paymentMethods.toArray(), d.transactions.toArray()])
+  const result = computeFunding(methods, records)
+  if (result.issue) {
+    const method = methods.find((m) => m.id === result.issue!.accountId)
+    throw new MoneyError(`${result.issue.month}「${method?.name ?? '未指定帳戶'}」可用 ${result.issue.available.toLocaleString('en-US')} 元，這筆需要 ${result.issue.needed.toLocaleString('en-US')} 元；請先調整跨月紀錄`)
+  }
+  const changed = result.transactions.filter((t) => t.funding && JSON.stringify(t.funding) !== JSON.stringify(records.find((r) => r.id === t.id)?.funding))
+  if (changed.length) await d.transactions.bulkPut(changed)
+}
+
 /* ---------------- transactions ---------------- */
 
 const TX_TABLES = (d: MoneyDB) => [d.transactions, d.settings, d.paymentMethods, d.categories]
@@ -185,11 +210,13 @@ export async function addTransaction(input: TxInput, d: MoneyDB = db, now = new 
     externalId: null,
     createdAt: stamp,
     updatedAt: stamp,
+    ...(input.funding ? { funding: input.funding.map((a) => ({ ...a })) } : {}),
   }
   await d.transaction('rw', TX_TABLES(d), async () => {
     await d.transactions.add(tx)
     await syncFee(d, tx, tx.id, input.fee ?? 0, stamp)
     await rememberPayer(d, tx)
+    await validateFundingState(d)
     // D-20 / D-120: the next entry of the same kind starts with the same accounts.
     const last: [string, string][] =
       tx.type === 'transfer'
@@ -227,24 +254,33 @@ export async function updateTransaction(id: string, input: TxInput, d: MoneyDB =
     delete next.sourceAccountId
     delete next.cardId
     Object.assign(next, links(input))
+    if (input.funding) next.funding = input.funding.map((a) => ({ ...a }))
+    else if (prev.feeOf) {
+      const parent = await d.transactions.get(prev.feeOf)
+      const earliest = parent?.funding?.map((a) => a.month).sort()[0]
+      if (earliest) next.funding = [{ month: earliest, amount: next.amount }]
+      else delete next.funding
+    } else delete next.funding
     if (!keepTime) delete next.timeSource
     // D-20 "last used" follows new entries only; correcting an old record doesn't change the default.
     await d.transactions.put(next)
     // A transfer's fee follows it; a fee record itself is edited like any expense.
     if (!prev.feeOf) await syncFee(d, next, id, next.type === 'transfer' ? (input.fee ?? 0) : 0, next.updatedAt)
     await rememberPayer(d, next)
+    await validateFundingState(d)
     return next
   })
 }
 
 /** Deletes a record (and a transfer's fee with it); returns everything removed so it can be undone (D-25). */
 export async function deleteEntry(id: string, d: MoneyDB = db): Promise<Transaction[]> {
-  return d.transaction('rw', d.transactions, async () => {
+  return d.transaction('rw', [d.transactions, d.paymentMethods], async () => {
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
     if (prev.source === PAYSLIP_SOURCE) throw new MoneyError('這筆收入由薪資單產生，請到薪資單刪除')
     const fees = prev.type === 'transfer' ? await d.transactions.where('feeOf').equals(id).toArray() : []
     await d.transactions.bulkDelete([id, ...fees.map((f) => f.id)])
+    await validateFundingState(d)
     return [prev, ...fees]
   })
 }
@@ -255,7 +291,10 @@ export async function deleteTransaction(id: string, d: MoneyDB = db): Promise<Tr
 }
 
 export async function restoreTransaction(tx: Transaction | Transaction[], d: MoneyDB = db): Promise<void> {
-  await d.transactions.bulkPut(Array.isArray(tx) ? tx : [tx])
+  await d.transaction('rw', [d.transactions, d.paymentMethods], async () => {
+    await d.transactions.bulkPut(Array.isArray(tx) ? tx : [tx])
+    await validateFundingState(d)
+  })
 }
 
 /** The fee recorded for a transfer, 0 if none (D-121). */
@@ -431,7 +470,7 @@ export async function addPaymentMethod(input: AccountInput, d: MoneyDB = db, now
       ...card,
       ...(hasBank(input.type) && input.payFromId ? { payFromId: input.payFromId } : {}),
       ...(held.length ? { cards: held } : {}),
-      ...(input.start && !isMethod({ type: input.type }) ? { balanceFrom: startInstant(input.start.date, now), openingBalance: input.start.amount } : {}),
+      ...(input.start && !isMethod({ type: input.type }) ? { balanceFrom: startInstant(input.start.date, now), openingBalance: input.start.amount, openingFundingMonth: toYmd(now).slice(0, 7) } : {}),
     }
     await d.paymentMethods.add(pm)
     return pm
@@ -457,7 +496,7 @@ export async function updatePaymentMethod(
   now = new Date(),
 ): Promise<void> {
   if (patch.start) checkStart(patch.start.date, patch.start.amount, now)
-  await d.transaction('rw', d.paymentMethods, async () => {
+  await d.transaction('rw', [d.paymentMethods, d.transactions], async () => {
     const pm = await d.paymentMethods.get(id)
     if (!pm) throw new MoneyError('找不到這個帳戶')
     const all = await d.paymentMethods.toArray()
@@ -497,30 +536,35 @@ export async function updatePaymentMethod(
         if (!same) {
           next.balanceFrom = startInstant(patch.start.date, now)
           next.openingBalance = patch.start.amount
+          next.openingFundingMonth = toYmd(now).slice(0, 7)
         }
       } else {
         delete next.balanceFrom
         delete next.openingBalance
+        delete next.openingFundingMonth
       }
     }
     // Ways to pay are not accounts: they never hold a balance (D-120).
     if (isMethod(next)) {
       delete next.balanceFrom
       delete next.openingBalance
+      delete next.openingFundingMonth
     }
     await d.paymentMethods.put(next)
+    await validateFundingState(d)
   })
 }
 
 /** D-118: set several start balances at once (the one-time setup after the upgrade). */
 export async function setStartBalances(items: { id: string; amount: number }[], date: string, d: MoneyDB = db, now = new Date()): Promise<void> {
   for (const it of items) checkStart(date, it.amount, now)
-  await d.transaction('rw', d.paymentMethods, async () => {
+  await d.transaction('rw', [d.paymentMethods, d.transactions], async () => {
     for (const it of items) {
       const pm = await d.paymentMethods.get(it.id)
       if (!pm || isMethod(pm)) continue
-      await d.paymentMethods.put({ ...pm, balanceFrom: startInstant(date, now), openingBalance: it.amount })
+      await d.paymentMethods.put({ ...pm, balanceFrom: startInstant(date, now), openingBalance: it.amount, openingFundingMonth: toYmd(now).slice(0, 7) })
     }
+    await validateFundingState(d)
   })
 }
 

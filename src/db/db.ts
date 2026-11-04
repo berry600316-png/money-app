@@ -4,6 +4,7 @@ import { captureFingerprint } from '../card/notificationFile'
 import { linksByName } from '../card/notificationAdapters'
 import { dropOldZeroLines } from '../lib/salaryHistory'
 import { migrateWalletLinks, type LegacyPaymentMethod } from '../lib/accounts'
+import { toYmd } from '../lib/dates'
 import type {
   BalanceAdjustment,
   CardStatement,
@@ -23,7 +24,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 10
+export const SCHEMA_VERSION = 11
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -171,6 +172,16 @@ export class MoneyDB extends Dexie {
             })
         }
         await tx.table('settings').put({ key: 'schemaVersion', value: 10 })
+      })
+    // v11: assign pre-existing account opening funds to their start month. The original setup month was
+    // not stored in older rows; the balance start is the only recoverable local month.
+    this.version(11)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx.table('paymentMethods').toCollection().modify((p: PaymentMethod) => {
+          if (p.balanceFrom && p.openingBalance !== undefined && !p.openingFundingMonth) p.openingFundingMonth = toYmd(new Date(p.balanceFrom)).slice(0, 7)
+        })
+        await tx.table('settings').put({ key: 'schemaVersion', value: 11 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

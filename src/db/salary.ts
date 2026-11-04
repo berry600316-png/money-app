@@ -1,6 +1,6 @@
 import { db, type MoneyDB } from './db'
 import { PAYSLIP_SOURCE, SALARY_CATEGORY_ID } from './defaults'
-import { MoneyError, NAME_MAX } from './repo'
+import { MoneyError, NAME_MAX, validateFundingState } from './repo'
 import type { Payslip, PayslipLine, SalaryItem, SalaryKind, SalaryNature, Transaction } from './types'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
 import { MAX_AMOUNT } from '../lib/money'
@@ -116,6 +116,7 @@ export async function savePayslip(id: string | null, input: PayslipInput, d: Mon
       updatedAt: stamp,
     }
     await d.payslips.put(slip)
+    await validateFundingState(d)
     return slip
   })
 }
@@ -148,22 +149,24 @@ function order(it: SalaryItem) {
 
 /** D-75: delete a payslip and its income; returns both so the caller can offer undo. */
 export async function deletePayslip(id: string, d: MoneyDB = db): Promise<{ payslip: Payslip; tx: Transaction | null }> {
-  return d.transaction('rw', d.payslips, d.transactions, async () => {
+  return d.transaction('rw', d.payslips, d.transactions, d.paymentMethods, async () => {
     const payslip = await d.payslips.get(id)
     if (!payslip) throw new MoneyError('這張薪資單已不存在')
     const tx = payslip.transactionId ? ((await d.transactions.get(payslip.transactionId)) ?? null) : null
     if (tx) await d.transactions.delete(tx.id)
     await d.payslips.delete(id)
+    await validateFundingState(d)
     return { payslip, tx }
   })
 }
 
 export async function restorePayslip(saved: { payslip: Payslip; tx: Transaction | null }, d: MoneyDB = db): Promise<void> {
-  await d.transaction('rw', d.payslips, d.transactions, async () => {
+  await d.transaction('rw', d.payslips, d.transactions, d.paymentMethods, async () => {
     const clash = await d.payslips.where('month').equals(saved.payslip.month).first()
     if (clash && clash.id !== saved.payslip.id) throw new MoneyError('這個月已經有另一張薪資單')
     await d.payslips.put(saved.payslip)
     if (saved.tx) await d.transactions.put(saved.tx)
+    await validateFundingState(d)
   })
 }
 

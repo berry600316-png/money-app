@@ -3,6 +3,15 @@ export type CategoryType = 'expense' | 'income'
 /** D-117: 'transfer' (互轉) moves money between the user's own accounts; never income or expense. */
 export type TxType = CategoryType | 'transfer'
 
+/** A deliberately chosen source month for one expense or transfer. */
+export interface FundingAllocation {
+  /** Local YYYY-MM, no later than the transaction's month. */
+  month: string
+  amount: number
+  /** Of `amount`, the part drawn from this month's earned money. The rest uses opening funds. */
+  earnedAmount?: number
+}
+
 /** Fields follow spec 0.8, plus the account links of D-117. Timestamps are UTC ISO 8601 strings. */
 export interface Transaction {
   id: string
@@ -42,6 +51,8 @@ export interface Transaction {
    * 'notification' = when the notification arrived; 'date' = only the date is known (time stored as 12:00).
    */
   timeSource?: TimeSource
+  /** Absent for ordinary entries: all money belongs to the transaction month. */
+  funding?: FundingAllocation[]
 }
 
 export type TimeSource = 'notification' | 'date'
@@ -83,6 +94,8 @@ export interface PaymentMethod {
    */
   balanceFrom?: string
   openingBalance?: number
+  /** Month when a newly entered opening balance was assigned; legacy rows use the balance start month. */
+  openingFundingMonth?: string
   /**
    * Credit cards (D-119, D-125): the bank account it belongs to; its 預扣 shows there and its bill is paid
    * from it. Debit cards (D-129): the bank account it takes money from at once.
