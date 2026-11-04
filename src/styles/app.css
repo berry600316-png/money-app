@@ -447,6 +447,8 @@ button.srow:disabled:active { background: transparent; }
 .btn-primary:disabled { background: #A9BCD6; }
 .sheet.typing .keypad { display: none; }
 .sheet.typing .alt-save { display: block; }
+.sheet.funding-open .keypad { display: none; }
+.sheet.funding-open .alt-save { display: block; }
 
 /* form sheet (category / payment editors) */
 .form { display: flex; flex-direction: column; gap: 16px; padding: 12px 0 4px; }
@@ -952,12 +954,8 @@ button.lrow:active { background: var(--row-press); }
 .fee-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 6px 14px; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; font-size: 0.9375rem; flex: none; }
 .fee-row small { flex: 1; min-width: 0; font-size: 0.75rem; color: var(--ink-2); }
 .fee-row input { width: 96px; height: 40px; border: 0; background: none; text-align: right; font-size: 20px; outline: none; }
-.funding-editor { margin: 10px 14px 0; border: 1px solid var(--line); border-radius: 15px; background: var(--card); overflow: hidden; }
-.funding-toggle { width: 100%; min-height: 42px; padding: 9px 13px; border: 0; background: none; color: var(--ink-2); font: inherit; font-size: .84rem; text-align: left; display: flex; justify-content: space-between; align-items: center; }
-.funding-rows { padding: 0 13px 12px; }
-.funding-rows p, .funding-rows small { color: var(--ink-2); font-size: .74rem; line-height: 1.45; }
-.funding-rows p { margin: 2px 0 10px; }
-.funding-rows small { display: block; margin-top: 8px; }
+.funding-editor { margin-top: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--card); scroll-margin-block: 12px; }
+.funding-rows { padding: 12px; }
 .funding-row { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) 26px; gap: 7px; align-items: end; margin-top: 8px; }
 .funding-row label { min-width: 0; color: var(--ink-2); font-size: .72rem; }
 .funding-row input { display: block; box-sizing: border-box; width: 100%; min-width: 0; height: 38px; margin-top: 3px; padding: 0 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--ink); font: inherit; font-size: .85rem; }

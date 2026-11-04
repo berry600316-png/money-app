@@ -142,6 +142,7 @@ export function EntrySheet({
   const merchantRef = useRef<HTMLInputElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
   const feeRef = useRef<HTMLInputElement | null>(null)
+  const fundingRef = useRef<HTMLElement | null>(null)
   const opened = useRef('')
   /** The stored date/time and its marker: the marker stays only while both are unchanged (D-100). */
   const openedAt = useRef<{ date: string; time: string; timeSource?: TimeSource }>({ date: '', time: '' })
@@ -320,6 +321,12 @@ export function EntrySheet({
   }, [draft?.amount])
 
   const toCard = !!draft && draft.type === 'transfer' && isCard(ref.payment(draft.toAccountId))
+
+  useEffect(() => {
+    if (!open || !draft?.fundingOpen) return
+    const frame = window.requestAnimationFrame(() => fundingRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [open, draft?.fundingOpen])
 
   const editFunding = (index: number, field: 'month' | 'amount', value: string) => {
     if (!draft) return
@@ -544,6 +551,19 @@ export function EntrySheet({
     </button>
   )
 
+  const fundingPill = draft && !feeRecord && (draft.type === 'expense' || (draft.type === 'transfer' && !toCard)) && (
+    <button
+      type="button"
+      className={'pill' + (draft.fundingOpen ? ' on' : '')}
+      aria-expanded={draft.fundingOpen}
+      aria-controls="funding-editor"
+      onClick={() => patch({ fundingOpen: !draft.fundingOpen, funding: draft.fundingOpen ? [] : [{ month: draft.date.slice(0, 7), amount: draft.amount }] })}
+    >
+      <Icon name="calendar" />
+      <span>資金月份分配</span>
+    </button>
+  )
+
   return (
     <BottomSheet
       open={open}
@@ -551,7 +571,7 @@ export function EntrySheet({
       escClose={false}
       labelledBy="entry-title"
       sheetRef={sheetRef}
-      className={typing ? 'typing' : undefined}
+      className={[typing && 'typing', draft?.fundingOpen && 'funding-open'].filter(Boolean).join(' ') || undefined}
       head={
         <div className="sheet-bar">
           <button type="button" className="txt-btn" onClick={requestClose}>
@@ -656,6 +676,7 @@ export function EntrySheet({
                   <span>手續費{draft.showFee && fee ? ` ${fmt(fee)}` : ''}</span>
                 </button>
                 {notePill}
+                {fundingPill}
               </div>
               {draft.showFee && (
                 <label className="fee-row" htmlFor="f-fee">
@@ -758,18 +779,14 @@ export function EntrySheet({
                   <span>{draft.type === 'income' || !pay ? ref.payment(draft.paymentMethodId).name : pay.label}</span>
                 </button>
                 {notePill}
+                {fundingPill}
               </div>
             </>
           )}
 
-          {!feeRecord && (draft.type === 'expense' || (draft.type === 'transfer' && !toCard)) && (
-            <section className="funding-editor" aria-label="資金月份">
-              <button type="button" className="funding-toggle" aria-expanded={draft.fundingOpen} onClick={() => patch({ fundingOpen: !draft.fundingOpen, funding: draft.fundingOpen ? [] : [{ month: draft.date.slice(0, 7), amount: draft.amount }] })}>
-                使用其他月份的錢 <span aria-hidden="true">{draft.fundingOpen ? '−' : '＋'}</span>
-              </button>
-              {draft.fundingOpen && (
+          {draft.fundingOpen && fundingPill && (
+            <section ref={fundingRef} id="funding-editor" className="funding-editor" aria-label="資金月份分配">
                 <div className="funding-rows">
-                  <p>平常不用調整。只有要動用舊月份留下的錢，才在這裡分配。</p>
                   {draft.funding.map((row, i) => (
                     <div className="funding-row" key={i}>
                       <label>來源月份<input type="month" max={draft.date.slice(0, 7)} value={row.month} onChange={(e) => editFunding(i, 'month', e.target.value)} onFocus={() => onFieldFocus(false)} onBlur={() => onFieldBlur(false)} /></label>
@@ -781,9 +798,7 @@ export function EntrySheet({
                     <button type="button" onClick={() => patch({ funding: [...draft.funding, { month: '', amount: '' }] })}>＋ 加入月份</button>
                     <span>已分配 {fmt(draft.funding.reduce((sum, row) => sum + Number(row.amount || 0), 0))} / {fmt(amount)}</span>
                   </div>
-                  <small>來源月份須早於或等於操作月份；若舊月帳戶餘額不足，儲存時會提示。</small>
                 </div>
-              )}
             </section>
           )}
 
