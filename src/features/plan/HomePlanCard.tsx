@@ -41,7 +41,7 @@ export function HomePlanCard({ onOpen }: { onOpen: () => void }) {
       </span>
       <span className="pc-meta">
         <span>
-          必要支出 <b className="num">{fmt(p.recorded)}</b> / {fmt(p.necessary)}
+          必要支出 <b className="num">{fmt(p.recorded)}</b> / <span className="num">{fmt(p.necessary)}</span>
         </span>
         <span>{p.pendingCount ? <><b>{p.pendingCount}</b> 筆待記帳</> : p.items.length ? '全部已記帳' : '沒有必要支出'}</span>
       </span>

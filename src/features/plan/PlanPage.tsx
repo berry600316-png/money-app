@@ -170,7 +170,7 @@ export function PlanPage({
       <div className="prog p-in d3">
         <h2>必要支出</h2>
         <span>
-          已記帳 <AnimatedNumber value={p.recorded} className="num" /> / {fmt(p.necessary)}
+          已記帳 <AnimatedNumber value={p.recorded} className="num" /> / <span className="num">{fmt(p.necessary)}</span>
         </span>
       </div>
       <div className="ptrack p-in d3" aria-hidden="true">
