@@ -483,6 +483,9 @@ button.srow:disabled:active { background: transparent; }
 .row-act { flex: none; font-size: 0.8125rem; color: var(--brand); }
 .slip-net { font-family: var(--font-num); font-size: 1.25rem; font-weight: 500; }
 .line-name { font-size: 1rem; }
+.line-title { display: flex; align-items: flex-end; gap: 3px; min-width: 0; max-width: 100%; }
+.line-title .line-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1; }
+.line-note-inline { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 0.72rem; font-weight: 400; line-height: 1; }
 .line-sub { font-size: 0.75rem; color: var(--ink-2); }
 .line-amt { flex: none; font-size: 1.125rem; font-weight: 500; }
 .line-amt.zero { color: var(--muted-ink); }
@@ -600,10 +603,7 @@ button.srow:disabled:active { background: transparent; }
 .summary-toggle { display: flex; align-items: center; justify-content: space-between; width: 100%; border: 0; background: none; padding: 14px 4px 8px; font-size: 0.875rem; color: var(--ink-2); }
 .summary-toggle svg { width: 16px; height: 16px; transition: transform 0.25s var(--ease); }
 .summary-toggle[aria-expanded='true'] svg { transform: rotate(90deg); }
-/* D-141: notes on payslip lines (shown under the item, edited from 備註 at the bottom). */
-/* D-141: a sticky note under the line. The inner span keeps two lines, so a third never shows in the padding. */
-.line-note { display: block; margin-top: 7px; padding: 6px 10px 6px 9px; border-radius: 4px 10px 10px 4px; background: var(--note-paper); border-left: 3px solid var(--note-edge); color: var(--note-ink); font-size: 0.75rem; line-height: 1.5; }
-.line-note > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; white-space: pre-line; overflow-wrap: anywhere; }
+/* D-141: a note follows the item title, sharing its visual bottom edge. */
 .add-line.note-btn { justify-content: center; margin-top: 14px; }
 .note-btn small { font-weight: 400; font-size: 0.8125rem; color: var(--ink-2); }
 .note-grp { font-size: 0.75rem; color: var(--ink-2); margin: 10px 4px 6px; }

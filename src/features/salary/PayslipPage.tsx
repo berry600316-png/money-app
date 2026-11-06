@@ -70,16 +70,14 @@ export function PayslipPage({
         return (
           <button type="button" className="row" key={l.itemId} onClick={() => onHistory(l.itemId)}>
             <span className="row-main">
-              <span className="line-name">{it?.name ?? l.name}</span>
+              <span className="line-title">
+                <span className="line-name">{it?.name ?? l.name}</span>
+                {l.note && <span className="line-note-inline">· {l.note}</span>}
+              </span>
               <span className="line-sub">
                 {it?.nature === 'fixed' ? '固定' : '變動'}
                 {it && it.name !== l.name ? `　當時：${l.name}` : ''}
               </span>
-              {l.note && (
-                <span className="line-note">
-                  <span>{l.note}</span>
-                </span>
-              )}
             </span>
             <span className={'line-amt num' + (l.amount === 0 ? ' zero' : '')}>{fmt(l.amount)}</span>
             <Icon name="chev" className="chev" />
