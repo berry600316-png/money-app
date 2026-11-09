@@ -3,7 +3,7 @@ import Dexie from 'dexie'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from '../db/db'
 import { addPaymentMethod, addTransaction, updateTransaction } from '../db/repo'
-import { explain, matchManually, recordFromEntry, recordTransferFromEntry, saveStatement } from './cardRepo'
+import { explain, matchManually, recordFromEntry, recordTransferFromEntry, saveAutoPairs, saveStatement } from './cardRepo'
 import { reconcile } from './reconcile'
 
 let d: MoneyDB
@@ -25,6 +25,7 @@ async function setup() {
       { txDate: '2026-10-02', postDate: '2026-10-02', merchant: '退費', amount: -80, kind: 'refund', currency: 'TWD', foreign: null, reference: null, evidence: 'both', raw: '', },
       { txDate: '2026-10-03', postDate: '2026-10-03', merchant: '轉帳', amount: 100, kind: 'transfer_out', currency: 'TWD', foreign: null, reference: null, evidence: 'account', raw: '', },
       { txDate: '2026-10-04', postDate: '2026-10-04', merchant: '提款', amount: 500, kind: 'withdrawal', currency: 'TWD', foreign: null, reference: null, evidence: 'account', raw: '', },
+      { txDate: '2026-10-05', postDate: '2026-10-05', merchant: '自有帳戶匯入', amount: -75, kind: 'deposit', currency: 'TWD', foreign: null, reference: null, evidence: 'account', raw: '', },
     ],
   }, {}, d, now)
   const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
@@ -64,8 +65,21 @@ describe('debit reconciliation decisions', () => {
     expect(refund).toMatchObject({ type: 'income', amount: 80, paymentMethodId: bank.id })
     const transfer = await recordTransferFromEntry(st.id, entries[2].id, other.id, d, now)
     expect(transfer).toMatchObject({ type: 'transfer', amount: 100, paymentMethodId: bank.id, toAccountId: other.id })
+    const incoming = await recordTransferFromEntry(st.id, entries[4].id, other.id, d, now)
+    expect(incoming).toMatchObject({ type: 'transfer', amount: 75, paymentMethodId: other.id, toAccountId: bank.id })
     await expect(recordFromEntry(st.id, entries[3].id, 'food', d, now)).rejects.toThrow('提款')
-    expect((await run()).items.filter((item) => item.kind === 'matched')).toHaveLength(3)
+    expect((await run()).items.filter((item) => item.kind === 'matched')).toHaveLength(4)
+  })
+  it('rejects an auto pair computed before the book amount was edited', async () => {
+    const { bank, card, st, entries, run } = await setup()
+    const tx = await addTransaction({ type: 'expense', amount: 200, merchant: '購物', categoryId: 'food',
+      paymentMethodId: card.id, sourceAccountId: bank.id, date: '2026-10-01', note: '' }, d, now)
+    const proposed = (await run()).autoPairs
+    expect(proposed).toEqual([{ entryId: entries[0].id, transactionId: tx.id }])
+    await updateTransaction(tx.id, { type: 'expense', amount: 201, merchant: '購物', categoryId: 'food',
+      paymentMethodId: card.id, sourceAccountId: bank.id, date: '2026-10-01', note: '' }, d, now)
+    expect(await saveAutoPairs(st.id, proposed, d, now)).toBe(0)
+    expect(await d.reconciliations.count()).toBe(0)
   })
 
   it('requires a reason for manual confirmation and removes the check after editing a book record', async () => {

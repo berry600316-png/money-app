@@ -116,7 +116,7 @@ describe('statements (Phase 2)', () => {
 
 describe('reconciliation decisions (Phase 3)', () => {
   async function setup() {
-    const st = await saveStatement(statementInput(), {}, d, now)
+    const st = await saveStatement({ ...statementInput(), confirmed: true }, {}, d, now)
     const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
     const base = { type: 'expense' as const, categoryId: 'food', paymentMethodId: cardId, note: '' }
     const fam = await addTransaction({ ...base, amount: 85, merchant: '全家', date: '2026-09-18' }, d, now)

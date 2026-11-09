@@ -26,6 +26,7 @@ const STATE_TEXT: Partial<Record<Item['kind'], string>> = {
   amount_diff: '金額不一致',
   special: '特殊交易',
   broken: '記帳已變更',
+  broken_explanation: '人工確認需重對',
   pending_next: '等待下期帳單',
 }
 
@@ -121,9 +122,8 @@ export function ReconcilePage({
       <Icon name="alert" />
       <div>
         <b>{st.parseStatus === 'needs_reimport' ? '舊帳單需要重新匯入' : '請先確認帳單明細'}</b>
-        <p>{st.parseStatus === 'needs_reimport' ? '舊版沒有保存原始 PDF。請重新上傳這期帳單，逐筆確認後開始核對。' : '請先對照 PDF，確認匯入的明細完整且正確，才會開始自動配對與顯示勾選。'}</p>
-        {st.parseStatus === 'needs_reimport' ? <button type="button" className="chip-btn" onClick={onImportStatement}>重新匯入 PDF</button>
-          : <button type="button" className="chip-btn" onClick={() => updateStatement(st.id, { parseStatus: 'confirmed' }).then(() => toast('已確認帳單解析'), () => toast('沒有存到', { kind: 'error' }))}>我已逐筆對照</button>}
+        <p>{st.parseStatus === 'needs_reimport' ? '舊版沒有保存原始 PDF。請重新上傳這期帳單，逐筆確認後開始核對。' : '請重新上傳這期 PDF，在審閱頁逐筆校正並確認完整後，才會開始自動配對與顯示勾選。'}</p>
+        <button type="button" className="chip-btn" onClick={onImportStatement}>重新匯入並審閱</button>
       </div>
     </div>
   </>
@@ -132,7 +132,7 @@ export function ReconcilePage({
   const s = result.summary
   const items = result.items
   const of = (k: Item['kind']) => items.filter((i) => i.kind === k)
-  const review = [...of('ambiguous'), ...of('amount_diff'), ...of('special'), ...of('broken')]
+  const review = [...of('ambiguous'), ...of('amount_diff'), ...of('special'), ...of('broken'), ...of('broken_explanation')]
   const matched = [...of('matched'), ...of('explained_entry'), ...of('explained_tx')]
   const pending = of('pending_next')
   const problems = s.bankOnly + (s.bookOnly ?? 0) + s.needsReview

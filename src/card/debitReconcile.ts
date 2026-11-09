@@ -1,11 +1,12 @@
 import type { StatementEntry, Transaction } from '../db/types'
 import { chargedTo } from '../lib/accounts'
 import { dayDiff } from './text'
-import { pairStillValid, txDate, type ReconcileInput, type ReconcileResult, type Item } from './reconcile'
+import type { ReconcileInput, ReconcileResult, Item } from './reconcile'
+import { pairStillValid, txDate } from './reconcileCommon'
 
 export function debitCandidate(entry: StatementEntry, tx: Transaction, cardId: string, accountId: string): boolean {
-  if (entry.kind === 'purchase') return tx.type === 'expense' && chargedTo(tx) === cardId
-    && tx.sourceAccountId === accountId
+  if (entry.kind === 'purchase') return tx.type === 'expense' && (
+    tx.cardId === cardId || (tx.paymentMethodId === cardId && tx.sourceAccountId === accountId))
   if (entry.kind === 'refund') return tx.type === 'income' && tx.paymentMethodId === accountId
   if (entry.kind === 'deposit') return (tx.type === 'income' && tx.paymentMethodId === accountId)
     || (tx.type === 'transfer' && tx.toAccountId === accountId)
@@ -21,7 +22,7 @@ function closeEnough(entry: StatementEntry, tx: Transaction): boolean {
   return !!entry.postDate && Math.abs(dayDiff(entry.postDate, booked)) <= 7
 }
 
-function relevant(tx: Transaction, cardId: string, accountId: string): boolean {
+export function debitRelevant(tx: Transaction, cardId: string, accountId: string): boolean {
   if (tx.type === 'expense') return chargedTo(tx) === cardId || tx.paymentMethodId === accountId || tx.sourceAccountId === accountId
   if (tx.type === 'income') return tx.paymentMethodId === accountId
   return tx.paymentMethodId === accountId || tx.toAccountId === accountId
@@ -53,8 +54,8 @@ export function reconcileDebit(input: ReconcileInput): ReconcileResult {
     else open.push(entry)
   }
 
-  const available = transactions.filter((tx) => relevant(tx, statement.paymentMethodId, accountId) && !used.has(tx.id)
-    && !(explainedTx.has(tx.id) && !pairStillValid(explainedTx.get(tx.id)!, tx)))
+  const available = transactions.filter((tx) => debitRelevant(tx, statement.paymentMethodId, accountId) && !used.has(tx.id)
+    && !explainedTx.has(tx.id))
   const choices = open.map((entry) => ({ entry, candidates: available.filter((tx) =>
     debitCandidate(entry, tx, statement.paymentMethodId, accountId)
       && tx.amount === Math.abs(entry.amount) && closeEnough(entry, tx)),
@@ -77,16 +78,15 @@ export function reconcileDebit(input: ReconcileInput): ReconcileResult {
   }
 
   const periodKnown = !!(statement.periodStart && statement.periodEnd)
-  if (periodKnown) {
-    const reserved = new Set([...used, ...taken])
-    for (const item of items) if (item.kind === 'ambiguous') item.candidates.forEach((tx) => reserved.add(tx.id))
-    for (const tx of transactions.filter((t) => relevant(t, statement.paymentMethodId, accountId) && !used.has(t.id))) {
-      const booked = txDate(tx)
-      if (booked < statement.periodStart! || booked > statement.periodEnd! || reserved.has(tx.id)) continue
-      const explained = explainedTx.get(tx.id)
-      if (explained && !pairStillValid(explained, tx)) items.push({ kind: 'explained_tx', tx, recon: explained })
-      else items.push({ kind: 'book_only', tx })
-    }
+  const reserved = new Set([...used, ...taken])
+  for (const item of items) if (item.kind === 'ambiguous') item.candidates.forEach((tx) => reserved.add(tx.id))
+  for (const tx of transactions.filter((t) => (debitRelevant(t, statement.paymentMethodId, accountId) || explainedTx.has(t.id)) && !used.has(t.id))) {
+    const explained = explainedTx.get(tx.id)
+    const invalid = explained ? pairStillValid(explained, tx) : null
+    if (explained && invalid) items.push({ kind: 'broken_explanation', tx, recon: explained, reason: invalid })
+    else if (explained) items.push({ kind: 'explained_tx', tx, recon: explained })
+    else if (periodKnown && txDate(tx) >= statement.periodStart! && txDate(tx) <= statement.periodEnd! && !reserved.has(tx.id))
+      items.push({ kind: 'book_only', tx })
   }
 
   const count = (kind: Item['kind']) => items.filter((item) => item.kind === kind).length
@@ -94,6 +94,6 @@ export function reconcileDebit(input: ReconcileInput): ReconcileResult {
     items, autoPairs, payments: [], periodKnown,
     summary: { entries: entries.length, matched: count('matched') + count('explained_entry'),
       bankOnly: count('bank_only'), bookOnly: periodKnown ? count('book_only') : null,
-      needsReview: count('ambiguous') + count('broken'), pendingNext: 0 },
+      needsReview: count('ambiguous') + count('broken') + count('broken_explanation'), pendingNext: 0 },
   }
 }

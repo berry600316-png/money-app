@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { suggestCategory } from '../../card/categorize'
-import { applyStatementAmount, deferToNext, explain, matchManually, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision } from '../../card/cardRepo'
+import { applyStatementAmount, deferToNext, explain, matchManually, reconfirmExplanation, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision } from '../../card/cardRepo'
 import { txDate, type Item } from '../../card/reconcile'
 import { dayDiff } from '../../card/text'
 import { debitCandidate } from '../../card/debitReconcile'
@@ -154,8 +154,8 @@ export function ReconItemSheet({
     )
   } else if (it && view === 'record-transfer' && entry) {
     body = <>
-      <p className="sheet-msg">這筆銀行轉出是互轉到哪個帳戶？</p>
-      <div className="meta-grid"><label className="full">轉入帳戶
+      <p className="sheet-msg">這筆銀行{entry.kind === 'deposit' ? '存入來自' : '轉出前往'}哪個自己的帳戶？</p>
+      <div className="meta-grid"><label className="full">{entry.kind === 'deposit' ? '轉出帳戶' : '轉入帳戶'}
         <select value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}>
           <option value="">請選擇</option>
           {ref.payments.filter((p) => ['bank', 'cash', 'stored_value'].includes(p.type) && p.id !== statement.accountId).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -217,7 +217,7 @@ export function ReconItemSheet({
             {it.entry.kind !== 'withdrawal' && <button type="button" className="btn-primary" onClick={() => setView('record')}>
               補記並核對
             </button>}
-            {it.entry.kind === 'transfer_out' && <button type="button" className="btn-secondary" onClick={() => setView('record-transfer')}>補記為互轉</button>}
+            {(it.entry.kind === 'transfer_out' || it.entry.kind === 'deposit') && <button type="button" className="btn-secondary" onClick={() => setView('record-transfer')}>補記為互轉</button>}
             <button type="button" className="btn-secondary" onClick={() => setView('find-tx')}>
               尋找既有紀錄
             </button>
@@ -335,6 +335,14 @@ export function ReconItemSheet({
             </button>
           </>
         )
+        break
+      case 'broken_explanation':
+        body = <>
+          {hero}
+          <p className="sheet-msg">{it.reason}。先前的人工確認「{it.recon.note}」已失效。</p>
+          <button type="button" className="btn-primary" onClick={() => run(() => reconfirmExplanation(it.recon.id), '已重新人工確認')}>重新確認這筆</button>
+          <button type="button" className="btn-secondary" onClick={() => run(() => removeDecision(it.recon.id), '已取消人工確認')}>取消確認，重新核對</button>
+        </>
         break
       case 'matched':
         body = (

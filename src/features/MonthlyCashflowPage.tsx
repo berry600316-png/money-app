@@ -8,6 +8,7 @@ import { useToday } from '../lib/useToday'
 import { Icon } from '../ui/Icon'
 import { MonthSwitch } from '../ui/MonthSwitch'
 import { useRefData } from '../ui/refData'
+import { ReconCheck } from '../ui/reconContext'
 
 function Amount({ value }: { value: number }) {
   return <span className={'num' + (value < 0 ? ' neg' : '')}>{fmt(value)}</span>
@@ -92,7 +93,7 @@ export function MonthlyCashflowPage({ backLabel, onBack, onOpenAccount, onOpenTx
       </section>
       {laterUses.length > 0 && <section className="mc-section">
         <h2>後續月份使用此月資金</h2>
-        <div className="mc-card">{laterUses.map((t) => <button type="button" className="mc-unknown-tx" key={t.id} onClick={() => onOpenTx(t.id)}><span>{new Date(t.occurredAt).getMonth() + 1} 月 {new Date(t.occurredAt).getDate()} 日 · {t.type === 'transfer' ? '互轉' : t.merchant || '支出'}{t.type === 'expense' && (t.funding!.find((a) => a.month === key)!.earnedAmount ?? 0) < t.funding!.find((a) => a.month === key)!.amount ? '（含期初資金）' : ''}</span><Amount value={t.funding!.find((a) => a.month === key)!.amount} /></button>)}</div>
+        <div className="mc-card">{laterUses.map((t) => <button type="button" className="mc-unknown-tx" key={t.id} onClick={() => onOpenTx(t.id)}><span>{new Date(t.occurredAt).getMonth() + 1} 月 {new Date(t.occurredAt).getDate()} 日 · {t.type === 'transfer' ? '互轉' : t.merchant || '支出'}{t.type === 'expense' && (t.funding!.find((a) => a.month === key)!.earnedAmount ?? 0) < t.funding!.find((a) => a.month === key)!.amount ? '（含期初資金）' : ''}<ReconCheck tx={t} /></span><Amount value={t.funding!.find((a) => a.month === key)!.amount} /></button>)}</div>
       </section>}
       {empty && <div className="empty mc-empty"><strong>這個月還沒有收入或資金支出</strong>若有互轉、期初資金或校正，仍會列在下方。</div>}
 
@@ -116,7 +117,7 @@ export function MonthlyCashflowPage({ backLabel, onBack, onOpenAccount, onOpenTx
           {unknown.transactionIds.map((id) => {
             const item = tx?.find((t) => t.id === id)
             return item && <button type="button" className="mc-unknown-tx" key={id} onClick={() => onOpenTx(id)}>
-              <span>{item.merchant || (item.type === 'income' ? '收入' : '支出')}</span>
+              <span>{item.merchant || (item.type === 'income' ? '收入' : '支出')}<ReconCheck tx={item} /></span>
               <Amount value={item.type === 'income' ? item.amount : -item.amount} />
             </button>
           })}

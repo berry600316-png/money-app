@@ -47,4 +47,19 @@ describe('debit statement reconciliation', () => {
     expect(result.autoPairs).toEqual([])
     expect(result.items[0]?.kind).toBe('ambiguous')
   })
+  it('matches mobile payment charged to the selected debit card', () => {
+    const result = reconcile({ statement, entries: [entry('mobile', 'purchase', 90, '2026-10-14')],
+      transactions: [tx('apple', 'expense', 90, '2026-10-14', 'apple-pay', { cardId: 'debit' })], recons: [] })
+    expect(result.autoPairs).toEqual([{ entryId: 'mobile', transactionId: 'apple' }])
+  })
+  it('does not automatically rematch an edited manually confirmed book record', () => {
+    const changed = tx('book', 'income', 100, '2026-10-15', 'bank')
+    const result = reconcile({ statement, entries: [entry('in', 'deposit', -100, '2026-10-14')],
+      transactions: [changed], recons: [{ id: 'decision', statementId: statement.id, entryId: null,
+        transactionId: changed.id, status: 'explained', method: 'manual',
+        snapshot: { amount: 100, date: '2026-10-14', paymentMethodId: 'bank' },
+        note: '人工確認', createdAt: '' }] })
+    expect(result.autoPairs).toEqual([])
+    expect(result.items.some((item) => item.kind === 'broken_explanation')).toBe(true)
+  })
 })

@@ -108,7 +108,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
       const { sha256 } = await import('../../card/pdf/extract')
       const hash = await sha256(data)
       const existingFile = await db.cardStatements.where('fileHash').equals(hash).first()
-      if (existingFile && existingFile.parseStatus !== 'needs_reimport') {
+      if (existingFile && existingFile.parseStatus === 'confirmed') {
         toast('這份帳單已經匯入過', { kind: 'error' })
         setBusy(false)
         return
@@ -144,6 +144,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
         {
           paymentMethodId: meta.paymentMethodId,
           statementType: parsed?.statementType ?? 'credit_card',
+          cardLast4: parsed?.cardLast4 ?? null,
           ...(parsed?.statementType === 'debit_card' ? { accountId: meta.accountId, pendingCount: parsed.pendingCount ?? 0 } : {}),
           bank: meta.bank,
           statementMonth: meta.statementMonth,
