@@ -115,7 +115,7 @@ export function ListScreen({
         </button>
         <button type="button" onClick={onReconcile}>
           <Icon name="reconcile" />
-          信用卡核對
+          帳單核對
         </button>
       </div>
       <div className="tools">

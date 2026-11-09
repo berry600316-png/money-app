@@ -537,7 +537,7 @@ function emptyCard() {
 }
 
 const isNullStr = (v: unknown): v is string | null => v === null || isStr(v)
-const ENTRY_KINDS: EntryKind[] = ['purchase', 'refund', 'fee', 'installment', 'payment', 'adjustment', 'other']
+const ENTRY_KINDS: EntryKind[] = ['purchase', 'refund', 'fee', 'installment', 'payment', 'adjustment', 'other', 'withdrawal', 'deposit', 'transfer_out']
 const NOTIF_STATUS: NotificationStatus[] = ['imported', 'duplicate', 'skipped', 'not_spending', 'unparsed']
 
 /** D-94: credit card data. Every link must point at something in the same file. */
@@ -610,11 +610,18 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if (!isMonthKey(s.statementMonth)) fail(`第 ${n} 份帳單的月份不正確`)
     for (const k of ['periodStart', 'periodEnd', 'dueDate'] as const) if (s[k] !== null && !isYmdStr(s[k])) fail(`第 ${n} 份帳單的日期不正確`)
     if (!isStr(s.bank) || !isStr(s.fileHash) || !s.fileHash || !isStr(s.fileName) || !isStr(s.adapter) || !isStr(s.batchId)) fail(`第 ${n} 份帳單不正確`)
-    if (s.parseStatus !== 'needs_review' && s.parseStatus !== 'confirmed') fail(`第 ${n} 份帳單的解析狀態不正確`)
+    if (s.parseStatus !== 'needs_review' && s.parseStatus !== 'confirmed' && s.parseStatus !== 'needs_reimport') fail(`第 ${n} 份帳單的解析狀態不正確`)
+    if (s.statementType !== undefined && s.statementType !== 'credit_card' && s.statementType !== 'debit_card') fail(`第 ${n} 份帳單的卡片類型不正確`)
+    if (s.accountId !== undefined && (!isStr(s.accountId) || !payIds.has(s.accountId))) fail(`第 ${n} 份帳單的銀行帳戶不存在`)
+    if (s.statementType === 'debit_card' && !s.accountId) fail(`第 ${n} 份帳單缺少銀行帳戶`)
+    if (s.pendingCount !== undefined && (typeof s.pendingCount !== 'number' || !Number.isSafeInteger(s.pendingCount) || s.pendingCount < 0)) fail(`第 ${n} 份帳單的待扣筆數不正確`)
     if (!isIso(s.createdAt) || !isIso(s.updatedAt)) fail(`第 ${n} 份帳單的時間不正確`)
     return {
       id: s.id,
       paymentMethodId: s.paymentMethodId,
+      ...(s.statementType ? { statementType: s.statementType } : {}),
+      ...(s.accountId ? { accountId: s.accountId } : {}),
+      ...(s.pendingCount !== undefined ? { pendingCount: s.pendingCount as number } : {}),
       bank: s.bank,
       statementMonth: s.statementMonth,
       periodStart: s.periodStart as string | null,
@@ -622,7 +629,7 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
       dueDate: s.dueDate as string | null,
       fileHash: s.fileHash,
       fileName: s.fileName,
-      parseStatus: s.parseStatus,
+      parseStatus: (raw.schemaVersion as number) < 12 ? 'needs_reimport' : s.parseStatus,
       adapter: s.adapter,
       batchId: s.batchId,
       createdAt: s.createdAt,
@@ -645,6 +652,7 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if (typeof a !== 'number' || !Number.isSafeInteger(a) || a === 0 || Math.abs(a) > MAX_AMOUNT) fail(`第 ${n} 筆帳單明細的金額不正確`)
     if (!isStr(e.merchant) || !isStr(e.currency) || !isNullStr(e.foreign) || !isNullStr(e.reference) || !isStr(e.raw)) fail(`第 ${n} 筆帳單明細不正確`)
     if (!ENTRY_KINDS.includes(e.kind as EntryKind) || typeof e.order !== 'number') fail(`第 ${n} 筆帳單明細的類型不正確`)
+    if (e.evidence !== undefined && e.evidence !== 'card' && e.evidence !== 'account' && e.evidence !== 'both') fail(`第 ${n} 筆帳單明細的來源不正確`)
     return {
       id: e.id,
       statementId: e.statementId,
@@ -656,6 +664,7 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
       foreign: e.foreign,
       reference: e.reference,
       kind: e.kind as EntryKind,
+      ...(e.evidence ? { evidence: e.evidence } : {}),
       raw: e.raw,
       order: e.order,
     }
@@ -679,7 +688,12 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if (r.snapshot !== null) {
       const s = r.snapshot
       if (!isObj(s) || typeof s.amount !== 'number' || !isYmdStr(s.date) || !isStr(s.paymentMethodId)) fail(`第 ${n} 筆核對紀錄不正確`)
-      snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId }
+      for (const key of ['sourceAccountId', 'cardId', 'toAccountId'] as const) if (s[key] !== undefined && !isStr(s[key])) fail(`第 ${n} 筆核對紀錄不正確`)
+      snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId,
+        ...('sourceAccountId' in s ? { sourceAccountId: s.sourceAccountId as string } : {}),
+        ...('cardId' in s ? { cardId: s.cardId as string } : {}),
+        ...('toAccountId' in s ? { toAccountId: s.toAccountId as string } : {}),
+      }
     }
     if (!isStr(r.note) || !isIso(r.createdAt)) fail(`第 ${n} 筆核對紀錄不正確`)
     return [
@@ -706,7 +720,7 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     pe.add(r.entryId!)
     pt.add(r.transactionId!)
   }
-  return { importedNotifications, importBatches, cardStatements, statementEntries, reconciliations }
+  return { importedNotifications, importBatches, cardStatements, statementEntries, reconciliations: (raw.schemaVersion as number) < 12 ? [] : reconciliations }
 }
 
 /* ---------------- CSV (D-42) ---------------- */

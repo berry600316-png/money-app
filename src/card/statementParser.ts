@@ -8,6 +8,7 @@
  */
 import type { EntryKind } from '../db/types'
 import { STATEMENT_ADAPTERS, type StatementAdapter } from './statementAdapters'
+import { isTaishinDebit, parseTaishinDebit } from './taishinDebit'
 import { dayDiff, findDates, findLast4, parseAmount, toHalfWidth } from './text'
 
 export interface DraftEntry {
@@ -19,10 +20,13 @@ export interface DraftEntry {
   foreign: string | null
   reference: string | null
   kind: EntryKind
+  evidence?: 'card' | 'account' | 'both'
   raw: string
 }
 
 export interface ParsedStatement {
+  statementType?: 'credit_card' | 'debit_card'
+  pendingCount?: number
   adapter: string
   bank: string | null
   cardLast4: string | null
@@ -319,6 +323,18 @@ export const GENERIC_STATEMENT_WARNING = '還沒建立這家銀行的帳單格�
 
 /** Layer 2 entry point (D-97): the bank's own adapter when one recognises the layout, else the generic reader. */
 export function parseStatement(lines: readonly string[], adapters: readonly StatementAdapter[] = STATEMENT_ADAPTERS): ParsedStatement {
+  if (isTaishinDebit(lines)) {
+    const debit = parseTaishinDebit(lines)
+    return {
+      adapter: 'taishin-debit-v1', statementType: 'debit_card', bank: '台新', cardLast4: debit.cardLast4,
+      closingDate: debit.periodEnd, dueDate: null, periodStart: debit.periodStart, periodEnd: debit.periodEnd,
+      entries: debit.entries.map((e) => ({ txDate: e.txDate, postDate: e.postDate, merchant: e.merchant || '（待確認商家）',
+        amount: e.amount, currency: 'TWD', foreign: null, reference: null, kind: e.kind,
+        evidence: e.evidence, raw: e.raw })),
+      declaredNewCharges: null, totalsMatch: debit.cardTotalsMatch, pendingCount: debit.pendingCount,
+      warnings: debit.warnings, unreadLines: debit.unreadLines,
+    }
+  }
   const adapter = adapters.find((a) => a.detect(lines))
   if (adapter) return { ...adapter.parse(lines), adapter: adapter.id }
   const r = parseStatementLines(lines)

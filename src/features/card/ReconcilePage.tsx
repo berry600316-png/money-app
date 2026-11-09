@@ -62,12 +62,12 @@ export function ReconcilePage({
     if (!st) return null
     const [entries, direct, viaMobile, recons] = await Promise.all([
       db.statementEntries.where('statementId').equals(st.id).toArray(),
-      db.transactions.where('paymentMethodId').equals(st.paymentMethodId).toArray(),
+      st.statementType === 'debit_card' ? db.transactions.toArray() : db.transactions.where('paymentMethodId').equals(st.paymentMethodId).toArray(),
       // D-125: purchases made with a 行動支付 bound to this card are on its bill too.
       db.transactions.filter((t) => t.cardId === st.paymentMethodId).toArray(),
       db.reconciliations.toArray(),
     ])
-    return { entries, transactions: [...direct, ...viaMobile], recons }
+    return { entries, transactions: [...new Map([...direct, ...viaMobile].map((t) => [t.id, t])).values()], recons }
   }, [st?.id, st?.paymentMethodId])
 
   const result = useMemo(() => (st && data ? reconcile({ statement: st, entries: data.entries, transactions: data.transactions, recons: data.recons }) : null), [st, data])
@@ -75,7 +75,7 @@ export function ReconcilePage({
   // Save newly found reliable pairs once; the live query then shows them as matched.
   const savedKey = useRef('')
   useEffect(() => {
-    if (!st || !result?.autoPairs.length) return
+    if (!st || st.parseStatus !== 'confirmed' || !result?.autoPairs.length) return
     const key = st.id + result.autoPairs.map((p) => p.entryId + p.transactionId).join()
     if (savedKey.current === key) return
     savedKey.current = key
@@ -92,7 +92,7 @@ export function ReconcilePage({
         <Icon name="left" />
         {backLabel}
       </button>
-      <h1>信用卡核對</h1>
+      <h1>{st?.statementType === 'debit_card' ? '金融卡與帳戶核對' : '信用卡核對'}</h1>
       <button type="button" className="head-action" onClick={onImportStatement}>
         匯入帳單
       </button>
@@ -106,7 +106,7 @@ export function ReconcilePage({
         {head}
         <div className="empty">
           <strong>還沒有銀行帳單</strong>
-          匯入信用卡 PDF 電子帳單後，會自動和你記的信用卡消費比對，只把有問題的列出來。
+          匯入信用卡或金融卡 PDF 帳單後，逐筆確認內容，再和記帳金流核對。
           <br />
           <button type="button" className="btn-soft" onClick={onImportStatement}>
             匯入 PDF 帳單
@@ -115,6 +115,18 @@ export function ReconcilePage({
       </>
     )
   }
+  if (st.parseStatus !== 'confirmed') return <>
+    {head}
+    <div className="notice" style={{ marginTop: 24 }}>
+      <Icon name="alert" />
+      <div>
+        <b>{st.parseStatus === 'needs_reimport' ? '舊帳單需要重新匯入' : '請先確認帳單明細'}</b>
+        <p>{st.parseStatus === 'needs_reimport' ? '舊版沒有保存原始 PDF。請重新上傳這期帳單，逐筆確認後開始核對。' : '請先對照 PDF，確認匯入的明細完整且正確，才會開始自動配對與顯示勾選。'}</p>
+        {st.parseStatus === 'needs_reimport' ? <button type="button" className="chip-btn" onClick={onImportStatement}>重新匯入 PDF</button>
+          : <button type="button" className="chip-btn" onClick={() => updateStatement(st.id, { parseStatus: 'confirmed' }).then(() => toast('已確認帳單解析'), () => toast('沒有存到', { kind: 'error' }))}>我已逐筆對照</button>}
+      </div>
+    </div>
+  </>
   if (!result || !data) return head
 
   const s = result.summary
@@ -145,6 +157,7 @@ export function ReconcilePage({
           <span className="row-title">
             {l.merchant}
             {'entry' in it && it.entry.kind !== 'purchase' && <span className="kind-tag">{KIND_LABELS[it.entry.kind]}</span>}
+            {'entry' in it && st.statementType === 'debit_card' && <span className="kind-tag">{it.entry.evidence === 'both' ? '消費＋帳戶' : it.entry.evidence === 'card' ? '金融卡消費' : '帳戶流水'}</span>}
           </span>
           <span className={'state' + (done ? '' : ' attn')}>
             {l.date}
@@ -210,7 +223,7 @@ export function ReconcilePage({
       </section>
 
       {/* D-119: paying the bill moves money from the paying account; the purchases were already counted. */}
-      <button type="button" className="acc-link" onClick={() => onPayCard(card, balances?.get(card.id) ?? 0)}>
+      {st.statementType !== 'debit_card' && <button type="button" className="acc-link" onClick={() => onPayCard(card, balances?.get(card.id) ?? 0)}>
         <span>
           繳這期卡費
           <small>{card.payFromId ? `從 ${ref.payment(card.payFromId).name} 扣，` : ''}不算支出</small>
@@ -223,25 +236,7 @@ export function ReconcilePage({
           )}
           ›
         </span>
-      </button>
-
-      {st.parseStatus === 'needs_review' && (
-        <div className="notice">
-          <Icon name="alert" />
-          <div>
-            <b>帳單解析待確認</b>：明細是用通用格式讀取的，請對照 PDF 確認沒有漏讀或讀錯；確認前不會顯示為全部完成。
-            <div className="actions">
-              <button
-                type="button"
-                className="chip-btn"
-                onClick={() => updateStatement(st.id, { parseStatus: 'confirmed' }).then(() => toast('已確認帳單解析'), () => toast('沒有存到', { kind: 'error' }))}
-              >
-                我已對照，解析無誤
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </button>}
 
       {!result.periodKnown && (
         <div className="notice">
@@ -324,10 +319,10 @@ export function ReconcilePage({
             {st.periodStart && st.periodEnd ? `${fromYmd(st.periodStart).getMonth() + 1}/${fromYmd(st.periodStart).getDate()} – ${md(st.periodEnd)}` : '未確認'}
           </span>
         </div>
-        <div className="srow">
+        {st.statementType !== 'debit_card' && <div className="srow">
           <span className="s-main">繳款截止日</span>
           <span className="s-val">{st.dueDate ?? '—'}</span>
-        </div>
+        </div>}
         {result.payments.map((p) => (
           <div className="srow" key={p.id}>
             <span className="s-main">

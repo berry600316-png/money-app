@@ -21,6 +21,7 @@ import {
   type NoticeType,
 } from './noticeTypes'
 import type { DraftEntry } from './statementParser'
+import { debitCandidate } from './debitReconcile'
 import { txDate } from './reconcile'
 
 export const NOTIFICATION_SOURCE = 'notification'
@@ -249,6 +250,9 @@ export async function commitNotificationImport(
 
 export interface StatementInput {
   paymentMethodId: string
+  statementType?: 'credit_card' | 'debit_card'
+  accountId?: string
+  pendingCount?: number
   bank: string
   statementMonth: string
   periodStart: string | null
@@ -280,14 +284,23 @@ export async function saveStatement(input: StatementInput, opts: { replaceId?: s
   const stamp = now.toISOString()
   return d.transaction('rw', [d.cardStatements, d.statementEntries, d.reconciliations, d.importBatches, d.paymentMethods], async () => {
     const pm = await d.paymentMethods.get(input.paymentMethodId)
-    if (!pm) throw new MoneyError('請選擇信用卡')
-    if (await d.cardStatements.where('fileHash').equals(input.fileHash).first()) throw new MoneyError('這份帳單已經匯入過')
+    const statementType = input.statementType ?? 'credit_card'
+    if (!pm || pm.type !== statementType) throw new MoneyError(statementType === 'debit_card' ? '請選擇金融卡' : '請選擇信用卡')
+    if (statementType === 'debit_card') {
+      const account = input.accountId ? await d.paymentMethods.get(input.accountId) : null
+      if (!account || account.type !== 'bank') throw new MoneyError('請選擇銀行帳戶')
+      if (pm.payFromId && pm.payFromId !== account.id) throw new MoneyError('這張金融卡與所選銀行帳戶不符')
+    }
+    const existingFile = await d.cardStatements.where('fileHash').equals(input.fileHash).first()
+    if (existingFile && existingFile.id !== opts.replaceId) throw new MoneyError('這份帳單已經匯入過')
     if (opts.replaceId) await removeStatement(opts.replaceId, d)
     else if (await findSameStatement(input.paymentMethodId, input.statementMonth, d)) throw new MoneyError('這張卡這個月份已經有帳單')
     const batchId = newId()
     const st: CardStatement = {
       id: newId(),
       paymentMethodId: input.paymentMethodId,
+      statementType,
+      ...(statementType === 'debit_card' ? { accountId: input.accountId, pendingCount: input.pendingCount ?? 0 } : {}),
       bank: input.bank.trim().slice(0, 20),
       statementMonth: input.statementMonth,
       periodStart: input.periodStart,
@@ -314,6 +327,7 @@ export async function saveStatement(input: StatementInput, opts: { replaceId?: s
         foreign: e.foreign,
         reference: e.reference,
         kind: e.kind,
+        ...(e.evidence ? { evidence: e.evidence } : {}),
         raw: e.raw.slice(0, 300),
         order: i,
       })),
@@ -351,7 +365,8 @@ export async function updateStatement(
 
 /* ---------------- reconciliation decisions (Phase 3) ---------------- */
 
-const snapshotOf = (t: Transaction) => ({ amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t) })
+const snapshotOf = (t: Transaction) => ({ amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t),
+  sourceAccountId: t.sourceAccountId, cardId: t.cardId, toAccountId: t.toAccountId })
 
 async function assertFree(entryId: string, txId: string, d: MoneyDB, ignoreReconId?: string) {
   const onEntry = (await d.reconciliations.where('entryId').equals(entryId).toArray()).filter((r) => r.status === 'matched' && r.id !== ignoreReconId)
@@ -392,8 +407,12 @@ export async function saveAutoPairs(statementId: string, pairs: readonly { entry
 async function loadPair(statementId: string, entryId: string, transactionId: string, d: MoneyDB) {
   const [tx, entry, st] = await Promise.all([d.transactions.get(transactionId), d.statementEntries.get(entryId), d.cardStatements.get(statementId)])
   if (!tx || !entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆資料')
-  if (tx.type !== 'expense') throw new MoneyError('只能和支出配對')
-  if (chargedTo(tx) !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
+  if (st.statementType === 'debit_card') {
+    if (!debitCandidate(entry, tx, st.paymentMethodId, st.accountId ?? '')) throw new MoneyError('這筆記帳的類型或帳戶與銀行明細不符')
+  } else {
+    if (tx.type !== 'expense') throw new MoneyError('只能和支出配對')
+    if (chargedTo(tx) !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
+  }
   return { tx, entry }
 }
 
@@ -440,20 +459,24 @@ export async function recordFromEntry(statementId: string, entryId: string, cate
     const entry = await d.statementEntries.get(entryId)
     const st = await d.cardStatements.get(statementId)
     if (!entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆帳單明細')
-    if (!isValidAmount(entry.amount)) throw new MoneyError('這筆不是一般消費，不能直接補記為支出')
+    const debit = st.statementType === 'debit_card'
+    const income = debit && (entry.kind === 'refund' || entry.kind === 'deposit')
+    if (debit && entry.kind === 'withdrawal') throw new MoneyError('提款請用人工確認處理')
+    if (!isValidAmount(debit ? Math.abs(entry.amount) : entry.amount)) throw new MoneyError('帳單金額不能用於記帳')
     const cat = await d.categories.get(categoryId)
-    if (!cat || cat.type !== 'expense') throw new MoneyError('請選擇支出分類')
-    if (!(await d.paymentMethods.get(st.paymentMethodId))) throw new MoneyError('這張信用卡已不存在')
+    if (!cat || cat.type !== (income ? 'income' : 'expense')) throw new MoneyError(income ? '請選擇收入分類' : '請選擇支出分類')
+    if (!(await d.paymentMethods.get(st.paymentMethodId))) throw new MoneyError('這張卡已不存在')
     const date = entry.txDate ?? entry.postDate!
     if (date > toYmd(now)) throw new MoneyError('帳單日期在未來，無法補記')
     const stamp = now.toISOString()
     const tx: Transaction = {
       id: newId(),
-      type: 'expense',
-      amount: entry.amount,
+      type: income ? 'income' : 'expense',
+      amount: Math.abs(entry.amount),
       merchant: entry.merchant.slice(0, 40),
       categoryId,
-      paymentMethodId: st.paymentMethodId,
+      paymentMethodId: debit && entry.kind !== 'purchase' ? st.accountId! : st.paymentMethodId,
+      ...(debit && entry.kind === 'purchase' ? { sourceAccountId: st.accountId! } : {}),
       occurredAt: occurredAtFor(date, now),
       note: '',
       source: STATEMENT_SOURCE,
@@ -469,6 +492,26 @@ export async function recordFromEntry(statementId: string, entryId: string, cate
   })
 }
 
+/** A debit account outflow that moved between the user's own accounts. */
+export async function recordTransferFromEntry(statementId: string, entryId: string, toAccountId: string, d: MoneyDB = db, now = new Date()): Promise<Transaction> {
+  return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
+    const [entry, st, to] = await Promise.all([d.statementEntries.get(entryId), d.cardStatements.get(statementId), d.paymentMethods.get(toAccountId)])
+    if (!entry || !st || entry.statementId !== st.id || st.statementType !== 'debit_card' || entry.kind !== 'transfer_out' || !st.accountId) throw new MoneyError('這筆不是銀行轉出')
+    if (!to || !isAsset(to) || to.id === st.accountId) throw new MoneyError('請選擇轉入帳戶')
+    const date = entry.txDate ?? entry.postDate!
+    if (date > toYmd(now)) throw new MoneyError('帳單日期在未來，無法補記')
+    const stamp = now.toISOString()
+    const tx: Transaction = { id: newId(), type: 'transfer', amount: Math.abs(entry.amount), merchant: '', categoryId: '',
+      paymentMethodId: st.accountId, toAccountId, occurredAt: occurredAtFor(date, now), note: entry.merchant,
+      source: STATEMENT_SOURCE, externalId: entry.id, createdAt: stamp, updatedAt: stamp }
+    await d.transactions.add(tx)
+    await validateFundingState(d)
+    await assertFree(entryId, tx.id, d)
+    await pair(statementId, entryId, tx, 'created', '由銀行流水補記互轉', d, now)
+    return tx
+  })
+}
+
 /** §8.2: keep an unmatched record for the next statement. */
 export async function deferToNext(statementId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
   await d.transaction('rw', d.reconciliations, async () => {
@@ -479,16 +522,22 @@ export async function deferToNext(statementId: string, transactionId: string, d:
 
 /** Mark one side as explained (e.g. a fee the user does not want to record). */
 export async function explain(statementId: string, side: { entryId: string } | { transactionId: string }, note: string, d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.reconciliations.add({
-    id: newId(),
-    statementId,
-    entryId: 'entryId' in side ? side.entryId : null,
-    transactionId: 'transactionId' in side ? side.transactionId : null,
-    status: 'explained',
-    method: 'manual',
-    snapshot: null,
-    note: note.slice(0, 80),
-    createdAt: now.toISOString(),
+  if (!note.trim()) throw new MoneyError('請先填寫確認原因')
+  const tx = 'transactionId' in side ? await d.transactions.get(side.transactionId) : undefined
+  if ('transactionId' in side && !tx) throw new MoneyError('找不到這筆記帳')
+  await d.transaction('rw', d.reconciliations, async () => {
+    const old = 'entryId' in side
+      ? await d.reconciliations.where('entryId').equals(side.entryId).toArray()
+      : await d.reconciliations.where('transactionId').equals(side.transactionId).toArray()
+    if (old.some((r) => r.status === 'matched')) throw new MoneyError('這筆已經配對，請先取消配對')
+    await d.reconciliations.bulkDelete(old.map((r) => r.id))
+    await d.reconciliations.add({
+      id: newId(), statementId,
+      entryId: 'entryId' in side ? side.entryId : null,
+      transactionId: 'transactionId' in side ? side.transactionId : null,
+      status: 'explained', method: 'manual', snapshot: tx ? snapshotOf(tx) : null,
+      note: note.trim().slice(0, 80), createdAt: now.toISOString(),
+    })
   })
 }
 

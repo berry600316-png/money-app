@@ -223,11 +223,16 @@ export interface ImportBatch {
   failed: number
 }
 
-export type EntryKind = 'purchase' | 'refund' | 'fee' | 'installment' | 'payment' | 'adjustment' | 'other'
+export type EntryKind = 'purchase' | 'refund' | 'fee' | 'installment' | 'payment' | 'adjustment' | 'other' | 'withdrawal' | 'deposit' | 'transfer_out'
 
 export interface CardStatement {
   id: string
   paymentMethodId: string
+  /** Older rows are credit-card statements until re-imported. */
+  statementType?: 'credit_card' | 'debit_card'
+  /** Debit-card PDFs also contain the linked bank-account ledger. */
+  accountId?: string
+  pendingCount?: number
   bank: string
   /** "YYYY-MM" the statement is for. */
   statementMonth: string
@@ -239,7 +244,7 @@ export interface CardStatement {
   fileHash: string
   fileName: string
   /** D-87: generic parsing is "needs_review" until the user confirms it. */
-  parseStatus: 'needs_review' | 'confirmed'
+  parseStatus: 'needs_review' | 'confirmed' | 'needs_reimport'
   adapter: string
   batchId: string
   createdAt: string
@@ -261,6 +266,8 @@ export interface StatementEntry {
   foreign: string | null
   reference: string | null
   kind: EntryKind
+  /** Card and bank-ledger rows describing one debit purchase are stored as one entry. */
+  evidence?: 'card' | 'account' | 'both'
   /** Original text line, kept for review. */
   raw: string
   order: number
@@ -277,7 +284,7 @@ export interface Reconciliation {
   status: ReconStatus
   method: 'auto' | 'manual' | 'created'
   /** Transaction values when the pair was made; any later change invalidates it (D-92). */
-  snapshot: { amount: number; date: string; paymentMethodId: string } | null
+  snapshot: { amount: number; date: string; paymentMethodId: string; sourceAccountId?: string; cardId?: string; toAccountId?: string } | null
   note: string
   createdAt: string
 }

@@ -6,6 +6,7 @@ import { PAYMENT_TYPE_LABELS } from '../../db/types'
 import { cardsPaidFrom, isCard, type FlowRow } from '../../lib/accounts'
 import { dayLabel, fromYmd, timeLabel, toYmd } from '../../lib/dates'
 import { fmt } from '../../lib/money'
+import { ReconCheck } from '../../ui/reconContext'
 import { ActionSheet } from '../../ui/ActionSheet'
 import { AnimatedNumber } from '../../ui/AnimatedNumber'
 import { Icon } from '../../ui/Icon'
@@ -201,7 +202,7 @@ export function AccountPage({
                   onClick={() => (r.kind === 'tx' ? onOpenTx(r.tx!.id) : setAdjRow(r.adjustment!))}
                 >
                   <span className="row-main">
-                    <span className="row-title">{title}</span>
+                    <span className="row-title">{title}{r.kind === 'tx' && <ReconCheck tx={r.tx!} />}</span>
                     <span className="row-sub">{sub}</span>
                   </span>
                   <span className={'row-amt num' + (moved ? ' transfer' : r.pending ? ' pending' : shownDelta > 0 ? ' income' : '')}>

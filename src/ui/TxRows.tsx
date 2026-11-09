@@ -33,6 +33,7 @@ export function TxRow({ tx, onOpen, showTime = false }: { tx: Transaction; onOpe
         <span className="row-main">
           <span className="row-title">
             {payment(tx.paymentMethodId).name} → {to.name}
+            {reconciled && <span className="tx-ok" aria-label="已和銀行帳單核對"><Icon name="check" /></span>}
           </span>
           <span className="row-sub">{sub}</span>
         </span>

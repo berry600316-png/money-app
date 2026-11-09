@@ -24,7 +24,7 @@ import type {
 } from './types'
 
 export const DB_NAME = 'money'
-export const SCHEMA_VERSION = 11
+export const SCHEMA_VERSION = 12
 
 /*
  * Schema changes MUST add a new this.version(n) block with an upgrade() that migrates
@@ -182,6 +182,16 @@ export class MoneyDB extends Dexie {
           if (p.balanceFrom && p.openingBalance !== undefined && !p.openingFundingMonth) p.openingFundingMonth = toYmd(new Date(p.balanceFrom)).slice(0, 7)
         })
         await tx.table('settings').put({ key: 'schemaVersion', value: 11 })
+      })
+    // v12: old PDFs were not stored and cannot be reparsed. Re-upload is required; no old mark survives.
+    this.version(12)
+      .stores({})
+      .upgrade(async (tx) => {
+        await tx.table('cardStatements').toCollection().modify((statement: CardStatement) => {
+          statement.parseStatus = 'needs_reimport'
+        })
+        await tx.table('reconciliations').clear()
+        await tx.table('settings').put({ key: 'schemaVersion', value: 12 })
       })
     // Runs once, when the database is first created on this device (at the latest version).
     this.on('populate', async (tx) => {

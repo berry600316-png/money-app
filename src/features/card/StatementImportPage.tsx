@@ -23,6 +23,9 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   payment: '繳款',
   adjustment: '調整',
   other: '其他',
+  withdrawal: '提款',
+  deposit: '存入',
+  transfer_out: '轉出',
 }
 
 type Stage = { kind: 'pick' } | { kind: 'password'; data: ArrayBuffer; name: string; hash: string; wrong: boolean } | { kind: 'review' }
@@ -46,12 +49,13 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
   const [file, setFile] = useState<{ name: string; hash: string } | null>(null)
   const [parsed, setParsed] = useState<ParsedStatement | null>(null)
   const [entries, setEntries] = useState<DraftEntry[]>([])
-  const [meta, setMeta] = useState({ paymentMethodId: '', bank: '', statementMonth: currentMonthKey(), periodStart: '', periodEnd: '', dueDate: '' })
+  const [meta, setMeta] = useState({ paymentMethodId: '', accountId: '', bank: '', statementMonth: currentMonthKey(), periodStart: '', periodEnd: '', dueDate: '' })
   const [confirmed, setConfirmed] = useState(false)
   const [editing, setEditing] = useState<{ index: number | null; entry: DraftEntry } | null>(null)
   const [replace, setReplace] = useState<CardStatement | null>(null)
   const [showRaw, setShowRaw] = useState(false)
-  const cards = ref.payments.filter((p) => p.type === 'credit_card' && p.isActive)
+  const cards = ref.payments.filter((p) => (p.type === 'credit_card' || p.type === 'debit_card') && p.isActive)
+  const banks = ref.payments.filter((p) => p.type === 'bank' && p.isActive)
 
   const read = async (data: ArrayBuffer, name: string, hash: string, password?: string) => {
     setBusy(true)
@@ -65,14 +69,15 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           return
         }
         const p = parseStatement(text.lines)
-        const card =
-          cards.find((c) => p.cardLast4 && c.cardLast4 === p.cardLast4) ?? cards.find((c) => p.bank && c.bank && c.bank.includes(p.bank)) ?? cards[0]
+        const compatible = cards.filter((c) => c.type === (p.statementType ?? 'credit_card'))
+        const card = compatible.find((c) => p.cardLast4 && c.cardLast4 === p.cardLast4) ?? compatible[0]
         const end = p.periodEnd ?? p.closingDate ?? ''
         setParsed(p)
         setEntries(p.entries)
         setFile({ name, hash })
         setMeta({
-          paymentMethodId: card?.id ?? '',
+          paymentMethodId: p.statementType === 'debit_card' ? '' : card?.id ?? '',
+          accountId: '',
           bank: p.bank ?? card?.bank ?? '',
           statementMonth: (p.closingDate ?? toYmd(new Date())).slice(0, 7),
           periodStart: p.periodStart ?? (end ? suggestStart(end) : ''),
@@ -102,7 +107,8 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
       const data = await f.arrayBuffer()
       const { sha256 } = await import('../../card/pdf/extract')
       const hash = await sha256(data)
-      if (await db.cardStatements.where('fileHash').equals(hash).first()) {
+      const existingFile = await db.cardStatements.where('fileHash').equals(hash).first()
+      if (existingFile && existingFile.parseStatus !== 'needs_reimport') {
         toast('這份帳單已經匯入過', { kind: 'error' })
         setBusy(false)
         return
@@ -117,7 +123,11 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
   const save = async (replaceId?: string) => {
     if (!file || busy) return
     if (!meta.paymentMethodId) {
-      toast('請選擇信用卡', { kind: 'error' })
+      toast('請選擇卡片', { kind: 'error' })
+      return
+    }
+    if (parsed?.statementType === 'debit_card' && !meta.accountId) {
+      toast('請選擇銀行帳戶', { kind: 'error' })
       return
     }
     setBusy(true)
@@ -133,6 +143,8 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
       const st = await saveStatement(
         {
           paymentMethodId: meta.paymentMethodId,
+          statementType: parsed?.statementType ?? 'credit_card',
+          ...(parsed?.statementType === 'debit_card' ? { accountId: meta.accountId, pendingCount: parsed.pendingCount ?? 0 } : {}),
           bank: meta.bank,
           statementMonth: meta.statementMonth,
           periodStart: meta.periodStart || null,
@@ -155,7 +167,8 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
   }
 
   const setM = (k: keyof typeof meta) => (e: { target: { value: string } }) => setMeta((m) => ({ ...m, [k]: e.target.value }))
-  const total = entries.filter((e) => e.kind !== 'payment').reduce((s, e) => s + e.amount, 0)
+  const isDebitStatement = parsed?.statementType === 'debit_card'
+  const total = entries.filter((e) => e.kind !== 'payment' && (!isDebitStatement || e.evidence !== 'account')).reduce((s, e) => s + e.amount, 0)
 
   return (
     <>
@@ -164,7 +177,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           <Icon name="left" />
           {backLabel}
         </button>
-        <h1>匯入信用卡帳單</h1>
+        <h1>匯入銀行帳單</h1>
         <span />
       </div>
       <input ref={input} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => void onFile(e.target.files?.[0])} />
@@ -179,7 +192,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
             {busy ? '讀取中…' : '選擇 PDF 帳單'}
             <small>有密碼的 PDF 會請你輸入密碼</small>
           </button>
-          {cards.length === 0 && <p className="err-line">還沒有信用卡：請先到「設定 › 付款方式」新增，類型選「信用卡」。</p>}
+          {cards.length === 0 && <p className="err-line">還沒有信用卡或金融卡：請先到「設定 › 付款方式」新增。</p>}
         </>
       )}
 
@@ -211,12 +224,13 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
 
       {stage.kind === 'review' && parsed && (
         <>
-          <p className="lead">請對照 PDF 確認以下內容；可以修改、刪除或補登明細。</p>
+          <p className="lead">請對照 PDF 確認以下內容；可以修改、刪除或補登明細。確認完整前不會自動打勾。</p>
           <div className="meta-grid">
             <label className="full">
-              信用卡
+              {isDebitStatement ? '金融卡' : '信用卡'}
               <select value={meta.paymentMethodId} onChange={setM('paymentMethodId')}>
-                {cards.map((c) => (
+                <option value="">請選擇</option>
+                {cards.filter((c) => c.type === (parsed.statementType ?? 'credit_card')).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                     {c.cardLast4 ? ` ${c.cardLast4}` : ''}
@@ -224,6 +238,13 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
                 ))}
               </select>
             </label>
+            {isDebitStatement && <label className="full">
+              銀行帳戶
+              <select value={meta.accountId} onChange={setM('accountId')}>
+                <option value="">請選擇</option>
+                {banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            </label>}
             <label>
               帳單月份
               <input type="month" value={meta.statementMonth} onChange={setM('statementMonth')} />
@@ -260,11 +281,12 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           )}
 
           <div className="grp-title">
-            <b>帳單明細 {entries.length} 筆</b>
+            <b>{isDebitStatement ? '金流明細' : '帳單明細'} {entries.length} 筆</b>
             <span>
-              不含繳款合計 <span className="num">{fmt(total)}</span>
+              {isDebitStatement ? '金融卡淨消費' : '不含繳款合計'} <span className="num">{fmt(total)}</span>
             </span>
           </div>
+          {isDebitStatement && <p className="set-foot">同筆刷卡若同時出現在消費與帳戶流水，會合併顯示。另有 {parsed.pendingCount ?? 0} 筆已消費未扣款，尚不列入本期核對。</p>}
           <div className="card">
             {entries.map((e, i) => (
               <button type="button" className="rrow" key={i} onClick={() => setEditing({ index: i, entry: e })}>
@@ -272,6 +294,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
                   <span className="row-title">
                     {e.merchant}
                     {e.kind !== 'purchase' && <span className="kind-tag">{KIND_LABELS[e.kind]}</span>}
+                    {isDebitStatement && <span className="kind-tag">{e.evidence === 'both' ? '消費＋帳戶' : e.evidence === 'account' ? '帳戶流水' : '金融卡消費'}</span>}
                   </span>
                   <span className="row-sub">
                     消費 {e.txDate ?? '—'}
@@ -285,7 +308,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
             <button
               type="button"
               className="srow add"
-              onClick={() => setEditing({ index: null, entry: { txDate: meta.periodEnd || null, postDate: null, merchant: '', amount: 0, currency: 'TWD', foreign: null, reference: null, kind: 'purchase', raw: '（手動補登）' } })}
+              onClick={() => setEditing({ index: null, entry: { txDate: meta.periodEnd || null, postDate: null, merchant: '', amount: 0, currency: 'TWD', foreign: null, reference: null, kind: 'purchase', ...(isDebitStatement ? { evidence: 'account' as const } : {}), raw: '（手動補登）' } })}
             >
               <span className="s-main">補登一筆明細</span>
               <Icon name="plus" className="chev" />
@@ -296,7 +319,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
             <input id="st-ok" type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
             <span>
               我已對照 PDF，明細正確完整
-              {parsed.totalsMatch === true && <span className="s-sub">明細加總與帳單「本期新增」相符，仍請對照逐筆內容</span>}
+              {parsed.totalsMatch === true && <span className="s-sub">{isDebitStatement ? '金融卡消費與退款加總符合帳單' : '明細加總與帳單「本期新增」相符'}，仍請對照逐筆內容</span>}
             </span>
           </label>
           <p className="set-foot">沒勾選也可以先匯入，帳單會標示「解析待確認」，核對結果不會顯示為全部完成。</p>

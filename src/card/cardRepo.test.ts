@@ -210,6 +210,17 @@ describe('reconciliation decisions (Phase 3)', () => {
 })
 
 describe('backups with card data (D-94)', () => {
+  it('an older backup invalidates statement marks until its PDF is re-uploaded', async () => {
+    const st = await saveStatement(statementInput(), {}, d, now)
+    const entry = (await d.statementEntries.where('statementId').equals(st.id).first())!
+    const tx = await addTransaction({ type: 'expense', amount: 85, merchant: '全家', categoryId: 'food', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
+    await matchManually(st.id, entry.id, tx.id, '', d, now)
+    const backup = JSON.parse(JSON.stringify(buildBackup(await readAllData(d), now)))
+    backup.schemaVersion = 11
+    const parsed = parseBackup(JSON.stringify(backup))
+    expect(parsed.cardStatements[0].parseStatus).toBe('needs_reimport')
+    expect(parsed.reconciliations).toEqual([])
+  })
   it('full round trip keeps statements, entries, pairs and notifications identical', async () => {
     await commitNotificationImport(await plan([SIM_NOTIFICATIONS.convenience]), { files: 1 }, d, now)
     const st = await saveStatement(statementInput(), {}, d, now)
