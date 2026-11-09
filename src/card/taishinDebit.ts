@@ -96,7 +96,10 @@ export function parseTaishinDebit(lines: readonly string[]): ParsedDebitStatemen
         : /提款|提領/.test(action) ? 'withdrawal'
           : /手續費/.test(action) ? 'fee'
             : debit > 0 ? 'transfer_out' : 'deposit'
-    account.push({ txDate: date(m[1]), postDate: null, merchant: cleanedMerchant(m[6] || action), amount, kind,
+    const detail = cleanedMerchant(m[6] ?? '')
+    // Some trailing fields are machine reference numbers, not merchant names. Keep them in raw.
+    const merchant = kind === 'withdrawal' || (/\d/.test(detail) && /^[\dA-Z*\s-]+$/i.test(detail)) ? action : detail || action
+    account.push({ txDate: date(m[1]), postDate: null, merchant, amount, kind,
       evidence: 'account', raw: source })
   }
 

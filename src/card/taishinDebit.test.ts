@@ -54,4 +54,14 @@ describe('台新簽帳金融卡對帳單', () => {
     expect(parsed.entries.every((entry) => entry.evidence !== 'both')).toBe(true)
     expect(parsed.warnings.some((warning) => warning.includes('重複金額'))).toBe(true)
   })
+  it('does not display machine reference numbers as merchant names', () => {
+    const parsed = parseTaishinDebit([
+      '對帳單期間：2026/10/01 ~ 2026/10/31',
+      '帳戶交易明細', '日期 摘要 支出 存入 餘額 備註',
+      '2026/10/05 CD 提款 1,000 0 99,000 0465327130 202610052530',
+      '2026/10/06 轉帳支取 100 0 98,900 0060260276005049',
+    ])
+    expect(parsed.entries.map((entry) => entry.merchant)).toEqual(['CD 提款', '轉帳支取'])
+    expect(parsed.entries[0].raw).toContain('0465327130')
+  })
 })
