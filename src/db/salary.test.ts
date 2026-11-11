@@ -62,6 +62,15 @@ describe('savePayslip (D-61..D-66)', () => {
     const tx = await d.transactions.get(s.transactionId!)
     expect(tx).toMatchObject({ type: 'income', amount: 45000 + 1500 - 1145 - 710, categoryId: 'salary', merchant: '星和科技', paymentMethodId: 'transfer', source: 'payslip', externalId: s.id })
     expect(new Date(tx!.occurredAt).getDate()).toBe(5)
+    expect(new Date(tx!.occurredAt).getHours()).toBe(0)
+    expect(new Date(tx!.occurredAt).getMinutes()).toBe(0)
+  })
+
+  it('records a payslip saved for today at midnight too', async () => {
+    const s = await savePayslip(null, { ...oct, payDate: '2026-10-10' }, d, now)
+    const tx = await d.transactions.get(s.transactionId!)
+    expect(new Date(tx!.occurredAt).getHours()).toBe(0)
+    expect(new Date(tx!.occurredAt).getMinutes()).toBe(0)
   })
 
   it('uses "X月薪資" when no company is given', async () => {

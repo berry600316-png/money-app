@@ -2,7 +2,7 @@ import { db, type MoneyDB } from './db'
 import { PAYSLIP_SOURCE, SALARY_CATEGORY_ID } from './defaults'
 import { MoneyError, NAME_MAX, validateFundingState } from './repo'
 import type { Payslip, PayslipLine, SalaryItem, SalaryKind, SalaryNature, Transaction } from './types'
-import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
+import { fromYmd, localIso, toYmd } from '../lib/dates'
 import { MAX_AMOUNT } from '../lib/money'
 import { currentMonthKey, isMonthKey, monthKeyLabel, monthShort } from '../lib/months'
 
@@ -91,7 +91,7 @@ export async function savePayslip(id: string | null, input: PayslipInput, d: Mon
         merchant: company || `${monthShort(input.month).replace(' ', '')}薪資`,
         categoryId: SALARY_CATEGORY_ID,
         paymentMethodId: input.paymentMethodId,
-        occurredAt: keepTime ? oldTx!.occurredAt : occurredAtFor(input.payDate, now),
+        occurredAt: keepTime ? oldTx!.occurredAt : localIso(input.payDate, '00:00'),
         note: '',
         source: PAYSLIP_SOURCE,
         externalId: slipId,
