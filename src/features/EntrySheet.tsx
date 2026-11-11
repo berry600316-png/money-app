@@ -22,6 +22,7 @@ import {
 import type { CategoryType, PaymentMethod, TimeSource, Transaction, TxType } from '../db/types'
 import { defaultPay, describePay, isAsset, isCard, isMethod, payGroups, payKey, type PayOption } from '../lib/accounts'
 import { dayLabel, fromYmd, timeLabel, toYmd } from '../lib/dates'
+import { initialMealTimeState, transitionMealTime, type MealTimeState } from '../lib/mealTime'
 import { applyKey, fmt } from '../lib/money'
 import { requestPersistentStorage } from '../pwa/pwa'
 import { BottomSheet } from '../ui/BottomSheet'
@@ -54,6 +55,8 @@ interface Draft {
   time: string
   /** D-100: shown next to the time until the user changes it. */
   timeSource?: TimeSource
+  /** New-entry-only cash food time behavior; never written to the transaction. */
+  mealTime: MealTimeState
   merchant: string
   note: string
   showNote: boolean
@@ -177,6 +180,12 @@ export function EntrySheet({
     const o = defaultPay(groups, methodId, lastSource, walletCards?.[methodId])
     return { paymentMethodId: o?.paymentMethodId ?? '', sourceAccountId: o?.sourceAccountId ?? '', cardId: o?.cardId ?? '' }
   }
+  const isMealCash = (dr: Draft) => dr.type === 'expense' && dr.categoryId === 'food' && ref.payment(dr.paymentMethodId)?.type === 'cash'
+  const withMealTime = (dr: Draft, changes: Partial<Draft>, clock: string): Draft => {
+    const next = { ...dr, ...changes }
+    const selected = transitionMealTime(next.time, dr.mealTime, isMealCash(next), clock, !editId)
+    return { ...next, time: selected.time, mealTime: selected.state, ...(selected.time !== next.time ? { timeSource: undefined } : {}) }
+  }
   /** The first of `preferred` allowed in `role`, else the first allowed account (D-120: remembered per role). */
   const pickFor = (role: PickRole, preferred: (string | undefined)[], exclude?: string) => {
     for (const id of preferred) {
@@ -201,10 +210,12 @@ export function EntrySheet({
     paymentLocked.current = !!editId || !!prefill?.paymentMethodId
     merchantHistory.current = editId ? null : manualMerchantPaymentHistory().catch(() => [])
     setFeeRecord(false)
-    const start = (dr: Draft) => {
-      opened.current = fieldsOf(dr)
-      openedAt.current = { date: dr.date, time: dr.time, timeSource: dr.timeSource }
-      setDraft(dr)
+    const start = (dr: Draft, clock = new Date()) => {
+      const selected = transitionMealTime(dr.time, dr.mealTime, isMealCash(dr), timeLabel(clock), !editId)
+      const ready = { ...dr, time: selected.time, mealTime: selected.state }
+      opened.current = fieldsOf(ready)
+      openedAt.current = { date: ready.date, time: ready.time, timeSource: ready.timeSource }
+      setDraft(ready)
     }
     if (editId) {
       // Clear first so a quick tap on save can never write the previous draft into this record.
@@ -233,6 +244,7 @@ export function EntrySheet({
           date: toYmd(at),
           time: timeLabel(at),
           timeSource: t.timeSource,
+          mealTime: initialMealTimeState(),
           merchant: t.merchant,
           note: t.note,
           showNote: !!t.note,
@@ -261,10 +273,11 @@ export function EntrySheet({
         // A day chosen on the calendar (never later than today), at the current clock time (D-115).
         date: prefill?.date && prefill.date <= toYmd(now) ? prefill.date : toYmd(now),
         time: timeLabel(now),
+        mealTime: initialMealTimeState(),
         merchant: prefill?.merchant ?? '',
         note: '',
         showNote: false,
-      })
+      }, now)
       if (type === 'expense' && prefill?.merchant?.trim() && !paymentLocked.current) setMerchantResolving(true)
     }
     return () => {
@@ -312,13 +325,12 @@ export function EntrySheet({
         setDraft((d) => {
           if (!d || d.type !== 'expense' || d.merchant !== merchant || paymentLocked.current || !next) return d
           const current = payKey({ paymentMethodId: d.paymentMethodId, sourceAccountId: d.sourceAccountId || undefined, cardId: d.cardId || undefined })
-          return current === next.key ? d : {
-            ...d,
+          return current === next.key ? d : withMealTime(d, {
             paymentMethodId: next.paymentMethodId,
             sourceAccountId: next.sourceAccountId ?? '',
             cardId: next.cardId ?? '',
             funding: d.funding.map(({ month, amount }) => ({ month, amount })),
-          }
+          }, timeLabel(new Date()))
         })
         setMerchantResolving(false)
       }, () => { if (!stale) setMerchantResolving(false) })
@@ -336,7 +348,10 @@ export function EntrySheet({
     return ref.categories.filter((c) => c.type === draft.type && (c.isActive || c.id === draft.categoryId))
   }, [ref.categories, draft])
 
-  const patch = (p: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...p } : d))
+  const patch = (p: Partial<Draft>) => {
+    const clock = timeLabel(new Date())
+    setDraft((d) => (d ? withMealTime(d, p, clock) : d))
+  }
 
   /** Switching kind starts each kind where the last entry of that kind did (D-120). */
   const switchType = (type: TxType) => {
@@ -410,6 +425,7 @@ export function EntrySheet({
       paymentMethodId: draft.paymentMethodId,
       date: draft.date,
       time: draft.time,
+      ...(draft.type === 'expense' && draft.mealTime.everEligible ? { allowFutureMealTime: true } : {}),
       note: draft.note,
       ...(draft.type === 'transfer' ? { toAccountId: draft.toAccountId, fee: draft.showFee ? fee : 0 } : {}),
       ...(draft.type === 'expense' && draft.sourceAccountId ? { sourceAccountId: draft.sourceAccountId } : {}),
@@ -567,10 +583,11 @@ export function EntrySheet({
             const v = e.target.value
             if (!v) return
             const date = v > today ? today : v
-            // D-99: the chosen time stays; on today it can't be later than now.
+            if (date === draft.date) return
+            // Keep the selected time; outside this expense's meal session, today cannot be later than now.
             const nowHm = timeLabel(new Date())
             // A new date makes the time the user's own, as the save does (D-100).
-            patch(date === today && draft.time > nowHm ? { date, time: nowHm, timeSource: undefined } : { date, timeSource: date === openedAt.current.date && draft.time === openedAt.current.time ? openedAt.current.timeSource : undefined })
+            patch(date === today && draft.time > nowHm && !(draft.type === 'expense' && draft.mealTime.everEligible) ? { date, time: nowHm, timeSource: undefined } : { date, timeSource: date === openedAt.current.date && draft.time === openedAt.current.time ? openedAt.current.timeSource : undefined })
           }}
         />
       </label>
@@ -595,7 +612,13 @@ export function EntrySheet({
             const v = e.target.value
             if (!/^\d{2}:\d{2}$/.test(v)) return
             const nowHm = timeLabel(new Date())
-            patch({ time: draft.date === today && v > nowHm ? nowHm : v, timeSource: undefined })
+            setDraft((d) => d ? {
+              ...d,
+              time: d.date === today && v > nowHm && !(d.type === 'expense' && d.mealTime.everEligible) &&
+                !(editId && d.date === openedAt.current.date && v === openedAt.current.time) ? nowHm : v,
+              timeSource: undefined,
+              mealTime: { ...d.mealTime, manuallyChanged: true, originalTime: undefined },
+            } : d)
           }}
         />
       </label>

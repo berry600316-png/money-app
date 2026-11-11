@@ -24,6 +24,8 @@ export interface TxInput {
   date: string
   /** Local time "HH:MM" (D-99). Omitted only by callers that predate it: the date-only rule then applies. */
   time?: string
+  /** Entry-sheet-only permission for today's later time after this expense used the cash-food choice. Never stored. */
+  allowFutureMealTime?: boolean
   note: string
   /** Transfers: the destination account (D-117). */
   toAccountId?: string
@@ -61,7 +63,7 @@ function newId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
 }
 
-async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
+async function validateTx(d: MoneyDB, input: TxInput, now: Date, previous?: Transaction) {
   if (!isValidAmount(input.amount)) {
     throw new MoneyError(`金額需為 1 到 ${MAX_AMOUNT.toLocaleString('en-US')} 的整數`)
   }
@@ -73,7 +75,9 @@ async function validateTx(d: MoneyDB, input: TxInput, now: Date) {
   if (input.date > toYmd(now)) throw new MoneyError('不能選未來的日期')
   if (input.time !== undefined) {
     if (!isValidHm(input.time)) throw new MoneyError('時間不正確')
-    if (`${input.date} ${input.time}` > minuteKey(now)) throw new MoneyError('不能選未來的時間')
+    const sameSavedTime = previous && minuteKey(new Date(previous.occurredAt)) === `${input.date} ${input.time}`
+    if (`${input.date} ${input.time}` > minuteKey(now) &&
+      !(input.type === 'expense' && input.allowFutureMealTime) && !sameSavedTime) throw new MoneyError('不能選未來的時間')
   }
   if (input.funding !== undefined) {
     if (input.type === 'income' || !input.funding.length || input.funding.reduce((sum, a) => sum + a.amount, 0) !== input.amount ||
@@ -233,10 +237,10 @@ export async function addTransaction(input: TxInput, d: MoneyDB = db, now = new 
 }
 
 export async function updateTransaction(id: string, input: TxInput, d: MoneyDB = db, now = new Date()): Promise<Transaction> {
-  await validateTx(d, input, now)
   return d.transaction('rw', TX_TABLES(d), async () => {
     const prev = await d.transactions.get(id)
     if (!prev) throw new MoneyError('這筆紀錄已不存在')
+    await validateTx(d, input, now, prev)
     if (prev.source === PAYSLIP_SOURCE) throw new MoneyError('這筆收入由薪資單產生，請到薪資單修改')
     if (prev.feeOf && input.type !== 'expense') throw new MoneyError('手續費只能是支出，請到那筆互轉修改')
     // Unchanged date (and time, when given) keeps the stored instant and its time source (D-99, D-100);

@@ -186,6 +186,22 @@ describe('date and time (D-99, D-100)', () => {
     await expect(addTransaction({ ...base, date: '2026-10-09', time: '9:05' }, d, now)).rejects.toThrow('時間不正確')
     expect(await d.transactions.count()).toBe(0)
   })
+  it('allows a later time today only for an eligible expense draft, without storing that permission', async () => {
+    const later = await addTransaction({ ...base, paymentMethodId: 'cash', time: '12:00', allowFutureMealTime: true }, d, now)
+    expect(at(later.occurredAt)).toEqual([2026, 10, 10, 12, 0])
+    expect(later).not.toHaveProperty('allowFutureMealTime')
+    await expect(addTransaction({ ...base, type: 'income', time: '12:00', allowFutureMealTime: true }, d, now)).rejects.toThrow('不能選未來的時間')
+    await expect(addTransaction({ ...base, date: '2026-10-11', time: '08:00', allowFutureMealTime: true }, d, now)).rejects.toThrow('不能選未來的日期')
+  })
+  it('preserves an already saved later time during edits, but rejects a new later time without permission', async () => {
+    const original = await addTransaction({ ...base, paymentMethodId: 'card', time: '12:00', allowFutureMealTime: true }, d, now)
+    const editTime = new Date(2026, 9, 10, 9, 20)
+    const kept = await updateTransaction(original.id, { ...base, time: '12:00', note: '已確認' }, d, editTime)
+    expect(kept.occurredAt).toBe(original.occurredAt)
+    await expect(updateTransaction(original.id, { ...base, time: '13:00' }, d, editTime)).rejects.toThrow('不能選未來的時間')
+    const changed = await updateTransaction(original.id, { ...base, time: '13:00', allowFutureMealTime: true }, d, editTime)
+    expect(at(changed.occurredAt)).toEqual([2026, 10, 10, 13, 0])
+  })
   it('changing the date keeps the chosen time', async () => {
     const a = await addTransaction({ ...base, date: '2026-10-08', time: '21:40' }, d, now)
     const b = await updateTransaction(a.id, { ...base, date: '2026-10-05', time: '21:40' }, d, now)
