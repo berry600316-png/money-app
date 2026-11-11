@@ -2,8 +2,9 @@ import { db, type MoneyDB } from './db'
 import type { BalanceAdjustment, Category, CategoryType, FundingAllocation, PaymentMethod, PaymentType, Transaction, TxType } from './types'
 import { isValidAmount, MAX_AMOUNT } from '../lib/money'
 import { fromYmd, isValidHm, localIso, minuteKey, occurredAtFor, timeLabel, toYmd } from '../lib/dates'
-import { computeBalances, isAsset, isCard, isMethod, isTracked, startInstant } from '../lib/accounts'
+import { computeBalances, isAsset, isCard, isMethod, isTracked, startInstant, type PayChoice } from '../lib/accounts'
 import { computeFunding, fundingSource } from '../lib/funding'
+import { merchantSimilarity, normalizeMerchant } from '../card/text'
 import { PAYSLIP_SOURCE } from './defaults'
 
 /** An error whose message is safe to show to the user as-is. */
@@ -324,6 +325,45 @@ export async function recentMerchants(
     if (out.length >= limit) break
   }
   return out
+}
+
+/** Load once per new-entry session, then match merchant names without repeating IndexedDB scans while typing. */
+export async function manualMerchantPaymentHistory(d: MoneyDB = db): Promise<Transaction[]> {
+  const expenses = await d.transactions.where('type').equals('expense').toArray()
+  return expenses
+    .filter((t) => t.source === 'manual' && !t.feeOf && !!t.merchant)
+    .sort((a, b) =>
+      toYmd(new Date(b.occurredAt)).localeCompare(toYmd(new Date(a.occurredAt))) ||
+      b.updatedAt.localeCompare(a.updatedAt) ||
+      b.occurredAt.localeCompare(a.occurredAt),
+    )
+}
+
+/** Branch suffixes such as 中山店 / 台北店 may differ even for brands outside the built-in alias list. */
+function sameMerchantBranch(a: string, b: string): boolean {
+  const x = normalizeMerchant(a)
+  const y = normalizeMerchant(b)
+  let shared = 0
+  while (shared < x.length && shared < y.length && x[shared] === y[shared]) shared++
+  if (shared < 3) return false
+  const branch = (suffix: string) => !suffix || /^(?:.{1,8})?(?:店|門市|分店)$/.test(suffix)
+  return branch(x.slice(shared)) && branch(y.slice(shared))
+}
+
+/** The latest payment for this merchant. `recent` must come from manualMerchantPaymentHistory(). */
+export function lastMerchantPayment(merchant: string, recent: readonly Transaction[]): PayChoice | null {
+  const name = merchant.trim().toLowerCase()
+  if (!name) return null
+  let similar: Transaction | undefined
+  for (const t of recent) {
+    if (t.merchant.trim().toLowerCase() === name) {
+      return { paymentMethodId: t.paymentMethodId, ...(t.sourceAccountId ? { sourceAccountId: t.sourceAccountId } : {}), ...(t.cardId ? { cardId: t.cardId } : {}) }
+    }
+    if (!similar && (merchantSimilarity(t.merchant, name) >= 0.8 || sameMerchantBranch(t.merchant, name))) similar = t
+  }
+  return similar
+    ? { paymentMethodId: similar.paymentMethodId, ...(similar.sourceAccountId ? { sourceAccountId: similar.sourceAccountId } : {}), ...(similar.cardId ? { cardId: similar.cardId } : {}) }
+    : null
 }
 
 /* ---------------- categories & payment methods ---------------- */

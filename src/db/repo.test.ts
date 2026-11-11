@@ -7,6 +7,8 @@ import {
   addTransaction,
   deleteTransaction,
   MoneyError,
+  lastMerchantPayment,
+  manualMerchantPaymentHistory,
   recentMerchants,
   restoreTransaction,
   updateCategory,
@@ -92,6 +94,47 @@ describe('transactions', () => {
     ])
     expect(await recentMerchants('全', 'income', 4, d)).toEqual([])
     expect(await recentMerchants('全家便利商店', 'expense', 4, d)).toEqual([])
+  })
+
+  it('prefers an exact merchant over newer similar names and ignores imported or generated expenses', async () => {
+    const exact = await addTransaction({ ...base, merchant: '全家中山店', paymentMethodId: 'cash', date: '2026-10-07' }, d, now)
+    await addTransaction({ ...base, merchant: '全家台北店', paymentMethodId: 'card', date: '2026-10-08' }, d, now)
+    const imported = await addTransaction({ ...base, merchant: '全家中山店', paymentMethodId: 'card', date: '2026-10-09' }, d, now)
+    await d.transactions.update(imported.id, { source: 'statement' })
+    const fee = await addTransaction({ ...base, merchant: '全家中山店', paymentMethodId: 'card', date: '2026-10-10' }, d, now)
+    await d.transactions.update(fee.id, { feeOf: 'transfer' })
+
+    const history = await manualMerchantPaymentHistory(d)
+    expect(lastMerchantPayment(' 全家中山店 ', history)).toEqual({ paymentMethodId: exact.paymentMethodId })
+    expect(lastMerchantPayment('全家松山店', history)).toEqual({ paymentMethodId: 'card' })
+    expect(lastMerchantPayment('不存在的商家', history)).toBeNull()
+  })
+
+  it('uses transaction date rather than save order and returns the full payment choice', async () => {
+    await d.paymentMethods.add({ id: 'bank-a', name: '銀行 A', type: 'bank', isActive: true, sortOrder: 5 })
+    await addTransaction({ ...base, merchant: 'A', paymentMethodId: 'cash', date: '2026-10-08' }, d, now)
+    await addTransaction({ ...base, merchant: 'A', paymentMethodId: 'transfer', sourceAccountId: 'bank-a', date: '2026-10-10' }, d, now)
+    await addTransaction({ ...base, merchant: 'A', paymentMethodId: 'cash', date: '2026-10-09' }, d, now)
+
+    expect(lastMerchantPayment('a', await manualMerchantPaymentHistory(d))).toEqual({ paymentMethodId: 'transfer', sourceAccountId: 'bank-a' })
+  })
+
+  it('uses the most recently saved payment when two purchases have the same minute', async () => {
+    const first = new Date(2026, 9, 10, 9, 15, 1)
+    const second = new Date(2026, 9, 10, 9, 16, 20)
+    const earlier = await addTransaction({ ...base, merchant: 'A', paymentMethodId: 'cash', time: '09:15' }, d, first)
+    await addTransaction({ ...base, merchant: 'A', paymentMethodId: 'card', time: '09:15' }, d, second)
+
+    expect(lastMerchantPayment('A', await manualMerchantPaymentHistory(d))).toEqual({ paymentMethodId: 'card' })
+    await updateTransaction(earlier.id, { ...base, merchant: 'A', paymentMethodId: 'cash', time: '09:15' }, d, new Date(2026, 9, 10, 9, 17))
+    expect(lastMerchantPayment('A', await manualMerchantPaymentHistory(d))).toEqual({ paymentMethodId: 'cash' })
+  })
+
+  it('recognises different branches of an unknown merchant name', async () => {
+    await addTransaction({ ...base, merchant: '阿華早餐店中山店', paymentMethodId: 'cash' }, d, now)
+    const history = await manualMerchantPaymentHistory(d)
+    expect(lastMerchantPayment('阿華早餐店台北店', history)).toEqual({ paymentMethodId: 'cash' })
+    expect(lastMerchantPayment('阿華早餐館', history)).toBeNull()
   })
 })
 

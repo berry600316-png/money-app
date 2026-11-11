@@ -8,6 +8,8 @@ import {
   addTransaction,
   deleteEntry,
   LAST_KEYS,
+  lastMerchantPayment,
+  manualMerchantPaymentHistory,
   MERCHANT_MAX,
   MoneyError,
   NOTE_MAX,
@@ -17,7 +19,7 @@ import {
   updateTransaction,
   type TxInput,
 } from '../db/repo'
-import type { CategoryType, PaymentMethod, TimeSource, TxType } from '../db/types'
+import type { CategoryType, PaymentMethod, TimeSource, Transaction, TxType } from '../db/types'
 import { defaultPay, describePay, isAsset, isCard, isMethod, payGroups, payKey, type PayOption } from '../lib/accounts'
 import { dayLabel, fromYmd, timeLabel, toYmd } from '../lib/dates'
 import { applyKey, fmt } from '../lib/money'
@@ -146,6 +148,9 @@ export function EntrySheet({
   const [pick, setPick] = useState<PickRole | 'pay' | null>(null)
   const [merchantFocused, setMerchantFocused] = useState(false)
   const [suggestions, setSuggestions] = useState<{ merchant: string; categoryId: string }[]>([])
+  const [merchantResolving, setMerchantResolving] = useState(false)
+  const paymentLocked = useRef(false)
+  const merchantHistory = useRef<Promise<Transaction[]> | null>(null)
   const sheetRef = useRef<HTMLDivElement | null>(null)
   const amtRef = useRef<HTMLSpanElement | null>(null)
   const amtWrapRef = useRef<HTMLDivElement | null>(null)
@@ -192,6 +197,9 @@ export function EntrySheet({
     setTyping(false)
     setPick(null)
     setSuggestions([])
+    setMerchantResolving(false)
+    paymentLocked.current = !!editId || !!prefill?.paymentMethodId
+    merchantHistory.current = editId ? null : manualMerchantPaymentHistory().catch(() => [])
     setFeeRecord(false)
     const start = (dr: Draft) => {
       opened.current = fieldsOf(dr)
@@ -257,6 +265,7 @@ export function EntrySheet({
         note: '',
         showNote: false,
       })
+      if (type === 'expense' && prefill?.merchant?.trim() && !paymentLocked.current) setMerchantResolving(true)
     }
     return () => {
       cancelled = true
@@ -284,6 +293,41 @@ export function EntrySheet({
     }
   }, [draft?.merchant, draft?.type, merchantFocused]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A merchant changes only the new expense draft. The chosen combination must still exist in the picker.
+  useEffect(() => {
+    if (!open || !draft || draft.type !== 'expense' || editId || paymentLocked.current) {
+      setMerchantResolving(false)
+      return
+    }
+    let stale = false
+    const merchant = draft.merchant
+    const history = merchantHistory.current
+    const timer = window.setTimeout(() => {
+      history?.then((entries) => {
+        if (stale || paymentLocked.current) return
+        const choice = lastMerchantPayment(merchant, entries)
+        const option = choice ? groups.flatMap((g) => g.options).find((o) => o.key === payKey(choice)) : undefined
+        const fallback = defaultPay(groups, lastPay, lastSource, walletCards?.[lastPay])
+        const next = option ?? fallback
+        setDraft((d) => {
+          if (!d || d.type !== 'expense' || d.merchant !== merchant || paymentLocked.current || !next) return d
+          const current = payKey({ paymentMethodId: d.paymentMethodId, sourceAccountId: d.sourceAccountId || undefined, cardId: d.cardId || undefined })
+          return current === next.key ? d : {
+            ...d,
+            paymentMethodId: next.paymentMethodId,
+            sourceAccountId: next.sourceAccountId ?? '',
+            cardId: next.cardId ?? '',
+            funding: d.funding.map(({ month, amount }) => ({ month, amount })),
+          }
+        })
+        setMerchantResolving(false)
+      }, () => { if (!stale) setMerchantResolving(false) })
+    }, merchant ? 200 : 0)
+    return () => { stale = true; window.clearTimeout(timer) }
+    // Only a new merchant or entry kind starts a lookup; payment changes do not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editId, draft?.merchant, draft?.type])
+
   const amount = draft ? parseInt(draft.amount || '0', 10) : 0
   const fee = draft ? parseInt(draft.fee || '0', 10) : 0
 
@@ -297,6 +341,8 @@ export function EntrySheet({
   /** Switching kind starts each kind where the last entry of that kind did (D-120). */
   const switchType = (type: TxType) => {
     if (!draft || type === draft.type) return
+    paymentLocked.current = false
+    setMerchantResolving(type === 'expense' && !!draft.merchant.trim())
     if (type === 'transfer') {
       const from = pickFor('from', [isAsset(ref.payment(draft.paymentMethodId)) ? draft.paymentMethodId : undefined, lastFrom])
       patch({ type, paymentMethodId: from, toAccountId: pickFor('to', [draft.toAccountId, lastTo], from), fundingOpen: false, funding: [] })
@@ -345,7 +391,7 @@ export function EntrySheet({
   const clearFundingProvenance = (rows: Draft['funding']) => rows.map(({ month, amount }) => ({ month, amount }))
 
   const save = async () => {
-    if (!draft || saving) return
+    if (!draft || saving || merchantResolving) return
     if (!amount) {
       replay(amtWrapRef.current, 'shake')
       return
@@ -487,7 +533,16 @@ export function EntrySheet({
   const recent = { into: [lastInto], from: [lastFrom], to: [lastTo] }
   const payChoice = draft ? { paymentMethodId: draft.paymentMethodId, sourceAccountId: draft.sourceAccountId || undefined, cardId: draft.cardId || undefined } : null
   const pay = payChoice ? describePay(payChoice, (id) => ref.payments.find((p) => p.id === id)) : null
-  const onPay = (o: PayOption) => patch({ paymentMethodId: o.paymentMethodId, sourceAccountId: o.sourceAccountId ?? '', cardId: o.cardId ?? '', funding: draft ? clearFundingProvenance(draft.funding) : [] })
+  const onPay = (o: PayOption) => {
+    paymentLocked.current = true
+    setMerchantResolving(false)
+    patch({ paymentMethodId: o.paymentMethodId, sourceAccountId: o.sourceAccountId ?? '', cardId: o.cardId ?? '', funding: draft ? clearFundingProvenance(draft.funding) : [] })
+  }
+
+  const changeMerchant = (merchant: string, categoryId?: string) => {
+    if (draft?.type === 'expense' && !editId && !paymentLocked.current) setMerchantResolving(true)
+    patch({ merchant, ...(categoryId ? { categoryId } : {}) })
+  }
 
   const dateTimePills = draft && (
     <>
@@ -730,7 +785,7 @@ export function EntrySheet({
                 enterKeyHint="done"
                 maxLength={MERCHANT_MAX}
                 value={draft.merchant}
-                onChange={(e) => patch({ merchant: e.target.value })}
+                onChange={(e) => changeMerchant(e.target.value)}
                 onFocus={() => onFieldFocus(true)}
                 onBlur={() => onFieldBlur(true)}
                 onKeyDown={(e) => {
@@ -749,7 +804,7 @@ export function EntrySheet({
                       onPointerDown={(e) => e.preventDefault()}
                       onClick={() => {
                         const cat = ref.categories.find((c) => c.id === s.categoryId && c.isActive && c.type === draft.type)
-                        patch({ merchant: s.merchant, ...(cat ? { categoryId: cat.id } : {}) })
+                        changeMerchant(s.merchant, cat?.id)
                         setSuggestions([])
                         merchantRef.current?.blur()
                       }}
@@ -852,12 +907,12 @@ export function EntrySheet({
                 {key.k === 'back' ? <Icon name="backspace" /> : (key.label ?? key.k)}
               </button>
             ))}
-            <button type="button" className={'key save' + (!amount ? ' off' : '')} onClick={save} disabled={saving}>
+            <button type="button" className={'key save' + (!amount ? ' off' : '')} onClick={save} disabled={saving || merchantResolving}>
               <Icon name="check" />
               <span>{editId ? '更新' : '儲存'}</span>
             </button>
           </div>
-          <button type="button" className="alt-save" onPointerDown={(e) => e.preventDefault()} onClick={save} disabled={saving}>
+          <button type="button" className="alt-save" onPointerDown={(e) => e.preventDefault()} onClick={save} disabled={saving || merchantResolving}>
             {editId ? '更新' : '儲存'}
           </button>
         </>
