@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useSalaryItems, useTxCount } from '../db/hooks'
 import { usePwaState } from '../pwa/pwa'
 import { Icon } from '../ui/Icon'
 import { useRefData } from '../ui/refData'
 import { BackupSection } from './BackupSection'
 import { AppLockSection } from './lock/AppLockSection'
+import { ReleaseNotesSheet } from './ReleaseNotesSheet'
 
 export function SettingsPage({
   open,
@@ -26,8 +28,13 @@ export function SettingsPage({
   const ref = useRefData()
   const count = useTxCount()
   const salaryItems = useSalaryItems()
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false)
   const activeCats = ref.categories.filter((c) => c.isActive).length
   const activePays = ref.payments.filter((p) => p.isActive).length
+
+  useEffect(() => {
+    if (!open || covered) setReleaseNotesOpen(false)
+  }, [open, covered])
 
   const persisted =
     pwa.persisted === true ? { text: '已啟用', warn: false } : pwa.persisted === false ? { text: '未啟用', warn: true } : { text: '無法確認', warn: true }
@@ -100,10 +107,14 @@ export function SettingsPage({
       <AppLockSection />
 
       <p className="colophon">
-        Cai Jie {__APP_VERSION__}
+        <button type="button" className="version-button" onClick={() => setReleaseNotesOpen(true)} aria-haspopup="dialog" aria-label={`查看 Cai Jie ${__APP_VERSION__} 更新內容`}>
+          Cai Jie {__APP_VERSION__}
+          <Icon name="chev" />
+        </button>
         <br />
         {count !== undefined && `共 ${count.toLocaleString('en-US')} 筆紀錄`}
       </p>
+      <ReleaseNotesSheet open={open && !covered && releaseNotesOpen} onClose={() => setReleaseNotesOpen(false)} />
     </section>
   )
 }
