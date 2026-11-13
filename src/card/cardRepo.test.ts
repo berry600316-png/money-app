@@ -128,7 +128,7 @@ describe('reconciliation decisions (Phase 3)', () => {
     reconcile({
       statement: (await d.cardStatements.get(stId))!,
       entries: await d.statementEntries.where('statementId').equals(stId).toArray(),
-      transactions: await d.transactions.where('paymentMethodId').equals(cardId).toArray(),
+      transactions: await d.transactions.toArray(),
       recons: await d.reconciliations.toArray(),
     })
 
@@ -163,18 +163,27 @@ describe('reconciliation decisions (Phase 3)', () => {
     await matchManually(st.id, entries[0].id, fam.id, '', d, now)
     await expect(matchManually(st.id, entries[1].id, fam.id, '', d, now)).rejects.toThrow('已經和其他')
   })
-  it('manual pairs only with an expense on the same card; re-confirming a broken pair is one step', async () => {
+  it('manually pairs different types, payment methods and amounts without changing the book record', async () => {
     const { st, entries, fam } = await setup()
     const income = await addTransaction({ type: 'income', amount: 85, merchant: 'x', categoryId: 'salary', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
-    await expect(matchManually(st.id, entries[0].id, income.id, '', d, now)).rejects.toThrow('支出')
     const cash = await addTransaction({ type: 'expense', amount: 85, merchant: '全家', categoryId: 'food', paymentMethodId: 'cash', date: '2026-09-18', note: '' }, d, now)
-    await expect(matchManually(st.id, entries[0].id, cash.id, '', d, now)).rejects.toThrow('不是用這張卡')
-    await matchManually(st.id, entries[0].id, fam.id, '', d, now)
+    await matchManually(st.id, entries[0].id, income.id, '', d, now)
+    await matchManually(st.id, entries[1].id, cash.id, '', d, now)
+    const decisions = await d.reconciliations.toArray()
+    expect(decisions.find((r) => r.transactionId === income.id)?.note).toContain('收支類型不同')
+    expect(decisions.find((r) => r.transactionId === cash.id)?.note).toContain('付款方式不同')
+    expect((await d.transactions.get(income.id))?.type).toBe('income')
+    expect((await d.transactions.get(cash.id))?.paymentMethodId).toBe('cash')
+    expect((await run(st.id)).items.filter((i) => i.kind === 'matched')).toHaveLength(2)
+    await updateTransaction(income.id, { type: 'expense', amount: 85, merchant: 'x', categoryId: 'food', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
+    expect((await run(st.id)).items.find((i) => 'entry' in i && i.entry.id === entries[0].id)?.kind).toBe('broken')
+    await reconfirmPair(decisions.find((r) => r.transactionId === income.id)!.id, d, now)
+    await matchManually(st.id, entries[2].id, fam.id, '', d, now)
     await updateTransaction(fam.id, { type: 'expense', amount: 86, merchant: '全家', categoryId: 'food', paymentMethodId: cardId, date: '2026-09-18', note: '' }, d, now)
     const broken = (await d.reconciliations.toArray()).find((r) => r.transactionId === fam.id)!
     await reconfirmPair(broken.id, d, now)
-    expect((await run(st.id)).items.find((i) => 'entry' in i && i.entry.id === entries[0].id)?.kind).toBe('matched')
-    expect(await d.reconciliations.count()).toBe(1)
+    expect((await run(st.id)).items.find((i) => 'entry' in i && i.entry.id === entries[2].id)?.kind).toBe('matched')
+    expect(await d.reconciliations.count()).toBe(3)
   })
   it('unticked suspected duplicates are not remembered, so they can be imported later', async () => {
     const rows = (await plan([SIM_NOTIFICATIONS.convenience])).map((r) => ({ ...r, include: false }))

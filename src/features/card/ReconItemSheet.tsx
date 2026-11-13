@@ -4,6 +4,7 @@ import { applyStatementAmount, deferToNext, explain, matchManually, reconfirmExp
 import { txDate, type Item } from '../../card/reconcile'
 import { dayDiff } from '../../card/text'
 import { debitCandidate } from '../../card/debitReconcile'
+import { searchReconTransactions } from '../../card/reconSearch'
 import { MoneyError } from '../../db/repo'
 import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../../db/types'
 import { fmt } from '../../lib/money'
@@ -42,6 +43,10 @@ export function ReconItemSheet({
   const [toAccountId, setToAccountId] = useState('')
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState(false)
+  const [search, setSearch] = useState('')
+  const [adjacentMonths, setAdjacentMonths] = useState(false)
+  const [visibleCount, setVisibleCount] = useState(40)
+  const [showEvidence, setShowEvidence] = useState(false)
   const [shown, setShown] = useState<Item | null>(null)
   const [last, setLast] = useState<Item | null>(null)
   if (item !== last) {
@@ -51,6 +56,10 @@ export function ReconItemSheet({
       setView('main')
       setReason('')
       setBusy(false)
+      setSearch('')
+      setAdjacentMonths(false)
+      setVisibleCount(40)
+      setShowEvidence(false)
       if ('entry' in item) {
         const history = transactions.filter((t) => t.merchant).map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
         setCategoryId(item.entry.kind === 'refund' || item.entry.kind === 'deposit'
@@ -74,15 +83,12 @@ export function ReconItemSheet({
     }
   }
 
-  // Records that are free to pair (not validly paired on any statement).
+  // A paired record remains visible in manual search, but cannot be chosen again.
   const pairedTx = new Set(recons.filter((r) => r.status === 'matched' && r.transactionId).map((r) => r.transactionId!))
   const pairedEntry = new Set(recons.filter((r) => r.status === 'matched' && r.entryId).map((r) => r.entryId!))
 
   const candidatesForEntry = (e: StatementEntry) =>
-    transactions
-      .filter((t) => (statement.statementType === 'debit_card' ? debitCandidate(e, t, statement.paymentMethodId, statement.accountId ?? '') : t.type === 'expense') && !pairedTx.has(t.id) && Math.abs(dayDiff(entryDate(e), txDate(t))) <= 15)
-      .sort((a, b) => Math.abs(a.amount - e.amount) - Math.abs(b.amount - e.amount) || Math.abs(dayDiff(entryDate(e), txDate(a))) - Math.abs(dayDiff(entryDate(e), txDate(b))))
-      .slice(0, 30)
+    searchReconTransactions(transactions, { statementMonth: statement.statementMonth, entry: e, query: search, adjacentMonths })
   const candidatesForTx = (t: Transaction) =>
     entries
       .filter((e) => e.kind !== 'payment' && !pairedEntry.has(e.id) && (statement.statementType !== 'debit_card' || debitCandidate(e, t, statement.paymentMethodId, statement.accountId ?? '')))
@@ -95,12 +101,13 @@ export function ReconItemSheet({
   const amount = entry?.amount ?? tx?.amount ?? 0
 
   const txRow = (t: Transaction, onPick: () => void) => (
-    <button type="button" className="rrow compact" key={t.id} onClick={onPick} disabled={busy}>
+    <button type="button" className="rrow compact" key={t.id} onClick={onPick} disabled={busy || pairedTx.has(t.id)}>
       <span className="row-main">
-        <span className="row-title">{t.merchant || ref.category(t.categoryId).name}</span>
+        <span className="row-title">{t.merchant || (t.type === 'transfer' ? '互轉' : ref.category(t.categoryId).name)}</span>
         <span className="state">
-          {md(txDate(t))} · {ref.category(t.categoryId).name}
+          {md(txDate(t))} · {t.type === 'transfer' ? '互轉' : t.type === 'income' ? '收入' : ref.category(t.categoryId).name} · {ref.payment(t.paymentMethodId).name}
           {entry && t.amount !== Math.abs(entry.amount) ? ` · 差 ${fmt(Math.abs(Math.abs(entry.amount) - t.amount))}` : ''}
+          {pairedTx.has(t.id) ? ' · 已配對' : ''}
         </span>
       </span>
       <span className="row-amt num">{fmt(t.amount)}</span>
@@ -123,7 +130,7 @@ export function ReconItemSheet({
   )
 
   const pairWith = (e: StatementEntry, t: Transaction) =>
-    run(() => matchManually(statement.id, e.id, t.id, Math.abs(e.amount) === t.amount ? '' : `金額不同（帳單 ${e.amount}，記帳 ${t.amount}）`), '已配對')
+    run(() => matchManually(statement.id, e.id, t.id), '已配對')
 
   let body: ReactNode = null
   if (it && view === 'record' && entry) {
@@ -177,8 +184,13 @@ export function ReconItemSheet({
     const list = candidatesForEntry(entry)
     body = (
       <>
-        <p className="sheet-msg">選一筆相關記帳與這筆銀行明細配對（前後 15 天）。</p>
-        {list.length ? <div className="cand">{list.map((t) => txRow(t, () => void pairWith(entry, t)))}</div> : <p className="sheet-msg">前後 15 天沒有可配對的記帳。</p>}
+        <p className="sheet-msg">{statement.statementMonth.replace('-', ' 年 ')} 月的記帳，共 {list.length} 筆</p>
+        <input type="search" value={search} placeholder="搜尋商家、金額或日期" aria-label="搜尋既有紀錄" onChange={(e) => { setSearch(e.target.value); setVisibleCount(40) }} />
+        <button type="button" className="btn-quiet" onClick={() => { setAdjacentMonths(!adjacentMonths); setVisibleCount(40) }}>
+          {adjacentMonths ? '只看帳單月份' : '搜尋前後各一個月'}
+        </button>
+        {list.length ? <div className="cand">{list.slice(0, visibleCount).map((t) => txRow(t, () => void pairWith(entry, t)))}</div> : <p className="sheet-msg">沒有找到符合條件的記帳。</p>}
+        {list.length > visibleCount && <button type="button" className="btn-secondary" onClick={() => setVisibleCount(visibleCount + 40)}>顯示更多（還有 {list.length - visibleCount} 筆）</button>}
         <button type="button" className="btn-quiet" onClick={() => setView('main')}>
           返回
         </button>
@@ -347,26 +359,21 @@ export function ReconItemSheet({
       case 'matched':
         body = (
           <>
-            <div className="pair">
-              <div>
-                <span className="lbl">你的記帳</span>
-                <span className="v">{fmt(it.tx.amount)}</span>
-                <div className="s">
-                  {it.tx.merchant || '—'} · {md(txDate(it.tx))}
-                </div>
-              </div>
-              <div>
-                <span className="lbl">銀行帳單</span>
-                <span className="v">{fmt(it.entry.amount)}</span>
-                <div className="s">
-                  {it.entry.merchant} · {md(it.entry.txDate)}
-                </div>
-              </div>
-            </div>
+            {hero}
             {statement.statementType === 'debit_card' && it.entry.evidence && <p className="sheet-msg">
               帳單證據：{it.entry.evidence === 'both' ? '金融卡消費與銀行流水' : it.entry.evidence === 'card' ? '金融卡消費' : '銀行流水'}
             </p>}
-            <p className="sheet-msg">{it.auto ? '自動核對' : it.recon?.method === 'created' ? '由帳單補記' : '手動配對'}{it.recon?.note ? ` · ${it.recon.note}` : ''}</p>
+            <p className="sheet-msg">{it.auto ? '自動核對' : it.recon?.method === 'created' ? '由帳單補記' : '手動配對'}</p>
+            {it.recon && <>
+              <button type="button" className="btn-quiet" onClick={() => setShowEvidence(!showEvidence)}>{showEvidence ? '收起核對依據' : '查看核對依據'}</button>
+              {showEvidence && <>
+                <div className="pair">
+                  <div><span className="lbl">你的記帳</span><span className="v">{fmt(it.tx.amount)}</span><div className="s">{it.tx.merchant || '—'} · {md(txDate(it.tx))}</div></div>
+                  <div><span className="lbl">銀行帳單</span><span className="v">{fmt(it.entry.amount)}</span><div className="s">{it.entry.merchant} · {md(it.entry.txDate)}</div></div>
+                </div>
+                <p className="sheet-msg">{it.recon.note || '帳單與記帳內容相符'}</p>
+              </>}
+            </>}
             {it.recon && (
               <button type="button" className="btn-quiet" onClick={() => run(() => removeDecision(it.recon!.id), '已取消配對')}>
                 取消配對

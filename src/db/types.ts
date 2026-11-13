@@ -284,7 +284,7 @@ export interface Reconciliation {
   status: ReconStatus
   method: 'auto' | 'manual' | 'created'
   /** Transaction values when the pair was made; any later change invalidates it (D-92). */
-  snapshot: { amount: number; date: string; paymentMethodId: string; sourceAccountId?: string; cardId?: string; toAccountId?: string } | null
+  snapshot: { type?: Transaction['type']; amount: number; date: string; paymentMethodId: string; sourceAccountId?: string; cardId?: string; toAccountId?: string } | null
   note: string
   createdAt: string
 }

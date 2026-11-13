@@ -688,8 +688,10 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if (r.snapshot !== null) {
       const s = r.snapshot
       if (!isObj(s) || typeof s.amount !== 'number' || !isYmdStr(s.date) || !isStr(s.paymentMethodId)) fail(`第 ${n} 筆核對紀錄不正確`)
+      if (s.type !== undefined && !['expense', 'income', 'transfer'].includes(String(s.type))) fail(`第 ${n} 筆核對紀錄不正確`)
       for (const key of ['sourceAccountId', 'cardId', 'toAccountId'] as const) if (s[key] !== undefined && !isStr(s[key])) fail(`第 ${n} 筆核對紀錄不正確`)
       snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId,
+        ...(s.type !== undefined ? { type: s.type as Transaction['type'] } : {}),
         ...('sourceAccountId' in s ? { sourceAccountId: s.sourceAccountId as string } : {}),
         ...('cardId' in s ? { cardId: s.cardId as string } : {}),
         ...('toAccountId' in s ? { toAccountId: s.toAccountId as string } : {}),

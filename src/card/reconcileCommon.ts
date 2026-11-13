@@ -9,6 +9,7 @@ export function pairStillValid(recon: Reconciliation, tx: Transaction | undefine
   if (!tx) return '這筆記帳已被刪除'
   const s = recon.snapshot
   if (!s) return null
+  if (s.type && s.type !== tx.type) return '記帳的收支類型在核對後被修改'
   if (s.amount !== tx.amount) return '記帳金額在核對後被修改'
   if (s.date !== txDate(tx)) return '記帳日期在核對後被修改'
   if (s.paymentMethodId !== chargedTo(tx)) return '記帳的付款方式在核對後被修改'

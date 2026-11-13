@@ -132,9 +132,11 @@ export function EntrySheet({
     const [tx, decisions] = await Promise.all([db.transactions.get(editId), db.reconciliations.where('transactionId').equals(editId).toArray()])
     const recon = decisions.find((r) => r.status === 'matched' || r.status === 'explained')
     if (!recon || pairStillValid(recon, tx)) return null
-    return recon.status === 'explained' ? `人工確認：${recon.note}`
-      : `${recon.method === 'auto' ? '帳單自動配對' : recon.method === 'created' ? '由帳單補記並配對' : '帳單人工配對'}${recon.note ? ` · ${recon.note}` : ''}`
+    return recon.status === 'explained' ? { summary: '人工確認', evidence: recon.note }
+      : { summary: recon.method === 'auto' ? '帳單自動配對' : recon.method === 'created' ? '由帳單補記並配對' : '帳單人工配對', evidence: recon.note }
   }, [editId])
+  const [showReconEvidence, setShowReconEvidence] = useState(false)
+  useEffect(() => setShowReconEvidence(false), [editId])
   const toast = useToast()
   const balances = useBalances()
   const lastPay = useSetting<string>(LAST_KEYS.expense, DEFAULT_PAYMENT_METHOD_ID)
@@ -687,7 +689,13 @@ export function EntrySheet({
               {banner}
             </p>
           )}
-          {reconDetail && <p className="entry-banner"><Icon name="check" />{reconDetail}</p>}
+          {reconDetail && <>
+            <p className="entry-banner"><Icon name="check" />{reconDetail.summary}</p>
+            {reconDetail.evidence && <>
+              <button type="button" className="btn-quiet" onClick={() => setShowReconEvidence(!showReconEvidence)}>{showReconEvidence ? '收起核對依據' : '查看核對依據'}</button>
+              {showReconEvidence && <p className="entry-banner">{reconDetail.evidence}</p>}
+            </>}
+          </>}
           {feeRecord && (
             <p className="entry-banner">
               <Icon name="swap" />

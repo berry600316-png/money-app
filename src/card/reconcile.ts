@@ -44,7 +44,7 @@ export type Item =
 export interface ReconcileInput {
   statement: CardStatement
   entries: readonly StatementEntry[]
-  /** Expense transactions of this card (any date). */
+  /** All transactions, so a manual pair with another payment method can still be displayed. Auto rules filter candidates. */
   transactions: readonly Transaction[]
   /** Decisions from ALL statements: a transaction already paired elsewhere is not available here. */
   recons: readonly Reconciliation[]

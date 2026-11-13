@@ -61,14 +61,12 @@ export function ReconcilePage({
   const st = statements?.find((s) => s.id === chosen) ?? statements?.[0] ?? null
   const data = useLiveQuery(async () => {
     if (!st) return null
-    const [entries, direct, viaMobile, recons] = await Promise.all([
+    const [entries, transactions, recons] = await Promise.all([
       db.statementEntries.where('statementId').equals(st.id).toArray(),
-      st.statementType === 'debit_card' ? db.transactions.toArray() : db.transactions.where('paymentMethodId').equals(st.paymentMethodId).toArray(),
-      // D-125: purchases made with a 行動支付 bound to this card are on its bill too.
-      db.transactions.filter((t) => t.cardId === st.paymentMethodId).toArray(),
+      db.transactions.toArray(),
       db.reconciliations.toArray(),
     ])
-    return { entries, transactions: [...new Map([...direct, ...viaMobile].map((t) => [t.id, t])).values()], recons }
+    return { entries, transactions, recons }
   }, [st?.id, st?.paymentMethodId])
 
   const result = useMemo(() => (st && data ? reconcile({ statement: st, entries: data.entries, transactions: data.transactions, recons: data.recons }) : null), [st, data])

@@ -3,12 +3,16 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.1',
-  previousVersion: '1.9.0',
+  version: '1.9.2',
+  previousVersion: '1.9.1',
   changes: [
     {
-      title: 'iPhone 匯入銀行帳單更順利',
-      detail: '修正部分 iPhone 無法讀取 PDF 帳單的情況；有密碼的帳單輸入密碼後，也能繼續檢查明細。',
+      title: '找記帳紀錄更方便',
+      detail: '核對帳單時，可搜尋同月份的全部記帳；需要時也能搜尋前後各一個月。',
+    },
+    {
+      title: '更多紀錄可以手動配對',
+      detail: '即使付款方式、收支類型或金額不同，也能自行確認配對。原本的記帳不會被更改，點「查看核對依據」可查看差異。',
     },
   ],
 } as const

@@ -368,7 +368,7 @@ export async function updateStatement(
 
 /* ---------------- reconciliation decisions (Phase 3) ---------------- */
 
-const snapshotOf = (t: Transaction) => ({ amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t),
+const snapshotOf = (t: Transaction) => ({ type: t.type, amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t),
   sourceAccountId: t.sourceAccountId, cardId: t.cardId, toAccountId: t.toAccountId })
 
 async function assertFree(entryId: string, txId: string, d: MoneyDB, ignoreReconId?: string) {
@@ -413,37 +413,66 @@ export async function saveAutoPairs(statementId: string, pairs: readonly { entry
   })
 }
 
-/** Both sides exist, belong together (same statement, same card) and the record is a purchase. */
-async function loadPair(statementId: string, entryId: string, transactionId: string, d: MoneyDB) {
+/** Load the chosen records. Strict validation remains for workflows that change the book record. */
+async function loadPair(statementId: string, entryId: string, transactionId: string, d: MoneyDB, strict = true) {
   const [tx, entry, st] = await Promise.all([d.transactions.get(transactionId), d.statementEntries.get(entryId), d.cardStatements.get(statementId)])
   if (!tx || !entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆資料')
-  if (st.statementType === 'debit_card') {
+  if (strict && st.statementType === 'debit_card') {
     if (!debitCandidate(entry, tx, st.paymentMethodId, st.accountId ?? '')) throw new MoneyError('這筆記帳的類型或帳戶與銀行明細不符')
-  } else {
+  } else if (strict) {
     if (tx.type !== 'expense') throw new MoneyError('只能和支出配對')
     if (chargedTo(tx) !== st.paymentMethodId) throw new MoneyError('這筆記帳不是用這張卡，請先修改記帳的付款方式')
   }
-  return { tx, entry }
+  return { tx, entry, st }
 }
 
-/** User pairs an entry with a transaction (also accepts an amount difference as explained, §8.3). */
+/** Describe differences only in the explicit reconciliation evidence view. */
+async function manualPairEvidence(entry: StatementEntry, tx: Transaction, st: CardStatement, d: MoneyDB): Promise<string> {
+  const differences: string[] = []
+  if (Math.abs(entry.amount) !== tx.amount) differences.push(`金額不同（帳單 ${Math.abs(entry.amount)}，記帳 ${tx.amount}）`)
+  const expectedType = entry.kind === 'refund' || entry.kind === 'deposit' ? 'income' : entry.kind === 'transfer_out' ? 'transfer' : 'expense'
+  const typeName = { expense: '支出', income: '收入', transfer: '互轉' }
+  if (tx.type !== expectedType) differences.push(`收支類型不同（帳單 ${typeName[expectedType]}，記帳 ${typeName[tx.type]}）`)
+  const expectedMethod = st.statementType === 'debit_card' && entry.kind !== 'purchase' ? st.accountId ?? st.paymentMethodId : st.paymentMethodId
+  const actualMethod = chargedTo(tx)
+  if (actualMethod !== expectedMethod) {
+    const [expected, actual] = await Promise.all([d.paymentMethods.get(expectedMethod), d.paymentMethods.get(actualMethod)])
+    differences.push(`付款方式不同（帳單 ${expected?.name ?? expectedMethod}，記帳 ${actual?.name ?? actualMethod}）`)
+  }
+  if (st.statementType === 'debit_card' && entry.kind === 'purchase' && actualMethod === st.paymentMethodId
+    && tx.sourceAccountId !== st.accountId) {
+    const [expected, actual] = await Promise.all([
+      st.accountId ? d.paymentMethods.get(st.accountId) : Promise.resolve(undefined),
+      tx.sourceAccountId ? d.paymentMethods.get(tx.sourceAccountId) : Promise.resolve(undefined),
+    ])
+    differences.push(`扣款帳戶不同（帳單 ${expected?.name ?? '未指定'}，記帳 ${actual?.name ?? '未指定'}）`)
+  }
+  const date = entry.txDate ?? entry.postDate
+  if (date && txDate(tx) !== date) differences.push(`日期不同（帳單 ${date}，記帳 ${txDate(tx)}）`)
+  if (entry.merchant.trim() && tx.merchant.trim() && entry.merchant.trim() !== tx.merchant.trim())
+    differences.push(`名稱不同（帳單 ${entry.merchant}，記帳 ${tx.merchant}）`)
+  return differences.length ? `系統註記：${differences.join('；')}` : '帳單與記帳內容相符'
+}
+
+/** User confirms a one-to-one association without changing the original transaction. */
 export async function matchManually(statementId: string, entryId: string, transactionId: string, note = '', d: MoneyDB = db, now = new Date()): Promise<void> {
   await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
-    const { tx } = await loadPair(statementId, entryId, transactionId, d)
+    const { tx, entry, st } = await loadPair(statementId, entryId, transactionId, d, false)
     await assertFree(entryId, transactionId, d)
-    await pair(statementId, entryId, tx, 'manual', note, d, now)
+    const evidence = await manualPairEvidence(entry, tx, st, d)
+    await pair(statementId, entryId, tx, 'manual', note ? `${evidence}；${note}` : evidence, d, now)
   })
 }
 
 /** A pair broke because the record was edited; the user says it is still the same purchase. One transaction. */
 export async function reconfirmPair(reconId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
-  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
     const old = await d.reconciliations.get(reconId)
     if (!old || old.status !== 'matched' || !old.entryId || !old.transactionId) throw new MoneyError('找不到這筆核對紀錄')
-    const { tx } = await loadPair(old.statementId, old.entryId, old.transactionId, d)
+    const { tx, entry, st } = await loadPair(old.statementId, old.entryId, old.transactionId, d, false)
     await d.reconciliations.delete(reconId)
     await assertFree(old.entryId, tx.id, d)
-    await pair(old.statementId, old.entryId, tx, 'manual', '記帳修改後重新確認', d, now)
+    await pair(old.statementId, old.entryId, tx, 'manual', `${await manualPairEvidence(entry, tx, st, d)}；記帳修改後重新確認`, d, now)
   })
 }
 
