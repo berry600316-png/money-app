@@ -3,20 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.0',
-  previousVersion: '1.8.7',
+  version: '1.9.1',
+  previousVersion: '1.9.0',
   changes: [
     {
-      title: '金融卡與帳戶也能對帳',
-      detail: '匯入台新簽帳金融卡帳單，確認明細後，就能逐筆核對消費與帳戶金流。對上的記帳會顯示勾選，沒對上的也可以自行確認或補記。',
-    },
-    {
-      title: '常去的商家，自動帶入付款方式',
-      detail: '記支出時輸入商家，會參考上次在相同或相似商家使用的付款方式，連同卡片或扣款帳戶一起帶入；儲存前仍可自行改選。',
-    },
-    {
-      title: '餐飲現金支出，時間更好記',
-      detail: '選餐飲並用現金付款時，會依記帳當下的時間，預設最接近的早上 8 點、中午 12 點或晚上 6 點；你可以隨時調整。',
+      title: 'iPhone 匯入銀行帳單更順利',
+      detail: '修正部分 iPhone 無法讀取 PDF 帳單的情況；有密碼的帳單輸入密碼後，也能繼續檢查明細。',
     },
   ],
 } as const

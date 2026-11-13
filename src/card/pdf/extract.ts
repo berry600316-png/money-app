@@ -82,11 +82,20 @@ export async function extractPdfText(data: ArrayBuffer, password?: string): Prom
     let count = 0
     for (let p = 1; p <= doc.numPages; p++) {
       const page = await doc.getPage(p)
-      const content = await page.getTextContent()
       const items: Item[] = []
-      for (const raw of content.items) {
-        if (!('str' in raw) || !raw.str.trim()) continue
-        items.push({ str: raw.str, x: raw.transform[4], y: raw.transform[5], w: raw.width, h: raw.height || Math.abs(raw.transform[3]) || 10 })
+      // Safari does not async-iterate ReadableStream, which PDF.js getTextContent() requires.
+      const reader = page.streamTextContent().getReader()
+      try {
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) break
+          for (const raw of value.items) {
+            if (!('str' in raw) || !raw.str.trim()) continue
+            items.push({ str: raw.str, x: raw.transform[4], y: raw.transform[5], w: raw.width, h: raw.height || Math.abs(raw.transform[3]) || 10 })
+          }
+        }
+      } finally {
+        reader.releaseLock()
       }
       count += items.length
       lines.push(...toLines(items))

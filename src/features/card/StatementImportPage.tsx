@@ -60,11 +60,11 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
   const read = async (data: ArrayBuffer, name: string, hash: string, password?: string) => {
     setBusy(true)
     try {
-      const { extractPdfText, PdfPasswordError } = await import('../../card/pdf/extract')
+      const { extractPdfText, PdfPasswordError, PdfReadError } = await import('../../card/pdf/extract')
       try {
         const text = await extractPdfText(data, password)
         if (text.items === 0) {
-          toast('這份 PDF 沒有可擷取的文字（可能是掃描圖片），目前不支援', { kind: 'error' })
+          toast('這份 PDF 沒有可讀取的文字，可能是掃描圖片。請改選文字版電子帳單。', { kind: 'error' })
           setStage({ kind: 'pick' })
           return
         }
@@ -89,7 +89,10 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
         setStage({ kind: 'review' })
       } catch (e) {
         if (e instanceof PdfPasswordError) setStage({ kind: 'password', data, name, hash, wrong: e.wrong })
-        else toast(e instanceof Error ? e.message : '無法讀取這份 PDF', { kind: 'error' })
+        else {
+          toast(e instanceof PdfReadError ? e.message : '無法解析這份 PDF，請確認檔案完整後再試', { kind: 'error' })
+          setStage({ kind: 'pick' })
+        }
       }
     } catch {
       toast('PDF 元件載入失敗，請連上網路開啟一次 App 後再試', { kind: 'error' })
