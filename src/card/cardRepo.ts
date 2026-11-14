@@ -220,14 +220,14 @@ export async function commitNotificationImport(
         transactionId = tx.id
         status = 'imported'
         summary.imported++
+      } else if (c.sourceType === 'line_chat' && row.permanentSkip) {
+        status = 'skipped'
+        summary.skipped++
       } else if (row.status === 'duplicate') {
         status = 'duplicate'
         summary.duplicates++
       } else if (row.status === 'unparsed') {
         summary.failed++
-      } else if ((row.status === 'new' || row.status === 'suspect') && c.sourceType === 'line_chat' && row.permanentSkip) {
-        status = 'skipped'
-        summary.skipped++
       } else if (row.status === 'new' || row.status === 'suspect') {
         // Ordinary unticked rows remain eligible on the next import.
         summary.skipped++

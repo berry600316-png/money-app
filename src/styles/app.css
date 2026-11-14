@@ -654,24 +654,39 @@ button.srow:disabled:active { background: transparent; }
 .grp-title { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 4px 8px; font-size: 0.8125rem; color: var(--ink-2); letter-spacing: 0.02em; }
 .grp-title b { color: var(--ink); font-weight: 600; font-size: 0.9375rem; letter-spacing: 0; }
 
-/* LINE conversation import: compact editable entries, one month at a time. */
+/* LINE conversation import: each month separates problems, selected entries, and permanent skips. */
 .line-chat-summary { margin: 16px 4px 0; color: var(--ink-2); font-size: 0.8125rem; line-height: 1.55; }
+.line-chat-month { margin-bottom: 26px; }
+.line-chat-section { margin-top: 13px; }
+.line-chat-section-title { display: flex; align-items: center; gap: 7px; margin: 0 4px 8px; font-size: 0.8125rem; font-weight: 650; color: var(--ink-2); }
+.line-chat-section-title span { font-variant-numeric: tabular-nums; }
+.line-chat-section-problem .line-chat-section-title { color: #8A6A2C; }
+.line-chat-section-selected .line-chat-section-title { color: var(--brand); }
+.line-chat-section-problem .line-chat-group { box-shadow: inset 3px 0 #D6AD5A, 0 1px 2px rgba(19, 35, 61, 0.04); }
+.line-chat-section-skipped .line-chat-group { background: var(--fill); }
 .line-chat-group { padding: 0 16px; }
 .line-chat-row { padding: 16px 0; }
-.line-chat-row + .line-chat-row, .line-chat-unparsed + .line-chat-unparsed { border-top: 1px solid var(--line); }
+.line-chat-row + .line-chat-row { border-top: 1px solid var(--line); }
 .line-chat-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .line-chat-row-head label { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 0.875rem; font-weight: 600; }
 .line-chat-row-head input { width: 18px; height: 18px; accent-color: var(--brand); }
-.line-chat-row-head .txt-btn { color: var(--ink-2); font-size: 0.75rem; }
-.line-chat-row-head .txt-btn[aria-pressed='true'] { color: var(--danger); }
+.line-chat-row-head strong { flex: none; font-size: 0.875rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.line-chat-issue-label { padding: 5px 9px; border-radius: 9px; background: #FAF1DB; color: #7E5F21; font-size: 0.75rem; font-weight: 650; }
+.line-chat-row-name { margin: 9px 0 0; color: var(--ink); font-size: 0.875rem; font-weight: 600; }
+.line-chat-row-meta, .line-chat-skipped-note { margin: 5px 0 0; color: var(--ink-2); font-size: 0.75rem; }
 .line-chat-reason { margin: 7px 0 0; color: var(--ink-2); font-size: 0.75rem; line-height: 1.5; }
 .line-chat-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr); gap: 10px; margin-top: 12px; }
 .line-chat-fields label { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); font-size: 0.75rem; }
 .line-chat-fields label:nth-child(n+3) { grid-column: 1 / -1; }
 .line-chat-fields input, .line-chat-fields select { width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 0.875rem; }
-.line-chat-unparsed { padding: 14px 0; color: var(--ink-2); font-size: 0.75rem; overflow-wrap: anywhere; }
-.line-chat-unparsed p { margin: 5px 0; }
-.line-chat-unparsed small { white-space: pre-wrap; }
+.line-chat-detail { margin-top: 9px; }
+.line-chat-detail summary { color: var(--brand); font-size: 0.75rem; cursor: pointer; }
+.line-chat-raw { margin: 10px 0; padding: 9px 10px; border-radius: 10px; background: var(--fill); color: var(--ink-2); font-size: 0.75rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.line-chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 13px; }
+.line-chat-actions .chip-btn { min-height: 38px; }
+.line-chat-actions .btn-quiet { width: auto; min-height: 38px; padding: 0 10px; font-size: 0.8125rem; }
+.line-chat-actions small { flex-basis: 100%; color: var(--ink-2); font-size: 0.6875rem; }
+.line-chat-blocked { margin: 12px 4px 0; color: #8A6A2C; font-size: 0.8125rem; }
 .line-chat-reset { display: block; margin: 14px auto 24px; }
 .rrow { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 10px 16px; border: 0; background: transparent; text-align: left; }
 .rrow:active { background: var(--row-press); }

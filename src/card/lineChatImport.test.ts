@@ -6,6 +6,7 @@ import { addPaymentMethod, deleteTransaction } from '../db/repo'
 import { commitNotificationImport, knownLineChatCaptures } from './cardRepo'
 import { planImport } from './importPlan'
 import { readLineChatText } from './lineChatFile'
+import { completeUnparsed, skipLineRow } from './lineChatReview'
 
 const now = new Date(2026, 10, 14, 14)
 const text = `[LINE] 與LINE錢包的聊天記錄\n2026/11/13（五）\n12:34\tLINE錢包\t"LINE Pay 付款 NT$ 125\n付款完成。\n商店名稱: 測試商店"`
@@ -22,8 +23,8 @@ beforeEach(async () => {
 })
 afterEach(() => d.close())
 
-async function plan() {
-  const { captures } = await readLineChatText(text, 'chat.txt', now)
+async function plan(raw = text) {
+  const { captures } = await readLineChatText(raw, 'chat.txt', now)
   return planImport({
     captures,
     knownCaptureIds: await knownLineChatCaptures(d),
@@ -63,5 +64,23 @@ describe('LINE chat notification commit', () => {
     await commitNotificationImport(rows.map((r) => ({ ...r, include: false, permanentSkip: true })), { files: 1 }, d, now)
     expect(await plan()).toEqual([])
     expect((await d.importedNotifications.toArray())[0]).toMatchObject({ status: 'skipped', body: null, parsed: null })
+  })
+
+  it('permanently skips an unparsed payment without storing its message', async () => {
+    const raw = text.replace('NT$ 125', 'NT$ 0')
+    const rows = await plan(raw)
+    expect(rows[0].status).toBe('unparsed')
+    await commitNotificationImport(rows.map(skipLineRow), { files: 1 }, d, now)
+    expect(await plan(raw)).toEqual([])
+    expect((await d.importedNotifications.toArray())[0]).toMatchObject({ status: 'skipped', body: null, parsed: null })
+  })
+
+  it('imports a manually completed unparsed LINE payment with its chosen source', async () => {
+    const raw = text.replace('NT$ 125', 'NT$ 0')
+    const rows = await plan(raw)
+    const completed = completeUnparsed({ ...rows[0], amount: 125, merchant: '補填商店', source: { cardId } })
+    await commitNotificationImport([completed], { files: 1 }, d, now)
+    expect((await d.transactions.toArray())[0]).toMatchObject({ merchant: '補填商店', amount: 125, cardId })
+    expect((await d.importedNotifications.toArray())[0]).toMatchObject({ status: 'imported', body: null })
   })
 })
