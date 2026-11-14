@@ -43,6 +43,8 @@ export interface PlanRow {
   categoryId: string
   /** Pre-selected for import: new rows yes, rows to check no (D-83). */
   include: boolean
+  /** LINE chat only: remember this message as intentionally ignored after the user saves. */
+  permanentSkip?: boolean
   /** D-130: the 行動支付 the notice is about ("LINE Pay"); null for card notices. */
   channel: string | null
   /** D-130: where the money came from; its binding by default, changeable per row. null = not chosen yet. */

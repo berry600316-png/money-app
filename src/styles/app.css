@@ -653,6 +653,26 @@ button.srow:disabled:active { background: transparent; }
 .chip-btn:active { background: var(--bar); }
 .grp-title { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 4px 8px; font-size: 0.8125rem; color: var(--ink-2); letter-spacing: 0.02em; }
 .grp-title b { color: var(--ink); font-weight: 600; font-size: 0.9375rem; letter-spacing: 0; }
+
+/* LINE conversation import: compact editable entries, one month at a time. */
+.line-chat-summary { margin: 16px 4px 0; color: var(--ink-2); font-size: 0.8125rem; line-height: 1.55; }
+.line-chat-group { padding: 0 16px; }
+.line-chat-row { padding: 16px 0; }
+.line-chat-row + .line-chat-row, .line-chat-unparsed + .line-chat-unparsed { border-top: 1px solid var(--line); }
+.line-chat-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.line-chat-row-head label { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 0.875rem; font-weight: 600; }
+.line-chat-row-head input { width: 18px; height: 18px; accent-color: var(--brand); }
+.line-chat-row-head .txt-btn { color: var(--ink-2); font-size: 0.75rem; }
+.line-chat-row-head .txt-btn[aria-pressed='true'] { color: var(--danger); }
+.line-chat-reason { margin: 7px 0 0; color: var(--ink-2); font-size: 0.75rem; line-height: 1.5; }
+.line-chat-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr); gap: 10px; margin-top: 12px; }
+.line-chat-fields label { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); font-size: 0.75rem; }
+.line-chat-fields label:nth-child(n+3) { grid-column: 1 / -1; }
+.line-chat-fields input, .line-chat-fields select { width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 0.875rem; }
+.line-chat-unparsed { padding: 14px 0; color: var(--ink-2); font-size: 0.75rem; overflow-wrap: anywhere; }
+.line-chat-unparsed p { margin: 5px 0; }
+.line-chat-unparsed small { white-space: pre-wrap; }
+.line-chat-reset { display: block; margin: 14px auto 24px; }
 .rrow { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 10px 16px; border: 0; background: transparent; text-align: left; }
 .rrow:active { background: var(--row-press); }
 .rrow + .rrow::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--line); }

@@ -25,7 +25,7 @@ const sameSource = (a: PaySource | null, b: PaySource | null) => !!a && !!b && (
  * No type matched, or types for different places matched: the user picks. The notice types are set up from
  * here (Q117).
  */
-export function CardImportPage({ onBack, backLabel, onNoticeTypes }: { onBack: () => void; backLabel: string; onNoticeTypes: () => void }) {
+export function CardImportPage({ onBack, backLabel, onNoticeTypes, onLineChat }: { onBack: () => void; backLabel: string; onNoticeTypes: () => void; onLineChat: () => void }) {
   const ref = useRefData()
   const toast = useToast()
   const input = useRef<HTMLInputElement | null>(null)
@@ -273,6 +273,11 @@ export function CardImportPage({ onBack, backLabel, onNoticeTypes }: { onBack: (
             <Icon name="inbox" />
             {busy ? '讀取中…' : '選擇通知檔案'}
             <small>只在這支 iPhone 上解析，不會上傳；一次最多 {MAX_CAPTURES} 則</small>
+          </button>
+          <button type="button" className="pick-btn" onClick={onLineChat} disabled={busy}>
+            <Icon name="inbox" />
+            匯入 LINE 對話
+            <small>從 LINE 錢包匯出的 .txt 找出尚未記帳的付款</small>
           </button>
           {typesRow}
           <p className="set-foot">依「通知類型」的關鍵字判斷每則付款通知要記到哪張卡；沒有符合的，匯入前會請你選。</p>

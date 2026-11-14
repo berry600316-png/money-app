@@ -84,7 +84,7 @@ export const LINE_PAY_ADAPTER: NotificationAdapter = {
       kind: 'spend',
       title: /^LINE\s*錢包$/i,
       pattern:
-        /^LINE\s*Pay\s*付款\s*NT\$\s*(?<amount>\d{1,3}(?:,\d{3})+|\d+)\s*付款完成\s*[。.]?\s*商店名稱\s*:\s*(?<merchant>(?:(?!NT\$|取消|退款|退貨|退刷|失敗|未成功|不成功|撤銷)[^:\n])+?)\s*(?::\s*)?(?:回饋\s*:(?![\s\S]*付款\s*NT\$)[\s\S]*)?$/,
+        /^LINE\s*Pay\s*付款\s*NT\$\s*(?<amount>\d{1,3}(?:,\d{3})+|\d+)\s*付款完成\s*[。.]?\s*商店名稱\s*:\s*(?<merchant>(?:(?!NT\$|取消|退款|退貨|退刷|失敗|未成功|不成功|撤銷)[^:\n])+?)\s*(?::\s*)?(?:(?:回饋|使用點數)\s*:(?![\s\S]*付款\s*NT\$)[\s\S]*)?$/,
     },
     {
       // D-142: Japanese. Cancel / refund / failure words or a second payment sentence anywhere in the notice

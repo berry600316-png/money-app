@@ -97,6 +97,8 @@ describe('B. LINE Pay wording (D-128)', () => {
   })
   it('the user sample shape matches its adapter template directly', () => {
     expect(matchTemplate(line(typed('661', '好鄰居超市永和店')), LINE_PAY_ADAPTER)).toMatchObject({ kind: 'spend', amount: 661, merchant: '好鄰居超市永和店' })
+    expect(matchTemplate(line('LINE Pay 付款 NT$ 125\n付款完成。\n商店名稱: 測試商店\n使用點數: 235 點'), LINE_PAY_ADAPTER))
+      .toMatchObject({ kind: 'spend', amount: 125, merchant: '測試商店' })
   })
 })
 

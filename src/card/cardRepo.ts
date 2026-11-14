@@ -30,6 +30,19 @@ export const STATEMENT_SOURCE = 'statement'
 /** D-84: { sourceApp: cardId }, the card chosen last time for notifications of that app without card digits. */
 export const DEFAULT_CARDS_SETTING = 'notificationDefaultCards'
 
+/** A deleted LINE-imported expense is eligible again; permanent skips remain hidden. */
+export async function knownLineChatCaptures(d: MoneyDB = db): Promise<Map<string, string | undefined>> {
+  const known = new Map<string, string | undefined>()
+  const notices = (await d.importedNotifications.toArray()).filter((n) => n.sourceType === 'line_chat')
+  const transactionIds = [...new Set(notices.filter((n) => n.status === 'imported' && n.transactionId).map((n) => n.transactionId!))]
+  const existing = new Set((await d.transactions.bulkGet(transactionIds)).filter((tx) => tx !== undefined).map((tx) => tx.id))
+  for (const n of notices) {
+    if (n.status === 'imported' && n.transactionId && !existing.has(n.transactionId)) continue
+    known.set(n.captureId, n.fingerprint)
+  }
+  return known
+}
+
 export async function getDefaultCards(d: MoneyDB = db): Promise<Record<string, string>> {
   return stringMap(d, DEFAULT_CARDS_SETTING)
 }
@@ -128,7 +141,7 @@ export async function commitNotificationImport(
   const stamp = now.toISOString()
   const batchId = newId()
   return d.transaction('rw', [d.transactions, d.importedNotifications, d.importBatches, d.categories, d.paymentMethods, d.settings], async () => {
-    const known = new Set((await d.importedNotifications.toArray()).map((n) => n.captureId))
+    const known = new Map((await d.importedNotifications.toArray()).map((n) => [n.captureId, n]))
     const summary: ImportSummary = { imported: 0, duplicates: 0, skipped: 0, failed: 0, batchId }
     const seenInBatch = new Set<string>()
     /** The 行動支付 method per channel name, found or created once per import. */
@@ -152,6 +165,11 @@ export async function commitNotificationImport(
     }
     for (const row of rows) {
       const c = row.capture
+      const prior = known.get(c.captureId)
+      if (prior?.sourceType === 'line_chat' && prior.status === 'imported' && prior.transactionId && !(await d.transactions.get(prior.transactionId))) {
+        await d.importedNotifications.delete(prior.id)
+        known.delete(c.captureId)
+      }
       if (known.has(c.captureId) || seenInBatch.has(c.captureId)) {
         summary.duplicates++
         continue
@@ -207,15 +225,18 @@ export async function commitNotificationImport(
         summary.duplicates++
       } else if (row.status === 'unparsed') {
         summary.failed++
+      } else if ((row.status === 'new' || row.status === 'suspect') && c.sourceType === 'line_chat' && row.permanentSkip) {
+        status = 'skipped'
+        summary.skipped++
       } else if (row.status === 'new' || row.status === 'suspect') {
-        // Unticked by the user: not remembered, so the same file can still be imported later.
+        // Ordinary unticked rows remain eligible on the next import.
         summary.skipped++
         continue
       } else {
         summary.skipped++
       }
       // D-131: the text of a notice that did not become a record (a chat, an offer…) is not kept.
-      const keepText = status === 'imported'
+      const keepText = status === 'imported' && c.sourceType !== 'line_chat'
       await d.importedNotifications.add({
         id: newId(),
         captureId: c.captureId,
@@ -229,7 +250,7 @@ export async function commitNotificationImport(
         notificationTime: c.notificationTime,
         capturedAt: c.capturedAt,
         status,
-        parsed: row.status === 'new' || row.status === 'suspect' ? { amount: row.amount, merchant: row.merchant, occurredAt: row.occurredAt, cardLast4: row.cardLast4 } : null,
+        parsed: status === 'imported' ? { amount: row.amount, merchant: row.merchant, occurredAt: row.occurredAt, cardLast4: row.cardLast4 } : null,
         transactionId,
         batchId,
         importedAt: stamp,

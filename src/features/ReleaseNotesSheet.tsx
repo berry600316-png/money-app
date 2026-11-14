@@ -3,16 +3,16 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.2',
-  previousVersion: '1.9.1',
+  version: '1.9.3',
+  previousVersion: '1.9.2',
   changes: [
     {
-      title: '找記帳紀錄更方便',
-      detail: '核對帳單時，可搜尋同月份的全部記帳；需要時也能搜尋前後各一個月。',
+      title: '從 LINE 對話找回付款紀錄',
+      detail: '匯入 LINE 錢包的聊天文字檔，就能按月份檢查最近 120 天的 LINE Pay 付款。下次重新匯出整段對話，也只會提出還沒處理的付款。',
     },
     {
-      title: '更多紀錄可以手動配對',
-      detail: '即使付款方式、收支類型或金額不同，也能自行確認配對。原本的記帳不會被更改，點「查看核對依據」可查看差異。',
+      title: '匯入前可以逐筆確認',
+      detail: '可修改商家、金額、時間和付款來源；可能重複的紀錄會先提醒你。原本使用捷徑匯入通知的方式仍可使用。',
     },
   ],
 } as const
