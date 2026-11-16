@@ -3,20 +3,20 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.3',
-  previousVersion: '1.9.2',
+  version: '1.9.4',
+  previousVersion: '1.9.3',
   changes: [
     {
-      title: '從 LINE 對話找回付款紀錄',
-      detail: '匯入 LINE 錢包的聊天文字檔，就能按月份檢查最近 120 天的 LINE Pay 付款。下次重新匯出整段對話，也只會提出還沒處理的付款。',
+      title: 'LINE 對話匯入改用基準點',
+      detail: '第一次上傳可設定起點，舊訊息不會再次加入記帳。之後重新匯出整段對話時，只檢查起點之後的新付款；需要時也能手動重設起點。',
     },
     {
-      title: '匯入前可以逐筆確認',
-      detail: '可修改商家、金額、時間和付款來源；可能重複的紀錄會先提醒你。原本使用捷徑匯入通知的方式仍可使用。',
+      title: '對帳以你的記帳為主',
+      detail: '帳單逐筆分成需要處理、已對上與不需記帳。頁面分別顯示記帳和帳單的核對進度，方便找到漏記或尚未對上的項目。',
     },
     {
-      title: '對話匯入更容易檢查',
-      detail: '每個月份分開顯示待處理問題、將匯入和不匯入的紀錄；可能重複與未辨識的付款可逐筆決定。',
+      title: '帳單明細可逐筆修正',
+      detail: '匯入後若發現帳單項目的名稱、金額或日期有誤，可直接修正並重新核對；原本的記帳不會被自動更改。',
     },
   ],
 } as const

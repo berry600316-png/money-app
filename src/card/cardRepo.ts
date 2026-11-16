@@ -22,7 +22,7 @@ import {
 } from './noticeTypes'
 import type { DraftEntry } from './statementParser'
 import { debitCandidate, debitRelevant } from './debitReconcile'
-import { reconcile } from './reconcile'
+import { reconcileLedger } from './ledgerReconcile'
 import { txDate } from './reconcileCommon'
 import { LINE_CHAT_BASELINE_SETTING, validLineChatBaseline, type LineChatBaseline } from './lineChatBaseline'
 
@@ -418,9 +418,54 @@ export async function updateStatement(
   })
 }
 
+/** Correct a parsed line after import; the old decision for that line must be reconsidered. */
+export async function updateStatementEntry(statementId: string, entryId: string, patch: Pick<StatementEntry, 'merchant' | 'amount' | 'txDate' | 'postDate' | 'kind'>, d: MoneyDB = db, now = new Date()): Promise<void> {
+  if (!patch.merchant.trim() || patch.merchant.length > 60) throw new MoneyError('請輸入正確的帳單項目名稱')
+  if (!Number.isSafeInteger(patch.amount) || patch.amount === 0 || Math.abs(patch.amount) > 99_999_999) throw new MoneyError('帳單金額不正確')
+  if ((!patch.txDate && !patch.postDate) || (patch.txDate !== null && !isYmd(patch.txDate)) || (patch.postDate !== null && !isYmd(patch.postDate))) throw new MoneyError('帳單日期不正確')
+  const kinds = ['purchase', 'refund', 'fee', 'installment', 'payment', 'adjustment', 'other', 'withdrawal', 'deposit', 'transfer_out']
+  if (!kinds.includes(patch.kind)) throw new MoneyError('帳單項目類型不正確')
+  await d.transaction('rw', [d.cardStatements, d.statementEntries, d.reconciliations], async () => {
+    const [statement, entry] = await Promise.all([d.cardStatements.get(statementId), d.statementEntries.get(entryId)])
+    if (!statement || !entry || entry.statementId !== statementId) throw new MoneyError('找不到這筆帳單明細')
+    if (entry.merchant === patch.merchant.trim() && entry.amount === patch.amount && entry.txDate === patch.txDate
+      && entry.postDate === patch.postDate && entry.kind === patch.kind) return
+    const decisions = await d.reconciliations.where('entryId').equals(entryId).toArray()
+    await d.reconciliations.bulkDelete(decisions.map((r) => r.id))
+    await d.statementEntries.put({ ...entry, ...patch, merchant: patch.merchant.trim() })
+    await d.cardStatements.put({ ...statement, updatedAt: now.toISOString() })
+  })
+}
+
+export async function completeStatementReview(statementId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
+  const st = await d.cardStatements.get(statementId)
+  if (!st || st.parseStatus === 'needs_reimport') throw new MoneyError('請重新匯入這份帳單')
+  const preview = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
+    transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+  await saveAutoPairs(statementId, preview.autoPairs, d, now)
+  await d.transaction('rw', [d.cardStatements, d.statementEntries, d.transactions, d.reconciliations], async () => {
+    const current = await d.cardStatements.get(statementId)
+    if (!current) throw new MoneyError('找不到這份帳單')
+    const result = reconcileLedger({ statement: current, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
+      transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+    if (result.progress.bookDone !== result.progress.bookTotal || result.progress.statementDone !== result.progress.statementTotal
+      || result.items.some((item) => item.kind === 'broken' || item.kind === 'broken_explanation')) throw new MoneyError('還有未處理項目，請先逐筆核對')
+    await d.cardStatements.put({ ...current, parseStatus: 'confirmed', reviewCompleted: { at: now.toISOString(), ...result.progress }, updatedAt: now.toISOString() })
+  })
+}
+
+export async function reopenStatementReview(statementId: string, d: MoneyDB = db): Promise<void> {
+  await d.transaction('rw', d.cardStatements, async () => {
+    const current = await d.cardStatements.get(statementId)
+    if (!current) throw new MoneyError('找不到這份帳單')
+    const { reviewCompleted: _previous, ...rest } = current
+    await d.cardStatements.put({ ...rest, updatedAt: new Date().toISOString() })
+  })
+}
+
 /* ---------------- reconciliation decisions (Phase 3) ---------------- */
 
-const snapshotOf = (t: Transaction) => ({ type: t.type, amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t),
+const snapshotOf = (t: Transaction) => ({ type: t.type, amount: t.amount, date: txDate(t), paymentMethodId: chargedTo(t), merchant: t.merchant,
   sourceAccountId: t.sourceAccountId, cardId: t.cardId, toAccountId: t.toAccountId })
 
 async function assertFree(entryId: string, txId: string, d: MoneyDB, ignoreReconId?: string) {
@@ -442,9 +487,9 @@ export async function saveAutoPairs(statementId: string, pairs: readonly { entry
   if (!pairs.length) return 0
   return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
     const st = await d.cardStatements.get(statementId)
-    if (!st || st.parseStatus !== 'confirmed') return 0
+    if (!st || st.parseStatus === 'needs_reimport' || st.reviewCompleted) return 0
     // The view may have computed candidates before a record was edited. Recheck every rule atomically.
-    const fresh = reconcile({ statement: st, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
+    const fresh = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
       transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
     const allowed = new Set(fresh.autoPairs.map((p) => `${p.entryId}\u0000${p.transactionId}`))
     let saved = 0
@@ -551,9 +596,9 @@ export async function recordFromEntry(statementId: string, entryId: string, cate
     const st = await d.cardStatements.get(statementId)
     if (!entry || !st || entry.statementId !== statementId) throw new MoneyError('找不到這筆帳單明細')
     const debit = st.statementType === 'debit_card'
-    const income = debit && (entry.kind === 'refund' || entry.kind === 'deposit')
+    const income = entry.kind === 'refund' || (debit && entry.kind === 'deposit')
     if (debit && entry.kind === 'withdrawal') throw new MoneyError('提款請用人工確認處理')
-    if (!isValidAmount(debit ? Math.abs(entry.amount) : entry.amount)) throw new MoneyError('帳單金額不能用於記帳')
+    if ((!debit && !['purchase', 'refund', 'fee', 'installment'].includes(entry.kind)) || !isValidAmount(Math.abs(entry.amount))) throw new MoneyError('帳單金額不能用於記帳')
     const cat = await d.categories.get(categoryId)
     if (!cat || cat.type !== (income ? 'income' : 'expense')) throw new MoneyError(income ? '請選擇收入分類' : '請選擇支出分類')
     if (!(await d.paymentMethods.get(st.paymentMethodId))) throw new MoneyError('這張卡已不存在')
@@ -639,6 +684,23 @@ export async function explain(statementId: string, side: { entryId: string } | {
   })
 }
 
+/** The user confirms a book record without finding it on this statement. */
+export async function confirmBookOnly(statementId: string, transactionId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
+  await d.transaction('rw', [d.cardStatements, d.transactions, d.reconciliations], async () => {
+    const [statement, tx] = await Promise.all([d.cardStatements.get(statementId), d.transactions.get(transactionId)])
+    if (!statement || !tx || txDate(tx).slice(0, 7) !== statement.statementMonth
+      || (statement.statementType === 'debit_card'
+        ? !debitRelevant(tx, statement.paymentMethodId, statement.accountId ?? '')
+        : !((tx.type === 'expense' && chargedTo(tx) === statement.paymentMethodId)
+          || (tx.type === 'income' && tx.paymentMethodId === statement.paymentMethodId)))) throw new MoneyError('這筆記帳不屬於本月帳單')
+    const existing = await d.reconciliations.where('transactionId').equals(transactionId).toArray()
+    if (existing.some((r) => r.status === 'matched')) throw new MoneyError('這筆記帳已與帳單配對')
+    if (existing.some((r) => r.status === 'explained' && r.statementId !== statementId)) throw new MoneyError('這筆記帳已在另一份帳單確認')
+    await d.reconciliations.bulkDelete(existing.filter((r) => r.statementId === statementId).map((r) => r.id))
+    await d.reconciliations.add({ id: newId(), statementId, entryId: null, transactionId, status: 'explained', method: 'manual', snapshot: snapshotOf(tx), note: '', createdAt: now.toISOString() })
+  })
+}
+
 /** An edited manually confirmed record needs an explicit new decision before its mark returns. */
 export async function reconfirmExplanation(reconId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
   await d.transaction('rw', [d.reconciliations, d.transactions, d.cardStatements], async () => {
@@ -647,8 +709,11 @@ export async function reconfirmExplanation(reconId: string, d: MoneyDB = db, now
     const tx = await d.transactions.get(decision.transactionId)
     if (!tx) throw new MoneyError('這筆記帳已被刪除')
     const statement = await d.cardStatements.get(decision.statementId)
-    if (!statement || statement.statementType !== 'debit_card' || !debitRelevant(tx, statement.paymentMethodId, statement.accountId ?? '')) throw new MoneyError('這筆記帳已不屬於原帳單，請取消確認')
-    if (statement.periodStart && statement.periodEnd && (txDate(tx) < statement.periodStart || txDate(tx) > statement.periodEnd)) throw new MoneyError('這筆記帳已不在原帳單期間，請取消確認')
+    if (!statement || txDate(tx).slice(0, 7) !== statement.statementMonth
+      || (statement.statementType === 'debit_card'
+        ? !debitRelevant(tx, statement.paymentMethodId, statement.accountId ?? '')
+        : !((tx.type === 'expense' && chargedTo(tx) === statement.paymentMethodId)
+          || (tx.type === 'income' && tx.paymentMethodId === statement.paymentMethodId)))) throw new MoneyError('這筆記帳已不屬於原帳單，請取消確認')
     await d.reconciliations.put({ ...decision, snapshot: snapshotOf(tx), createdAt: now.toISOString() })
   })
 }

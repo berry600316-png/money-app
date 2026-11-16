@@ -615,6 +615,9 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
     if (s.accountId !== undefined && (!isStr(s.accountId) || !payIds.has(s.accountId))) fail(`第 ${n} 份帳單的銀行帳戶不存在`)
     if (s.statementType === 'debit_card' && !s.accountId) fail(`第 ${n} 份帳單缺少銀行帳戶`)
     if (s.pendingCount !== undefined && (typeof s.pendingCount !== 'number' || !Number.isSafeInteger(s.pendingCount) || s.pendingCount < 0)) fail(`第 ${n} 份帳單的待扣筆數不正確`)
+    const completed = s.reviewCompleted
+    if (completed !== undefined && (!isObj(completed) || !isIso(completed.at)
+      || ['bookDone', 'bookTotal', 'statementDone', 'statementTotal'].some((k) => !Number.isSafeInteger(completed[k]) || (completed[k] as number) < 0))) fail(`第 ${n} 份帳單的完成紀錄不正確`)
     if (!isIso(s.createdAt) || !isIso(s.updatedAt)) fail(`第 ${n} 份帳單的時間不正確`)
     return {
       id: s.id,
@@ -630,6 +633,7 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
       fileHash: s.fileHash,
       fileName: s.fileName,
       parseStatus: (raw.schemaVersion as number) < 12 ? 'needs_reimport' : s.parseStatus,
+      ...(s.reviewCompleted ? { reviewCompleted: s.reviewCompleted as CardStatement['reviewCompleted'] } : {}),
       adapter: s.adapter,
       batchId: s.batchId,
       createdAt: s.createdAt,
@@ -689,9 +693,11 @@ function parseCardData(raw: Record<string, unknown>, txIds: Set<string>, payIds:
       const s = r.snapshot
       if (!isObj(s) || typeof s.amount !== 'number' || !isYmdStr(s.date) || !isStr(s.paymentMethodId)) fail(`第 ${n} 筆核對紀錄不正確`)
       if (s.type !== undefined && !['expense', 'income', 'transfer'].includes(String(s.type))) fail(`第 ${n} 筆核對紀錄不正確`)
+      if (s.merchant !== undefined && !isStr(s.merchant)) fail(`第 ${n} 筆核對紀錄不正確`)
       for (const key of ['sourceAccountId', 'cardId', 'toAccountId'] as const) if (s[key] !== undefined && !isStr(s[key])) fail(`第 ${n} 筆核對紀錄不正確`)
       snapshot = { amount: s.amount, date: s.date, paymentMethodId: s.paymentMethodId,
         ...(s.type !== undefined ? { type: s.type as Transaction['type'] } : {}),
+        ...(s.merchant !== undefined && isStr(s.merchant) ? { merchant: s.merchant } : {}),
         ...('sourceAccountId' in s ? { sourceAccountId: s.sourceAccountId as string } : {}),
         ...('cardId' in s ? { cardId: s.cardId as string } : {}),
         ...('toAccountId' in s ? { toAccountId: s.toAccountId as string } : {}),

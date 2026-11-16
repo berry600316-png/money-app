@@ -50,7 +50,6 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
   const [parsed, setParsed] = useState<ParsedStatement | null>(null)
   const [entries, setEntries] = useState<DraftEntry[]>([])
   const [meta, setMeta] = useState({ paymentMethodId: '', accountId: '', bank: '', statementMonth: currentMonthKey(), periodStart: '', periodEnd: '', dueDate: '' })
-  const [confirmed, setConfirmed] = useState(false)
   const [editing, setEditing] = useState<{ index: number | null; entry: DraftEntry } | null>(null)
   const [replace, setReplace] = useState<CardStatement | null>(null)
   const [showRaw, setShowRaw] = useState(false)
@@ -84,8 +83,6 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           periodEnd: end,
           dueDate: p.dueDate ?? '',
         })
-        // D-87: never pre-confirmed; matching totals is a hint, the user still compares with the PDF.
-        setConfirmed(false)
         setStage({ kind: 'review' })
       } catch (e) {
         if (e instanceof PdfPasswordError) setStage({ kind: 'password', data, name, hash, wrong: e.wrong })
@@ -157,7 +154,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
           fileHash: file.hash,
           fileName: file.name,
           adapter: parsed?.adapter ?? 'generic',
-          confirmed,
+          confirmed: false,
           entries,
         },
         { replaceId },
@@ -319,14 +316,7 @@ export function StatementImportPage({ onBack, backLabel, onSaved }: { onBack: ()
             </button>
           </div>
 
-          <label className="check-row" htmlFor="st-ok">
-            <input id="st-ok" type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
-            <span>
-              我已對照 PDF，明細正確完整
-              {parsed.totalsMatch === true && <span className="s-sub">{isDebitStatement ? '金融卡消費與退款加總符合帳單' : '明細加總與帳單「本期新增」相符'}，仍請對照逐筆內容</span>}
-            </span>
-          </label>
-          <p className="set-foot">沒勾選也可以先匯入，帳單會標示「解析待確認」，核對結果不會顯示為全部完成。</p>
+          <p className="set-foot">匯入後會先比對記帳；完成整期核對前，再確認帳單明細正確完整。</p>
 
           <div className="foot-bar">
             <button type="button" className="btn-primary" onClick={() => void save()} disabled={busy || !entries.length || !meta.paymentMethodId}>

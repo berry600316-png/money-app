@@ -13,6 +13,10 @@ import {
   getDefaultCards,
   deleteStatement,
   matchManually,
+  confirmBookOnly,
+  completeStatementReview,
+  reopenStatementReview,
+  updateStatementEntry,
   reconfirmPair,
   recordFromEntry,
   saveAutoPairs,
@@ -23,6 +27,7 @@ import {
 import { capture, SIM_NOTIFICATION_ADAPTER, SIM_NOTIFICATIONS, SIM_STATEMENT_LINES } from './fixtures'
 import { planImport } from './importPlan'
 import { reconcile } from './reconcile'
+import { reconcileLedger } from './ledgerReconcile'
 import { parseStatementLines } from './statementParser'
 
 let d: MoneyDB
@@ -115,6 +120,44 @@ describe('statements (Phase 2)', () => {
 })
 
 describe('reconciliation decisions (Phase 3)', () => {
+  it('lets a book record be confirmed without a reason, and replaces that mark with a later statement pair', async () => {
+    const st = await saveStatement({ ...statementInput(), entries: [statementInput().entries[0]] }, {}, d, now)
+    const book = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 85, merchant: '全家', date: '2026-10-05', note: '' }, d, now)
+    await confirmBookOnly(st.id, book.id, d, now)
+    expect((await d.reconciliations.toArray())[0]).toMatchObject({ status: 'explained', note: '', transactionId: book.id })
+    const entry = (await d.statementEntries.toArray())[0]
+    await matchManually(st.id, entry.id, book.id, '', d, now)
+    expect((await d.reconciliations.toArray())).toHaveLength(1)
+    expect((await d.reconciliations.toArray())[0].status).toBe('matched')
+  })
+
+  it('corrects one imported statement line without changing the book, and removes its old pair', async () => {
+    const input = statementInput()
+    const st = await saveStatement({ ...input, entries: [input.entries[0]] }, {}, d, now)
+    const entry = (await d.statementEntries.toArray())[0]
+    const book = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 85, merchant: '全家', date: '2026-10-05', note: '' }, d, now)
+    await matchManually(st.id, entry.id, book.id, '', d, now)
+    await updateStatementEntry(st.id, entry.id, { merchant: '已修正', amount: 90, txDate: '2026-10-05', postDate: null, kind: 'purchase' }, d, now)
+    expect(await d.reconciliations.count()).toBe(0)
+    expect((await d.transactions.get(book.id))!.amount).toBe(85)
+    expect((await d.statementEntries.get(entry.id))!.amount).toBe(90)
+  })
+
+  it('persists a completed dual-progress snapshot until the user reopens the month', async () => {
+    const input = statementInput()
+    const st = await saveStatement({ ...input, entries: [input.entries[0]] }, {}, d, now)
+    const entry = (await d.statementEntries.toArray())[0]
+    const book = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 85, merchant: '全家', date: '2026-10-05', note: '' }, d, now)
+    await matchManually(st.id, entry.id, book.id, '', d, now)
+    await completeStatementReview(st.id, d, now)
+    expect((await d.cardStatements.get(st.id))?.reviewCompleted).toMatchObject({ bookDone: 1, bookTotal: 1, statementDone: 1, statementTotal: 1 })
+    const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(backup.cardStatements[0].reviewCompleted?.statementDone).toBe(1)
+    expect(await saveAutoPairs(st.id, [{ entryId: entry.id, transactionId: book.id }], d, now)).toBe(0)
+    await reopenStatementReview(st.id, d)
+    expect((await d.cardStatements.get(st.id))?.reviewCompleted).toBeUndefined()
+  })
+
   async function setup() {
     const st = await saveStatement({ ...statementInput(), confirmed: true }, {}, d, now)
     const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
@@ -133,12 +176,13 @@ describe('reconciliation decisions (Phase 3)', () => {
     })
 
   it('auto pairs are saved and then show as matched', async () => {
-    const { st, fam } = await setup()
-    const r = await run(st.id)
+    const { st } = await setup()
+    const netflix = await addTransaction({ type: 'expense', categoryId: 'fun', paymentMethodId: cardId, amount: 390, merchant: 'NETFLIX.COM', date: '2026-10-01', note: '' }, d, now)
+    const r = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: [] })
     expect(await saveAutoPairs(st.id, r.autoPairs, d, now)).toBe(1)
-    const r2 = await run(st.id)
+    const r2 = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
     expect(r2.autoPairs).toEqual([])
-    expect(r2.items.find((i) => i.kind === 'matched' && i.tx.id === fam.id)).toBeTruthy()
+    expect(r2.items.find((i) => i.kind === 'matched' && i.tx.id === netflix.id)).toBeTruthy()
   })
   it('back-fill a bank-only entry: one step creates the expense AND the pair (§8.1)', async () => {
     const { st, entries } = await setup()

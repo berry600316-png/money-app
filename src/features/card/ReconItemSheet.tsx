@@ -1,9 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { suggestCategory } from '../../card/categorize'
-import { applyStatementAmount, deferToNext, explain, matchManually, reconfirmExplanation, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision } from '../../card/cardRepo'
+import { confirmBookOnly, deferToNext, explain, matchManually, reconfirmExplanation, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision, updateStatementEntry } from '../../card/cardRepo'
 import { txDate, type Item } from '../../card/reconcile'
 import { dayDiff } from '../../card/text'
-import { debitCandidate } from '../../card/debitReconcile'
 import { searchReconTransactions } from '../../card/reconSearch'
 import { MoneyError } from '../../db/repo'
 import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../../db/types'
@@ -13,7 +12,7 @@ import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 import { KIND_LABELS } from './StatementImportPage'
 
-type View = 'main' | 'record' | 'record-transfer' | 'find-tx' | 'find-entry' | 'explain'
+type View = 'main' | 'record' | 'record-transfer' | 'find-tx' | 'find-entry' | 'explain' | 'edit-entry'
 
 const md = (ymd: string | null) => (ymd ? `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8))}` : '—')
 const entryDate = (e: StatementEntry) => e.txDate ?? e.postDate ?? ''
@@ -47,6 +46,7 @@ export function ReconItemSheet({
   const [adjacentMonths, setAdjacentMonths] = useState(false)
   const [visibleCount, setVisibleCount] = useState(40)
   const [showEvidence, setShowEvidence] = useState(false)
+  const [entryDraft, setEntryDraft] = useState<Pick<StatementEntry, 'merchant' | 'amount' | 'txDate' | 'postDate' | 'kind'> | null>(null)
   const [shown, setShown] = useState<Item | null>(null)
   const [last, setLast] = useState<Item | null>(null)
   if (item !== last) {
@@ -61,6 +61,7 @@ export function ReconItemSheet({
       setVisibleCount(40)
       setShowEvidence(false)
       if ('entry' in item) {
+        setEntryDraft({ merchant: item.entry.merchant, amount: item.entry.amount, txDate: item.entry.txDate, postDate: item.entry.postDate, kind: item.entry.kind })
         const history = transactions.filter((t) => t.merchant).map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
         setCategoryId(item.entry.kind === 'refund' || item.entry.kind === 'deposit'
           ? ref.categories.find((c) => c.type === 'income' && c.isActive)?.id ?? ''
@@ -91,9 +92,8 @@ export function ReconItemSheet({
     searchReconTransactions(transactions, { statementMonth: statement.statementMonth, entry: e, query: search, adjacentMonths })
   const candidatesForTx = (t: Transaction) =>
     entries
-      .filter((e) => e.kind !== 'payment' && !pairedEntry.has(e.id) && (statement.statementType !== 'debit_card' || debitCandidate(e, t, statement.paymentMethodId, statement.accountId ?? '')))
+      .filter((e) => !pairedEntry.has(e.id))
       .sort((a, b) => Math.abs(a.amount - t.amount) - Math.abs(b.amount - t.amount) || Math.abs(dayDiff(entryDate(a), txDate(t))) - Math.abs(dayDiff(entryDate(b), txDate(t))))
-      .slice(0, 30)
 
   const entry = it && 'entry' in it ? it.entry : null
   const tx = it && 'tx' in it ? it.tx : null
@@ -133,7 +133,23 @@ export function ReconItemSheet({
     run(() => matchManually(statement.id, e.id, t.id), '已配對')
 
   let body: ReactNode = null
-  if (it && view === 'record' && entry) {
+  if (it && view === 'edit-entry' && entry && entryDraft) {
+    const setDraft = (key: keyof typeof entryDraft, value: string | number | null) => setEntryDraft((old) => old && { ...old, [key]: value })
+    body = <>
+      <p className="sheet-msg">修正這一條帳單明細後，原配對會撤銷並重新檢查；你的記帳不變。</p>
+      <div className="meta-grid">
+        <label className="full">項目名稱<input value={entryDraft.merchant} maxLength={60} onChange={(e) => setDraft('merchant', e.target.value)} /></label>
+        <label>金額<input type="number" step="1" value={entryDraft.amount} onChange={(e) => setDraft('amount', Number(e.target.value))} /></label>
+        <label>類型<select value={entryDraft.kind} onChange={(e) => setDraft('kind', e.target.value as StatementEntry['kind'])}>
+          {Object.entries(KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </select></label>
+        <label>交易日期<input type="date" value={entryDraft.txDate ?? ''} onChange={(e) => setDraft('txDate', e.target.value || null)} /></label>
+        <label>入帳日期<input type="date" value={entryDraft.postDate ?? ''} onChange={(e) => setDraft('postDate', e.target.value || null)} /></label>
+      </div>
+      <button type="button" className="btn-primary" disabled={busy} onClick={() => run(() => updateStatementEntry(statement.id, entry.id, entryDraft), '帳單明細已修正，請重新核對')}>儲存修正</button>
+      <button type="button" className="btn-quiet" onClick={() => setView('main')}>返回</button>
+    </>
+  } else if (it && view === 'record' && entry) {
     body = (
       <>
         <p className="sheet-msg">依銀行明細補記這筆{entry.kind === 'refund' || entry.kind === 'deposit' ? '收入' : '支出'}，並完成核對。</p>
@@ -256,7 +272,7 @@ export function ReconItemSheet({
             <button type="button" className="btn-quiet" onClick={() => onEditTx(it.tx.id)}>
               編輯原記帳資料
             </button>
-            <button type="button" className="btn-quiet" onClick={() => setView('explain')}>人工確認並說明</button>
+            <button type="button" className="btn-primary" onClick={() => run(() => confirmBookOnly(statement.id, it.tx.id), '已人工確認')}>這筆是真的，打勾</button>
           </>
         )
         break
@@ -282,9 +298,6 @@ export function ReconItemSheet({
             <p className="sheet-msg">
               差額 NT${fmt(Math.abs(it.diff))}。可能有手續費、小費或記錯金額；不會自動改你的記帳。
             </p>
-            <button type="button" className="btn-primary" onClick={() => run(() => applyStatementAmount(statement.id, it.entry.id, it.tx.id), '已改成帳單金額並核對')}>
-              把記帳改成 {fmt(it.entry.amount)}
-            </button>
             <button type="button" className="btn-secondary" onClick={() => void pairWith(it.entry, it.tx)}>
               就是這筆，金額差異已了解
             </button>
@@ -314,7 +327,8 @@ export function ReconItemSheet({
           <>
             {hero}
             <p className="sheet-msg">這是「{KIND_LABELS[it.entry.kind]}」類的交易，不會自動核對。</p>
-            {it.entry.amount > 0 && (
+            {it.entry.kind === 'refund' && <button type="button" className="btn-primary" onClick={() => setView('record')}>補記為收入</button>}
+            {it.entry.amount > 0 && ['fee', 'installment'].includes(it.entry.kind) && (
               <button type="button" className="btn-primary" onClick={() => setView('record')}>
                 補記為支出
               </button>
@@ -322,8 +336,8 @@ export function ReconItemSheet({
             <button type="button" className="btn-secondary" onClick={() => setView('find-tx')}>
               和既有記帳配對
             </button>
-            <button type="button" className="btn-quiet" onClick={() => run(() => explain(statement.id, { entryId: it.entry.id }, KIND_LABELS[it.entry.kind]), '已標為已說明')}>
-              標為已說明
+            <button type="button" className="btn-quiet" onClick={() => setView('explain')}>
+              不需記帳，填寫原因
             </button>
           </>
         )
@@ -364,15 +378,13 @@ export function ReconItemSheet({
               帳單證據：{it.entry.evidence === 'both' ? '金融卡消費與銀行流水' : it.entry.evidence === 'card' ? '金融卡消費' : '銀行流水'}
             </p>}
             <p className="sheet-msg">{it.auto ? '自動核對' : it.recon?.method === 'created' ? '由帳單補記' : '手動配對'}</p>
-            {it.recon && <>
-              <button type="button" className="btn-quiet" onClick={() => setShowEvidence(!showEvidence)}>{showEvidence ? '收起核對依據' : '查看核對依據'}</button>
-              {showEvidence && <>
+            <button type="button" className="btn-quiet" onClick={() => setShowEvidence(!showEvidence)}>{showEvidence ? '收起核對依據' : '查看核對依據'}</button>
+            {showEvidence && <>
                 <div className="pair">
                   <div><span className="lbl">你的記帳</span><span className="v">{fmt(it.tx.amount)}</span><div className="s">{it.tx.merchant || '—'} · {md(txDate(it.tx))}</div></div>
                   <div><span className="lbl">銀行帳單</span><span className="v">{fmt(it.entry.amount)}</span><div className="s">{it.entry.merchant} · {md(it.entry.txDate)}</div></div>
                 </div>
-                <p className="sheet-msg">{it.recon.note || '帳單與記帳內容相符'}</p>
-              </>}
+                <p className="sheet-msg">{it.recon?.note || '帳單與記帳內容相符'}</p>
             </>}
             {it.recon && (
               <button type="button" className="btn-quiet" onClick={() => run(() => removeDecision(it.recon!.id), '已取消配對')}>
@@ -386,10 +398,11 @@ export function ReconItemSheet({
         body = (
           <>
             {hero}
-            <p className="sheet-msg">{it.why === 'deferred' ? '你標記為等待下期帳單。' : '接近結帳日的消費常在下期才列帳，暫時不算問題。'}</p>
+            <p className="sheet-msg">這筆記帳仍未與本期帳單配對。你可找對應明細，或自行確認。</p>
             <button type="button" className="btn-secondary" onClick={() => setView('find-entry')}>
               尋找對應帳單明細
             </button>
+            <button type="button" className="btn-primary" onClick={() => run(() => confirmBookOnly(statement.id, it.tx.id), '已人工確認')}>這筆是真的，打勾</button>
             {it.recon && (
               <button type="button" className="btn-quiet" onClick={() => run(() => removeDecision(it.recon!.id), '已取消等待')}>
                 取消「等待下期」
@@ -403,7 +416,8 @@ export function ReconItemSheet({
         body = (
           <>
             {hero}
-            <p className="sheet-msg">已說明：{it.recon.note || '—'}</p>
+            <p className="sheet-msg">{it.kind === 'explained_tx' ? '人工確認：這筆記帳是真的，目前沒有帳單配對。' : `不需記帳：${it.recon.note}`}</p>
+            {it.kind === 'explained_tx' && <button type="button" className="btn-secondary" onClick={() => setView('find-entry')}>尋找帳單明細</button>}
             <button type="button" className="btn-quiet" onClick={() => run(() => removeDecision(it.recon.id), '已取消說明')}>
               取消說明
             </button>
@@ -412,6 +426,8 @@ export function ReconItemSheet({
         break
     }
   }
+
+  if (it && view === 'main' && entry) body = <>{body}<button type="button" className="btn-quiet" onClick={() => setView('edit-entry')}>修正這條帳單明細</button></>
 
   return (
     <BottomSheet

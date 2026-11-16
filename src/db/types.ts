@@ -245,6 +245,8 @@ export interface CardStatement {
   fileName: string
   /** D-87: generic parsing is "needs_review" until the user confirms it. */
   parseStatus: 'needs_review' | 'confirmed' | 'needs_reimport'
+  /** Last completed review is a snapshot; it stays visible until the user reopens the month. */
+  reviewCompleted?: { at: string; bookDone: number; bookTotal: number; statementDone: number; statementTotal: number }
   adapter: string
   batchId: string
   createdAt: string
@@ -284,7 +286,7 @@ export interface Reconciliation {
   status: ReconStatus
   method: 'auto' | 'manual' | 'created'
   /** Transaction values when the pair was made; any later change invalidates it (D-92). */
-  snapshot: { type?: Transaction['type']; amount: number; date: string; paymentMethodId: string; sourceAccountId?: string; cardId?: string; toAccountId?: string } | null
+  snapshot: { type?: Transaction['type']; amount: number; date: string; paymentMethodId: string; merchant?: string; sourceAccountId?: string; cardId?: string; toAccountId?: string } | null
   note: string
   createdAt: string
 }

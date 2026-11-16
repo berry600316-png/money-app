@@ -13,6 +13,7 @@ export function pairStillValid(recon: Reconciliation, tx: Transaction | undefine
   if (s.amount !== tx.amount) return '記帳金額在核對後被修改'
   if (s.date !== txDate(tx)) return '記帳日期在核對後被修改'
   if (s.paymentMethodId !== chargedTo(tx)) return '記帳的付款方式在核對後被修改'
+  if (s.merchant !== undefined && s.merchant !== tx.merchant) return '記帳名稱在核對後被修改'
   if ('sourceAccountId' in s && s.sourceAccountId !== tx.sourceAccountId) return '記帳的扣款帳戶在核對後被修改'
   if ('cardId' in s && s.cardId !== tx.cardId) return '記帳的卡片在核對後被修改'
   if ('toAccountId' in s && s.toAccountId !== tx.toAccountId) return '記帳的轉入帳戶在核對後被修改'
