@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from '../db/db'
+import { getLineChatBaseline, saveLineChatBaseline } from '../card/cardRepo'
 import { addCategory, addTransaction, setSetting, type TxInput } from '../db/repo'
 import { BackupError, buildBackup, CSV_HEADER, parseBackup, toCsv } from './format'
 import { addedSince, getSnapshot, markBackedUp, readAllData, restoreBackup, shouldRemindBackup, undoRestore } from './store'
@@ -29,6 +30,20 @@ function stripDevice(data: Awaited<ReturnType<typeof readAllData>>) {
 }
 
 describe('backup round trip', () => {
+  it('carries the LINE baseline to another device without storing chat text', async () => {
+    const id = `line-chat:${'a'.repeat(64)}:1`
+    await saveLineChatBaseline(null, { id, at: now.toISOString() }, d)
+    const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
+    expect(JSON.stringify(backup)).not.toContain('LINE Pay 付款')
+    const other = new MoneyDB(`baseline-target-${n++}`)
+    await other.open()
+    try {
+      await restoreBackup(backup, other, now)
+      expect(await getLineChatBaseline(other)).toEqual({ id, at: now.toISOString() })
+    } finally {
+      other.close()
+    }
+  })
   it('export → JSON text → parse → restore on another device gives identical data', async () => {
     await seed(d)
     const before = await readAllData(d)

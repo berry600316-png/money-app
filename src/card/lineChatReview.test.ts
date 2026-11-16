@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanRow } from './importPlan'
-import { acceptDuplicate, completeUnparsed, lineReviewIssue, lineReviewSection, restoreLineRow, skipLineRow, type LineReviewRow } from './lineChatReview'
+import { acceptDuplicate, completeUnparsed, deferLineRow, lineReviewIssue, lineReviewSection, restoreLineRow, skipLineRow, type LineReviewRow } from './lineChatReview'
 
 const row = (changes: Partial<PlanRow> = {}): LineReviewRow => ({
   status: 'new', include: true, permanentSkip: false, duplicate: false,
@@ -9,6 +9,15 @@ const row = (changes: Partial<PlanRow> = {}): LineReviewRow => ({
 } as LineReviewRow)
 
 describe('LINE chat review sections', () => {
+  it('only defers problem rows and clears deferral on a final choice', () => {
+    expect(deferLineRow(row())).toEqual(row())
+    const issue = row({ status: 'suspect', duplicate: true, include: false })
+    const deferred = deferLineRow(issue)
+    expect(deferred).toMatchObject({ deferred: true, include: false })
+    expect(lineReviewSection(deferred)).toBe('problem')
+    expect(acceptDuplicate(deferred).deferred).toBe(false)
+    expect(skipLineRow(deferred).deferred).toBe(false)
+  })
   it('keeps suspected duplicates in problems until an explicit decision', () => {
     const suspected = row({ status: 'suspect', duplicate: true, include: false })
     expect(lineReviewIssue(suspected)).toBe('duplicate')

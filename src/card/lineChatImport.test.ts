@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_CATEGORIES } from '../db/defaults'
 import { MoneyDB } from '../db/db'
 import { addPaymentMethod, deleteTransaction } from '../db/repo'
-import { commitNotificationImport, knownLineChatCaptures } from './cardRepo'
+import { commitNotificationImport, getLineChatBaseline, knownLineChatCaptures, saveLineChatBaseline } from './cardRepo'
 import { planImport } from './importPlan'
 import { readLineChatText } from './lineChatFile'
+import { inspectLineChat, marker, nextLineChatBaseline } from './lineChatBaseline'
 import { completeUnparsed, skipLineRow } from './lineChatReview'
 
 const now = new Date(2026, 10, 14, 14)
@@ -39,6 +40,28 @@ async function plan(raw = text) {
 }
 
 describe('LINE chat notification commit', () => {
+  it('does not treat a damaged stored cursor as a first-time import', async () => {
+    await d.settings.put({ key: 'lineChatBaseline', value: { id: 'bad', at: now.toISOString() } })
+    await expect(getLineChatBaseline(d)).rejects.toThrow('起點資料不正確')
+  })
+  it('commits new rows and the cursor together; a stale preview changes neither', async () => {
+    const read = await readLineChatText(`${text}\n12:35\tLINE錢包\t"LINE Pay 付款 NT$ 75\n付款完成。\n商店名稱: 第二筆"`, 'chat.txt', now)
+    const first = marker(read.messages[0])
+    await saveLineChatBaseline(null, first, d)
+    await expect(saveLineChatBaseline(first.id, { ...first, at: new Date(2026, 10, 12).toISOString() }, d)).rejects.toThrow('只能往後移')
+    const checked = inspectLineChat(read, first)
+    expect(checked?.kind).toBe('ready')
+    if (checked?.kind !== 'ready') return
+    const rows = (await plan(`[LINE] 與LINE錢包的聊天記錄\n2026/11/13（五）\n12:35\tLINE錢包\t"LINE Pay 付款 NT$ 75\n付款完成。\n商店名稱: 第二筆"`))
+      .map((row) => ({ ...row, status: 'new' as const, include: true, source: { cardId } }))
+    const next = nextLineChatBaseline(read.messages, checked.baselineIndex, new Set())
+    await expect(commitNotificationImport(rows, { files: 1, lineChatBaseline: { expectedId: 'wrong', next } }, d, now)).rejects.toThrow('起點已變更')
+    expect(await d.transactions.count()).toBe(0)
+    expect(await getLineChatBaseline(d)).toEqual(first)
+    await commitNotificationImport(rows, { files: 1, lineChatBaseline: { expectedId: first.id, next } }, d, now)
+    expect(await d.transactions.count()).toBe(1)
+    expect(await getLineChatBaseline(d)).toEqual(next)
+  })
   it('does not keep message text, hides repeated exports, and can re-import after deletion', async () => {
     const rows = await plan()
     expect(rows).toHaveLength(1)

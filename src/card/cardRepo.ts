@@ -24,6 +24,7 @@ import type { DraftEntry } from './statementParser'
 import { debitCandidate, debitRelevant } from './debitReconcile'
 import { reconcile } from './reconcile'
 import { txDate } from './reconcileCommon'
+import { LINE_CHAT_BASELINE_SETTING, validLineChatBaseline, type LineChatBaseline } from './lineChatBaseline'
 
 export const NOTIFICATION_SOURCE = 'notification'
 export const STATEMENT_SOURCE = 'statement'
@@ -41,6 +42,31 @@ export async function knownLineChatCaptures(d: MoneyDB = db): Promise<Map<string
     known.set(n.captureId, n.fingerprint)
   }
   return known
+}
+
+export async function getLineChatBaseline(d: MoneyDB = db): Promise<LineChatBaseline | null> {
+  const row = await d.settings.get(LINE_CHAT_BASELINE_SETTING)
+  if (!row) return null
+  const baseline = validLineChatBaseline(row.value)
+  if (!baseline) throw new MoneyError('LINE 匯入起點資料不正確，請先檢查備份')
+  return baseline
+}
+
+function checkLineChatBaselineChange(current: LineChatBaseline | null, expectedId: string | null, next: LineChatBaseline, allowSame: boolean): void {
+  if (current?.id !== (expectedId ?? undefined)) throw new MoneyError('LINE 匯入起點已變更，請重新選擇檔案')
+  if (!validLineChatBaseline(next)) throw new MoneyError('LINE 匯入起點不正確')
+  if (current && (next.at < current.at || (next.at === current.at && (!allowSame || next.id !== current.id)))) {
+    throw new MoneyError('基準點只能往後移')
+  }
+}
+
+/** Compare-and-save so a second tab cannot silently move the baseline underneath a preview. */
+export async function saveLineChatBaseline(expectedId: string | null, next: LineChatBaseline, d: MoneyDB = db): Promise<void> {
+  await d.transaction('rw', d.settings, async () => {
+    const current = await getLineChatBaseline(d)
+    checkLineChatBaselineChange(current, expectedId, next, false)
+    await d.settings.put({ key: LINE_CHAT_BASELINE_SETTING, value: next })
+  })
 }
 
 export async function getDefaultCards(d: MoneyDB = db): Promise<Record<string, string>> {
@@ -134,13 +160,17 @@ export interface ImportSummary {
 export async function commitNotificationImport(
   rows: readonly PlanRow[],
   /** rememberCards: the card the user picked per source app, remembered for next time. */
-  opts: { files: number; rememberCards?: Readonly<Record<string, string>> },
+  opts: { files: number; rememberCards?: Readonly<Record<string, string>>; lineChatBaseline?: { expectedId: string; next: LineChatBaseline } },
   d: MoneyDB = db,
   now = new Date(),
 ): Promise<ImportSummary> {
   const stamp = now.toISOString()
   const batchId = newId()
   return d.transaction('rw', [d.transactions, d.importedNotifications, d.importBatches, d.categories, d.paymentMethods, d.settings], async () => {
+    if (opts.lineChatBaseline) {
+      if (rows.some((r) => r.capture.sourceType !== 'line_chat')) throw new MoneyError('LINE 基準點只能用於 LINE 對話匯入')
+      checkLineChatBaselineChange(await getLineChatBaseline(d), opts.lineChatBaseline.expectedId, opts.lineChatBaseline.next, true)
+    }
     const known = new Map((await d.importedNotifications.toArray()).map((n) => [n.captureId, n]))
     const summary: ImportSummary = { imported: 0, duplicates: 0, skipped: 0, failed: 0, batchId }
     const seenInBatch = new Set<string>()
@@ -264,6 +294,7 @@ export async function commitNotificationImport(
       await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { ...(await getDefaultCards(d)), ...opts.rememberCards } })
     }
     await validateFundingState(d)
+    if (opts.lineChatBaseline) await d.settings.put({ key: LINE_CHAT_BASELINE_SETTING, value: opts.lineChatBaseline.next })
     return summary
   })
 }

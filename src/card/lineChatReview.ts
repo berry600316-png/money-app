@@ -2,7 +2,7 @@ import type { PlanRow } from './importPlan'
 import { LINE_PAY_ADAPTER } from './notificationAdapters'
 
 /** Review decisions exist only in the LINE chat preview until the user saves. */
-export type LineReviewRow = PlanRow & { duplicateReviewed?: boolean }
+export type LineReviewRow = PlanRow & { duplicateReviewed?: boolean; deferred?: boolean }
 export type LineReviewIssue = 'unparsed' | 'duplicate' | 'source' | null
 export type LineReviewSection = 'problem' | 'selected' | 'skipped'
 
@@ -21,17 +21,23 @@ export function lineReviewSection(row: LineReviewRow): LineReviewSection {
 }
 
 export function acceptDuplicate(row: LineReviewRow): LineReviewRow {
-  return { ...row, duplicateReviewed: true, include: true }
+  return { ...row, duplicateReviewed: true, include: true, deferred: false }
 }
 
 export function skipLineRow(row: LineReviewRow): LineReviewRow {
-  return { ...row, include: false, permanentSkip: true }
+  return { ...row, include: false, permanentSkip: true, deferred: false }
+}
+
+export function deferLineRow(row: LineReviewRow): LineReviewRow {
+  if (!lineReviewIssue(row)) return row
+  return { ...row, include: false, deferred: true }
 }
 
 export function restoreLineRow(row: LineReviewRow): LineReviewRow {
   return {
     ...row,
     permanentSkip: false,
+    deferred: false,
     include: row.status !== 'unparsed' && (!row.duplicate || !!row.duplicateReviewed),
   }
 }
@@ -43,6 +49,7 @@ export function completeUnparsed(row: LineReviewRow): LineReviewRow {
     status: 'new',
     reason: '',
     include: true,
+    deferred: false,
     needsSource: false,
     channel: LINE_PAY_ADAPTER.channel!.label,
     channelKey: LINE_PAY_ADAPTER.channel!.key,

@@ -6,9 +6,19 @@ export const MAX_LINE_CHAT_BYTES = 12_000_000
 
 export interface LineChatReadResult {
   captures: NotificationCapture[]
+  messages: LineChatMessage[]
   coverage: { first: string; last: string } | null
   ignored: number
   errors: string[]
+}
+
+/** Transient metadata only: neither message text nor this list is saved. */
+export interface LineChatMessage {
+  id: string
+  at: string
+  paymentCandidate: boolean
+  inWindow: boolean
+  expired: boolean
 }
 
 const dateHeader = /^(\d{4})\/(\d{1,2})\/(\d{1,2})（[^）]*）$/
@@ -49,7 +59,7 @@ async function identity(content: string): Promise<string> {
 
 /** Only the supplied LINE 錢包 export shape is supported in this first version. */
 export async function readLineChatText(text: string, fileName: string, now = new Date()): Promise<LineChatReadResult> {
-  const empty = (): LineChatReadResult => ({ captures: [], coverage: null, ignored: 0, errors: [] })
+  const empty = (): LineChatReadResult => ({ captures: [], messages: [], coverage: null, ignored: 0, errors: [] })
   const result = empty()
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
   if (!/^\[LINE\] 與LINE錢包的聊天記錄\s*$/.test(lines[0]?.trim() ?? '')) {
@@ -71,21 +81,24 @@ export async function readLineChatText(text: string, fileName: string, now = new
     pending = null
     first = first === null || msg.day < first ? msg.day : first
     last = last === null || msg.day > last ? msg.day : last
-    if (msg.day < cutoffDay || msg.day > toYmd(now)) return
     const body = messageBody(msg.lines)
-    if (msg.sender !== 'LINE錢包' || !paymentLead.test(body)) {
-      result.ignored++
-      return
-    }
     const messageIso = localIso(msg.day, msg.time.padStart(5, '0'))
-    if (Date.parse(messageIso) > now.getTime()) return
     const hash = await identity([messageIso, msg.sender, body].join('\u0001'))
     const occurrence = (seen.get(hash) ?? 0) + 1
     seen.set(hash, occurrence)
+    const id = `line-chat:${hash}:${occurrence}`
+    const paymentCandidate = msg.sender === 'LINE錢包' && paymentLead.test(body)
+    const inWindow = msg.day >= cutoffDay && msg.day <= toYmd(now) && Date.parse(messageIso) <= now.getTime()
+    result.messages.push({ id, at: messageIso, paymentCandidate, inWindow, expired: msg.day < cutoffDay })
+    if (!inWindow) return
+    if (!paymentCandidate) {
+      result.ignored++
+      return
+    }
     const notificationTime = transactionTime(body, msg.day, messageIso, now)
     result.captures.push({
       schemaVersion: 1,
-      captureId: `line-chat:${hash}:${occurrence}`,
+      captureId: id,
       derivedId: true,
       sourceApp: 'LINE',
       sourceType: 'line_chat',
@@ -119,11 +132,11 @@ export async function readLineChatText(text: string, fileName: string, now = new
 }
 
 export async function readLineChatFile(file: Pick<File, 'name' | 'size' | 'text'>, now = new Date()): Promise<LineChatReadResult> {
-  if (!file.name.toLowerCase().endsWith('.txt')) return { captures: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
-  if (file.size > MAX_LINE_CHAT_BYTES) return { captures: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
+  if (!file.name.toLowerCase().endsWith('.txt')) return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
+  if (file.size > MAX_LINE_CHAT_BYTES) return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
   try {
     return await readLineChatText(await file.text(), file.name, now)
   } catch {
-    return { captures: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
+    return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
   }
 }
