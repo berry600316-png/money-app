@@ -11,10 +11,24 @@ describe('LINE wallet chat text import', () => {
     const text = sample('LINE Pay 付款 NT$ 125\n付款完成。\n商店名稱: 測試商店\n回饋: 1%')
     const result = await readLineChatText(text, 'chat.txt', now)
     expect(result.errors).toEqual([])
+    expect(result.format).toBe('zh')
     expect(result.captures).toHaveLength(1)
     expect(result.coverage).toEqual({ first: '2026-11-13', last: '2026-11-13' })
     expect(result.captures[0]).toMatchObject({ sourceApp: 'LINE', sourceType: 'line_chat', title: 'LINE錢包', notificationTime: new Date(2026, 10, 13, 12, 34).toISOString() })
     expect(parseNotification(result.captures[0])).toMatchObject({ kind: 'spend', spend: { amount: 125, merchant: '測試商店' } })
+  })
+
+  it('auto-detects the Japanese wallet export and parses multiline payments with optional points', async () => {
+    const text = `[LINE] LINE錢包とのトーク履歴\n保存日時：2026/11/14 13:00\n\n2026/11/13（金）\n12:34\tLINE錢包\t"LINE Pay お支払い NT$ 1,645\nお支払いが完了しました。\n加盟店: 範例餐廳,分店\n利用ポイント: 9 P"\n12:35\tLINE錢包\t"LINE Pay お支払い NT$ 65\nお支払いが完了しました。\n加盟店: 範例商店"`
+    const result = await readLineChatText(text, 'wallet-ja.txt', now)
+    expect(result.errors).toEqual([])
+    expect(result.format).toBe('ja')
+    expect(result.coverage).toEqual({ first: '2026-11-13', last: '2026-11-13' })
+    expect(result.captures).toHaveLength(2)
+    expect(result.captures.map((capture) => parseNotification(capture))).toMatchObject([
+      { kind: 'spend', spend: { amount: 1645, merchant: '範例餐廳,分店' } },
+      { kind: 'spend', spend: { amount: 65, merchant: '範例商店' } },
+    ])
   })
 
   it('takes a labelled transaction time but ignores promotion times', async () => {

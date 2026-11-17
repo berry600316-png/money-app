@@ -3,20 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.4',
-  previousVersion: '1.9.3',
+  version: '1.9.5',
+  previousVersion: '1.9.4',
   changes: [
     {
-      title: 'LINE 對話匯入改用基準點',
-      detail: '第一次上傳可設定起點，舊訊息不會再次加入記帳。之後重新匯出整段對話時，只檢查起點之後的新付款；需要時也能手動重設起點。',
-    },
-    {
-      title: '對帳以你的記帳為主',
-      detail: '帳單逐筆分成需要處理、已對上與不需記帳。頁面分別顯示記帳和帳單的核對進度，方便找到漏記或尚未對上的項目。',
-    },
-    {
-      title: '帳單明細可逐筆修正',
-      detail: '匯入後若發現帳單項目的名稱、金額或日期有誤，可直接修正並重新核對；原本的記帳不會被自動更改。',
+      title: 'LINE 對話自動辨識中日文版',
+      detail: '匯入 LINE 錢包聊天文字檔時，會自動辨識中文版或日文版；切換語言後若找不到舊基準訊息，會先停下並提示確認，避免重複記帳。',
     },
   ],
 } as const

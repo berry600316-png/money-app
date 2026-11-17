@@ -252,11 +252,12 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
     <input ref={fileInput} type="file" accept=".txt,text/plain" hidden onChange={(e) => void selectFile(e.target.files?.[0])} />
     {completion && <div className="card"><p>{completion}</p><button type="button" className="btn-primary" onClick={onBack}>完成</button></div>}
     {!read && !completion && <>
-      <p className="lead">選擇 LINE 錢包匯出的聊天文字檔。只找最近 120 天的付款；原始對話只在這次預覽使用，不會儲存在 CJ 或備份中。</p>
+      <p className="lead">選擇 LINE 錢包匯出的聊天文字檔；程式會自動辨識中文版或日文版。只找最近 120 天的付款；原始對話只在這次預覽使用，不會儲存在 CJ 或備份中。</p>
       <button type="button" className="pick-btn" disabled={busy} onClick={() => { setResetMode(false); fileInput.current?.click() }}><Icon name="inbox" />{busy ? '讀取中…' : '匯入新增訊息／首次建立基準點'}<small>每次選擇重新匯出的完整 LINE 錢包 .txt</small></button>
       <button type="button" className="btn-quiet line-chat-reset" disabled={busy} onClick={() => { setResetMode(true); fileInput.current?.click() }}>重設基準點</button>
     </>}
     {read && <>
+      {read.format && <p className="line-chat-summary">已自動辨識：{read.format === 'ja' ? '日文版' : '中文版'} LINE 錢包對話檔</p>}
       {read.errors.length > 0 ? <ul className="warn-list">{read.errors.map((e) => <li key={e}>{e}</li>)}</ul> : resetMode || inspection?.kind === 'first' ? <div className="card">
         <h2>{baseline ? '重設基準點' : '建立首次基準點'}</h2>
         <p>檔案最後訊息：{inspection && localInput(inspection.last.at).replace('T', ' ')}</p>
@@ -266,7 +267,7 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
         {baseline && !canResetLineChatBaseline(read.messages, baseline) && <p className="line-chat-blocked">新檔最後訊息必須晚於目前基準點，才能重設。</p>}
         <button type="button" className="btn-primary" disabled={busy || !!(baseline && !canResetLineChatBaseline(read.messages, baseline))} onClick={() => void confirmBaseline()}>{busy ? '儲存中…' : '設為基準點'}</button>
       </div> : inspection?.kind === 'missing' || inspection?.kind === 'same_time' || inspection?.kind === 'out_of_order' ? <div className="card">
-        <p className="line-chat-blocked">{inspection.kind === 'missing' ? '這份檔案找不到目前的基準訊息，已停止匯入。請檢查檔案，或手動重設基準點。' : inspection.kind === 'same_time' ? '檔案最後訊息與基準點同時間、內容不同，無法證明先後順序。' : '檔案最後訊息早於目前基準點，已停止匯入。'}</p>
+        <p className="line-chat-blocked">{inspection.kind === 'missing' ? '這份檔案找不到目前的基準訊息，已停止匯入。若剛切換中／日文版，相同付款的文字可能不同；請檢查檔案，確認後才能手動重設基準點，避免重複記帳。' : inspection.kind === 'same_time' ? '檔案最後訊息與基準點同時間、內容不同，無法證明先後順序。' : '檔案最後訊息早於目前基準點，已停止匯入。'}</p>
         <button type="button" className="btn-quiet" onClick={() => setResetMode(true)}>檢查重設基準點</button>
       </div> : inspection?.kind === 'ready' && <>
         <p className="line-chat-summary">檔案涵蓋 {read.coverage?.first}～{read.coverage?.last}；{duplicates} 筆已處理，{read.ignored} 則非付款訊息略過。</p>

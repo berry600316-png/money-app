@@ -5,6 +5,7 @@ import type { NotificationCapture } from './notificationFile'
 export const MAX_LINE_CHAT_BYTES = 12_000_000
 
 export interface LineChatReadResult {
+  format: 'zh' | 'ja' | null
   captures: NotificationCapture[]
   messages: LineChatMessage[]
   coverage: { first: string; last: string } | null
@@ -57,12 +58,15 @@ async function identity(content: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), (v) => v.toString(16).padStart(2, '0')).join('')
 }
 
-/** Only the supplied LINE 錢包 export shape is supported in this first version. */
+/** LINE 錢包 chat exports use the same message layout in Chinese and Japanese. */
 export async function readLineChatText(text: string, fileName: string, now = new Date()): Promise<LineChatReadResult> {
-  const empty = (): LineChatReadResult => ({ captures: [], messages: [], coverage: null, ignored: 0, errors: [] })
+  const empty = (): LineChatReadResult => ({ format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: [] })
   const result = empty()
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
-  if (!/^\[LINE\] 與LINE錢包的聊天記錄\s*$/.test(lines[0]?.trim() ?? '')) {
+  const title = lines[0]?.trim() ?? ''
+  result.format = title === '[LINE] 與LINE錢包的聊天記錄' ? 'zh'
+    : title === '[LINE] LINE錢包とのトーク履歴' ? 'ja' : null
+  if (!result.format) {
     result.errors.push('這不是支援的 LINE 錢包對話匯出檔')
     return result
   }
@@ -132,11 +136,11 @@ export async function readLineChatText(text: string, fileName: string, now = new
 }
 
 export async function readLineChatFile(file: Pick<File, 'name' | 'size' | 'text'>, now = new Date()): Promise<LineChatReadResult> {
-  if (!file.name.toLowerCase().endsWith('.txt')) return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
-  if (file.size > MAX_LINE_CHAT_BYTES) return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
+  if (!file.name.toLowerCase().endsWith('.txt')) return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
+  if (file.size > MAX_LINE_CHAT_BYTES) return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
   try {
     return await readLineChatText(await file.text(), file.name, now)
   } catch {
-    return { captures: [], messages: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
+    return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
   }
 }
