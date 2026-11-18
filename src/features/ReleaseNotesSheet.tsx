@@ -3,12 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.5',
-  previousVersion: '1.9.4',
+  version: '1.9.6',
+  previousVersion: '1.9.5',
   changes: [
     {
-      title: 'LINE 對話自動辨識中日文版',
-      detail: '匯入 LINE 錢包聊天文字檔時，會自動辨識中文版或日文版；切換語言後若找不到舊基準訊息，會先停下並提示確認，避免重複記帳。',
+      title: 'LINE 對話匯入可讀取新增片段',
+      detail: '從同一個入口選擇 LINE 錢包聊天文字檔，完整對話或只有新訊息的檔案都能匯入。程式會自動找出尚未處理的付款，之前記好的帳不會更動。',
     },
   ],
 } as const

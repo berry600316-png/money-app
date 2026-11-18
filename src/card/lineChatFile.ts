@@ -6,6 +6,8 @@ export const MAX_LINE_CHAT_BYTES = 12_000_000
 
 export interface LineChatReadResult {
   format: 'zh' | 'ja' | null
+  /** Transient digest of this export, used only when identical messages cannot be distinguished. */
+  exportFingerprint: string | null
   captures: NotificationCapture[]
   messages: LineChatMessage[]
   coverage: { first: string; last: string } | null
@@ -60,7 +62,7 @@ async function identity(content: string): Promise<string> {
 
 /** LINE 錢包 chat exports use the same message layout in Chinese and Japanese. */
 export async function readLineChatText(text: string, fileName: string, now = new Date()): Promise<LineChatReadResult> {
-  const empty = (): LineChatReadResult => ({ format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: [] })
+  const empty = (): LineChatReadResult => ({ format: null, exportFingerprint: null, captures: [], messages: [], coverage: null, ignored: 0, errors: [] })
   const result = empty()
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/)
   const title = lines[0]?.trim() ?? ''
@@ -70,6 +72,7 @@ export async function readLineChatText(text: string, fileName: string, now = new
     result.errors.push('這不是支援的 LINE 錢包對話匯出檔')
     return result
   }
+  result.exportFingerprint = await identity(text.replace(/\r\n/g, '\n'))
 
   const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 120)
   const cutoffDay = toYmd(cutoff)
@@ -136,11 +139,11 @@ export async function readLineChatText(text: string, fileName: string, now = new
 }
 
 export async function readLineChatFile(file: Pick<File, 'name' | 'size' | 'text'>, now = new Date()): Promise<LineChatReadResult> {
-  if (!file.name.toLowerCase().endsWith('.txt')) return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
-  if (file.size > MAX_LINE_CHAT_BYTES) return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
+  if (!file.name.toLowerCase().endsWith('.txt')) return { format: null, exportFingerprint: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['請選擇 LINE 匯出的 .txt 檔'] }
+  if (file.size > MAX_LINE_CHAT_BYTES) return { format: null, exportFingerprint: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['對話檔超過 12 MB，請分段匯出'] }
   try {
     return await readLineChatText(await file.text(), file.name, now)
   } catch {
-    return { format: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
+    return { format: null, exportFingerprint: null, captures: [], messages: [], coverage: null, ignored: 0, errors: ['無法讀取這份 LINE 對話檔'] }
   }
 }

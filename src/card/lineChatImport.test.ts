@@ -54,7 +54,7 @@ describe('LINE chat notification commit', () => {
     if (checked?.kind !== 'ready') return
     const rows = (await plan(`[LINE] 與LINE錢包的聊天記錄\n2026/11/13（五）\n12:35\tLINE錢包\t"LINE Pay 付款 NT$ 75\n付款完成。\n商店名稱: 第二筆"`))
       .map((row) => ({ ...row, status: 'new' as const, include: true, source: { cardId } }))
-    const next = nextLineChatBaseline(read.messages, checked.baselineIndex, new Set())
+    const next = nextLineChatBaseline(read.messages, first, checked.baselineIndex, new Set())
     await expect(commitNotificationImport(rows, { files: 1, lineChatBaseline: { expectedId: 'wrong', next } }, d, now)).rejects.toThrow('起點已變更')
     expect(await d.transactions.count()).toBe(0)
     expect(await getLineChatBaseline(d)).toEqual(first)

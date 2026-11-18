@@ -105,14 +105,20 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
         noticeMethods,
         now,
       })
-      const visible = planned.filter((r) => r.status !== 'duplicate' && r.status !== 'not_spending').map((r) =>
-        r.capture.body && hasLineChatTransactionTime(r.capture.body) ? { ...r, timeSource: undefined } : r)
+      const visible = planned.filter((r) => r.status !== 'duplicate' && r.status !== 'not_spending').map((r) => {
+        const timed = r.capture.body && hasLineChatTransactionTime(r.capture.body) ? { ...r, timeSource: undefined } : r
+        return checked.ambiguousIds.includes(r.capture.captureId)
+          ? { ...timed, status: 'suspect' as const, duplicate: true, duplicateReviewed: false, include: false,
+            reason: '同分鐘有內容完全相同的已處理訊息，請確認是否為另一筆付款' }
+          : timed
+      })
       setDuplicates(planned.filter((r) => r.status === 'duplicate').length)
-      if (visible.length === 0 && checked.last.id !== saved?.id) {
-        await saveLineChatBaseline(saved!.id, checked.last)
+      if (visible.length === 0 && checked.last.at > saved!.at) {
+        const next = nextLineChatBaseline(result.messages, saved!, checked.baselineIndex, new Set(), result.exportFingerprint ?? undefined)
+        await saveLineChatBaseline(saved!.id, next)
         setRead(null)
         setInspection(null)
-        setCompletion(`沒有待匯入付款；基準點已自動前進至 ${localInput(checked.last.at).replace('T', ' ')}。${checked.expired ? `${checked.expired} 筆已超出 120 天，無法再補匯。` : ''}`)
+        setCompletion(`沒有待匯入付款；基準點已自動前進至 ${localInput(next.at).replace('T', ' ')}。${checked.expired ? `${checked.expired} 筆已超出 120 天，無法再補匯。` : ''}`)
       } else setRows(visible)
     } catch (error) {
       setRead(null)
@@ -149,7 +155,7 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
     }
     setBusy(true)
     try {
-      const next = nextLineChatBaseline(read.messages, inspection.baselineIndex, new Set(deferred.map((r) => r.capture.captureId)))
+      const next = nextLineChatBaseline(read.messages, baseline, inspection.baselineIndex, new Set(deferred.map((r) => r.capture.captureId)), read.exportFingerprint ?? undefined, inspection.ambiguousSourceIds)
       const result = await commitNotificationImport([...selected, ...permanentlySkipped], { files: 1, lineChatBaseline: { expectedId: baseline.id, next } })
       setRead(null)
       setRows(null)
@@ -238,7 +244,9 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
         <small>不匯入後，下次不再出現</small>
       </div>}
       {section === 'problem' && <div className="line-chat-actions">
-        <button type="button" className="btn-quiet" onClick={() => replace(r, r.deferred ? { ...r, deferred: false } : deferLineRow(r))}>{r.deferred ? '改為現在處理' : '稍後處理'}</button>
+        {inspection?.kind === 'ready' && inspection.ambiguousIds.includes(r.capture.captureId)
+          ? <small>這則訊息與舊訊息完全相同，請這次決定是否匯入；無法可靠地留到下次。</small>
+          : <button type="button" className="btn-quiet" onClick={() => replace(r, r.deferred ? { ...r, deferred: false } : deferLineRow(r))}>{r.deferred ? '改為現在處理' : '稍後處理'}</button>}
         {issue === 'source' && <small>選好付款來源即可加入；也可以留待下次匯入</small>}
       </div>}
     </div>
@@ -253,7 +261,7 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
     {completion && <div className="card"><p>{completion}</p><button type="button" className="btn-primary" onClick={onBack}>完成</button></div>}
     {!read && !completion && <>
       <p className="lead">選擇 LINE 錢包匯出的聊天文字檔；程式會自動辨識中文版或日文版。只找最近 120 天的付款；原始對話只在這次預覽使用，不會儲存在 CJ 或備份中。</p>
-      <button type="button" className="pick-btn" disabled={busy} onClick={() => { setResetMode(false); fileInput.current?.click() }}><Icon name="inbox" />{busy ? '讀取中…' : '匯入新增訊息／首次建立基準點'}<small>每次選擇重新匯出的完整 LINE 錢包 .txt</small></button>
+      <button type="button" className="pick-btn" disabled={busy} onClick={() => { setResetMode(false); fileInput.current?.click() }}><Icon name="inbox" />{busy ? '讀取中…' : '匯入新增訊息／首次建立基準點'}<small>選擇完整對話或只有新訊息的 LINE 錢包 .txt</small></button>
       <button type="button" className="btn-quiet line-chat-reset" disabled={busy} onClick={() => { setResetMode(true); fileInput.current?.click() }}>重設基準點</button>
     </>}
     {read && <>
@@ -266,8 +274,8 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
         {resetHasGap && <p className="line-chat-blocked">找不到舊基準訊息；中間可能有缺口，略過筆數無法完整計算。</p>}
         {baseline && !canResetLineChatBaseline(read.messages, baseline) && <p className="line-chat-blocked">新檔最後訊息必須晚於目前基準點，才能重設。</p>}
         <button type="button" className="btn-primary" disabled={busy || !!(baseline && !canResetLineChatBaseline(read.messages, baseline))} onClick={() => void confirmBaseline()}>{busy ? '儲存中…' : '設為基準點'}</button>
-      </div> : inspection?.kind === 'missing' || inspection?.kind === 'same_time' || inspection?.kind === 'out_of_order' ? <div className="card">
-        <p className="line-chat-blocked">{inspection.kind === 'missing' ? '這份檔案找不到目前的基準訊息，已停止匯入。若剛切換中／日文版，相同付款的文字可能不同；請檢查檔案，確認後才能手動重設基準點，避免重複記帳。' : inspection.kind === 'same_time' ? '檔案最後訊息與基準點同時間、內容不同，無法證明先後順序。' : '檔案最後訊息早於目前基準點，已停止匯入。'}</p>
+      </div> : inspection?.kind === 'out_of_order' ? <div className="card">
+        <p className="line-chat-blocked">檔案最後訊息早於目前基準點，已停止匯入。</p>
         <button type="button" className="btn-quiet" onClick={() => setResetMode(true)}>檢查重設基準點</button>
       </div> : inspection?.kind === 'ready' && <>
         <p className="line-chat-summary">檔案涵蓋 {read.coverage?.first}～{read.coverage?.last}；{duplicates} 筆已處理，{read.ignored} 則非付款訊息略過。</p>

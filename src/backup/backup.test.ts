@@ -32,14 +32,15 @@ function stripDevice(data: Awaited<ReturnType<typeof readAllData>>) {
 describe('backup round trip', () => {
   it('carries the LINE baseline to another device without storing chat text', async () => {
     const id = `line-chat:${'a'.repeat(64)}:1`
-    await saveLineChatBaseline(null, { id, at: now.toISOString() }, d)
+    const exportFingerprint = 'b'.repeat(64)
+    await saveLineChatBaseline(null, { id, at: now.toISOString(), exportFingerprint }, d)
     const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
     expect(JSON.stringify(backup)).not.toContain('LINE Pay 付款')
     const other = new MoneyDB(`baseline-target-${n++}`)
     await other.open()
     try {
       await restoreBackup(backup, other, now)
-      expect(await getLineChatBaseline(other)).toEqual({ id, at: now.toISOString() })
+      expect(await getLineChatBaseline(other)).toEqual({ id, at: now.toISOString(), exportFingerprint })
     } finally {
       other.close()
     }
