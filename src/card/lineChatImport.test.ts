@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DEFAULT_CATEGORIES } from '../db/defaults'
 import { MoneyDB } from '../db/db'
 import { addPaymentMethod, deleteTransaction } from '../db/repo'
-import { commitNotificationImport, getLineChatBaseline, knownLineChatCaptures, saveLineChatBaseline } from './cardRepo'
+import { commitNotificationImport, getLineChatBaseline, getLineChatMerchantAliases, knownLineChatCaptures, saveLineChatBaseline } from './cardRepo'
 import { planImport } from './importPlan'
 import { readLineChatText } from './lineChatFile'
 import { inspectLineChat, marker, nextLineChatBaseline } from './lineChatBaseline'
@@ -105,5 +105,24 @@ describe('LINE chat notification commit', () => {
     await commitNotificationImport([completed], { files: 1 }, d, now)
     expect((await d.transactions.toArray())[0]).toMatchObject({ merchant: '補填商店', amount: 125, cardId })
     expect((await d.importedNotifications.toArray())[0]).toMatchObject({ status: 'imported', body: null })
+  })
+
+  it('learns a merchant name only after a corrected payment is committed', async () => {
+    const rows = await plan()
+    expect(await getLineChatMerchantAliases(d)).toEqual([])
+    const corrected = { ...rows[0], originalMerchant: '測試商店', merchant: '慣用名稱', merchantEdited: true, merchantEditOrder: 1, categoryId: 'food' }
+    await commitNotificationImport([corrected], { files: 1 }, d, now)
+    expect((await getLineChatMerchantAliases(d))[0]).toMatchObject({ original: '測試商店', preferred: '慣用名稱', categoryId: 'food' })
+    expect((await d.transactions.toArray())[0].merchant).toBe('慣用名稱')
+  })
+
+  it('retains an automatically rounded minute even if it is briefly in the future', async () => {
+    const at = new Date(2026, 10, 13, 16, 59)
+    const raw = text.replace('12:34', '16:59')
+    const read = await readLineChatText(raw, 'chat.txt', new Date(at.getTime() + 30_000))
+    const rows = planImport({ captures: read.captures, knownCaptureIds: new Set(), transactions: [], paymentMethods: await d.paymentMethods.toArray(), categories: DEFAULT_CATEGORIES, history: [], defaultCards: {}, noticeTypes: [{ id: 'test', name: 'LINE Pay', keywords: ['LINE Pay'], paymentMethodId: walletId, cardId }], now: new Date(at.getTime() + 30_000) })
+    const rounded = new Date(2026, 10, 13, 17, 0).toISOString()
+    await commitNotificationImport([{ ...rows[0], roundedFrom: at.toISOString(), occurredAt: rounded }], { files: 1 }, d, new Date(at.getTime() + 30_000))
+    expect((await d.transactions.toArray())[0].occurredAt).toBe(rounded)
   })
 })

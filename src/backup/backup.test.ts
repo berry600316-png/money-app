@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from '../db/db'
-import { getLineChatBaseline, saveLineChatBaseline } from '../card/cardRepo'
+import { getLineChatBaseline, getLineChatMerchantAliases, saveLineChatBaseline } from '../card/cardRepo'
+import { LINE_CHAT_MERCHANT_ALIASES_SETTING } from '../card/lineChatPreferences'
 import { addCategory, addTransaction, setSetting, type TxInput } from '../db/repo'
 import { BackupError, buildBackup, CSV_HEADER, parseBackup, toCsv } from './format'
 import { addedSince, getSnapshot, markBackedUp, readAllData, restoreBackup, shouldRemindBackup, undoRestore } from './store'
@@ -30,6 +31,16 @@ function stripDevice(data: Awaited<ReturnType<typeof readAllData>>) {
 }
 
 describe('backup round trip', () => {
+  it('carries learned LINE merchant names in a complete backup', async () => {
+    await d.settings.put({ key: LINE_CHAT_MERCHANT_ALIASES_SETTING, value: [{ original: '統一超商', preferred: '7-11', categoryId: 'daily', updatedAt: now.toISOString() }] })
+    const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
+    const other = new MoneyDB(`merchant-alias-target-${n++}`)
+    await other.open()
+    try {
+      await restoreBackup(backup, other, now)
+      expect(await getLineChatMerchantAliases(other)).toMatchObject([{ original: '統一超商', preferred: '7-11', categoryId: 'daily' }])
+    } finally { other.close() }
+  })
   it('carries the LINE baseline to another device without storing chat text', async () => {
     const id = `line-chat:${'a'.repeat(64)}:1`
     const exportFingerprint = 'b'.repeat(64)

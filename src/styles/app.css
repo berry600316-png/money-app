@@ -677,8 +677,11 @@ button.srow:disabled:active { background: transparent; }
 .line-chat-reason { margin: 7px 0 0; color: var(--ink-2); font-size: 0.75rem; line-height: 1.5; }
 .line-chat-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr); gap: 10px; margin-top: 12px; }
 .line-chat-fields label { min-width: 0; display: flex; flex-direction: column; gap: 5px; color: var(--ink-2); font-size: 0.75rem; }
-.line-chat-fields label:nth-child(n+3) { grid-column: 1 / -1; }
+.line-chat-fields > :nth-child(n+3) { grid-column: 1 / -1; }
 .line-chat-fields input, .line-chat-fields select { width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 0.875rem; }
+.line-chat-merchant { min-width: 0; }
+.line-chat-merchant label { display: flex; flex-direction: column; gap: 5px; }
+.line-chat-suggest { justify-content: flex-start; margin-top: 6px; }
 .line-chat-detail { margin-top: 9px; }
 .line-chat-detail summary { color: var(--brand); font-size: 0.75rem; cursor: pointer; }
 .line-chat-raw { margin: 10px 0; padding: 9px 10px; border-radius: 10px; background: var(--fill); color: var(--ink-2); font-size: 0.75rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }

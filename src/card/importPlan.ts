@@ -29,6 +29,16 @@ export interface PlanRow {
   reason: string
   amount: number
   merchant: string
+  /** LINE chat only: parsed merchant before applying a remembered or manually chosen name. */
+  originalMerchant?: string
+  /** LINE chat only: an explicit preview correction, eligible for learning on successful import. */
+  merchantEdited?: boolean
+  /** Explicitly edited in this preview; synchronized sibling rows are not protected from later typing. */
+  merchantTouched?: boolean
+  merchantEditOrder?: number
+  categoryEdited?: boolean
+  /** LINE chat only: proof that a future minute was produced by the automatic one-minute rounding. */
+  roundedFrom?: string
   /** ISO purchase time (D-100). */
   occurredAt: string
   /** D-100: absent = exact. */

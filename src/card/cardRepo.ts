@@ -25,6 +25,8 @@ import { debitCandidate, debitRelevant } from './debitReconcile'
 import { reconcileLedger } from './ledgerReconcile'
 import { txDate } from './reconcileCommon'
 import { LINE_CHAT_BASELINE_SETTING, validLineChatBaseline, type LineChatBaseline } from './lineChatBaseline'
+import { LINE_CHAT_MERCHANT_ALIASES_SETTING, readLineChatMerchantAliases, saveLineChatMerchantAlias } from './lineChatPreferences'
+import { roundLineChatMinute } from './lineChatPreferences'
 
 export const NOTIFICATION_SOURCE = 'notification'
 export const STATEMENT_SOURCE = 'statement'
@@ -50,6 +52,10 @@ export async function getLineChatBaseline(d: MoneyDB = db): Promise<LineChatBase
   const baseline = validLineChatBaseline(row.value)
   if (!baseline) throw new MoneyError('LINE 匯入起點資料不正確，請先檢查備份')
   return baseline
+}
+
+export async function getLineChatMerchantAliases(d: MoneyDB = db) {
+  return readLineChatMerchantAliases((await d.settings.get(LINE_CHAT_MERCHANT_ALIASES_SETTING))?.value)
 }
 
 function checkLineChatBaselineChange(current: LineChatBaseline | null, expectedId: string | null, next: LineChatBaseline, allowSame: boolean): void {
@@ -178,6 +184,7 @@ export async function commitNotificationImport(
     const channelIds = new Map<string, string>()
     /** D-135: kind of notice → payment method, saved with the import. */
     const linked: Record<string, string> = {}
+    const aliasEdits: { original: string; preferred: string; categoryId: string; order: number }[] = []
     const channelMethodId = async (label: string, preferred: string | null): Promise<string> => {
       if (preferred && (await d.paymentMethods.get(preferred))) return preferred
       const hit = channelIds.get(label)
@@ -238,7 +245,10 @@ export async function commitNotificationImport(
           categoryId: row.categoryId,
           paymentMethodId,
           ...link,
-          occurredAt: Date.parse(row.occurredAt) > now.getTime() ? stamp : row.occurredAt,
+          occurredAt: Date.parse(row.occurredAt) > now.getTime()
+            && !(c.sourceType === 'line_chat' && row.roundedFrom && Date.parse(row.roundedFrom) <= now.getTime()
+              && roundLineChatMinute(row.roundedFrom) === row.occurredAt && Date.parse(row.occurredAt) - now.getTime() <= 60_000)
+            ? stamp : row.occurredAt,
           note: '',
           source: NOTIFICATION_SOURCE,
           externalId: c.captureId,
@@ -247,6 +257,9 @@ export async function commitNotificationImport(
           ...(row.timeSource ? { timeSource: row.timeSource } : {}),
         }
         await d.transactions.add(tx)
+        if (c.sourceType === 'line_chat' && row.merchantEdited && row.originalMerchant) {
+          aliasEdits.push({ original: row.originalMerchant, preferred: tx.merchant, categoryId: tx.categoryId, order: row.merchantEditOrder ?? 0 })
+        }
         transactionId = tx.id
         status = 'imported'
         summary.imported++
@@ -289,6 +302,12 @@ export async function commitNotificationImport(
     await d.importBatches.add({ id: batchId, kind: 'notifications', createdAt: stamp, files: opts.files, imported: summary.imported, duplicates: summary.duplicates, skipped: summary.skipped, failed: summary.failed })
     if (Object.keys(linked).length) {
       await d.settings.put({ key: NOTICE_METHODS_SETTING, value: { ...(await getNoticeMethods(d)), ...linked } })
+    }
+    if (aliasEdits.length) {
+      let aliases = await getLineChatMerchantAliases(d)
+      aliasEdits.sort((a, b) => a.order - b.order)
+      for (const edit of aliasEdits) aliases = saveLineChatMerchantAlias(aliases, edit.original, edit.preferred, edit.categoryId, stamp)
+      await d.settings.put({ key: LINE_CHAT_MERCHANT_ALIASES_SETTING, value: aliases })
     }
     if (opts.rememberCards && Object.keys(opts.rememberCards).length) {
       await d.settings.put({ key: DEFAULT_CARDS_SETTING, value: { ...(await getDefaultCards(d)), ...opts.rememberCards } })

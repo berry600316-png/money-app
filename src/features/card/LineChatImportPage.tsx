@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
-import { commitNotificationImport, getLineChatBaseline, getNoticeMethods, getNoticeTypes, knownLineChatCaptures, saveLineChatBaseline } from '../../card/cardRepo'
+import { commitNotificationImport, getLineChatBaseline, getLineChatMerchantAliases, getNoticeMethods, getNoticeTypes, knownLineChatCaptures, saveLineChatBaseline } from '../../card/cardRepo'
 import { canResetLineChatBaseline, inspectLineChat, nextLineChatBaseline, type LineChatBaseline, type LineChatInspection } from '../../card/lineChatBaseline'
 import { planImport, type PaySource } from '../../card/importPlan'
 import { hasLineChatTransactionTime, readLineChatFile, type LineChatReadResult } from '../../card/lineChatFile'
+import { findLineChatMerchantAlias, lineChatMerchantCategory, lineChatMerchantIndex, lineChatMerchantSuggestions, roundLineChatMinute } from '../../card/lineChatPreferences'
 import { acceptDuplicate, completeUnparsed, deferLineRow, lineReviewIssue, lineReviewSection, restoreLineRow, skipLineRow, type LineReviewRow } from '../../card/lineChatReview'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
@@ -32,6 +33,9 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
   const [rows, setRows] = useState<LineReviewRow[] | null>(null)
   const [duplicates, setDuplicates] = useState(0)
   const [knownIds, setKnownIds] = useState<Set<string>>(new Set())
+  const [merchantHistory, setMerchantHistory] = useState<{ merchant: string; categoryId: string }[]>([])
+  const [focusedMerchant, setFocusedMerchant] = useState<string | null>(null)
+  const editOrder = useRef(0)
   const [busy, setBusy] = useState(false)
   const skipWarningShown = useRef(false)
   const categories = ref.categories.filter((c) => c.type === 'expense' && c.isActive)
@@ -41,6 +45,32 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
 
   const replace = (row: LineReviewRow, next: LineReviewRow) => setRows((current) => current?.map((r) => r === row ? next : r) ?? null)
   const patch = (row: LineReviewRow, update: Partial<LineReviewRow>) => replace(row, { ...row, ...update })
+  const changeMerchant = (row: LineReviewRow, merchant: string, categoryId = row.categoryId) => {
+    const order = ++editOrder.current
+    setRows((current) => current?.map((item) => {
+      if (item === row) return { ...item, merchant, categoryId, merchantEdited: true, merchantTouched: true, merchantEditOrder: order }
+      if (item.originalMerchant && item.originalMerchant === row.originalMerchant && !item.merchantTouched && !item.categoryEdited) {
+        return { ...item, merchant, categoryId, merchantEdited: true, merchantEditOrder: order }
+      }
+      return item
+    }) ?? null)
+  }
+  const changeCategory = (row: LineReviewRow, categoryId: string) => {
+    setRows((current) => current?.map((item) => {
+      if (item === row) return { ...item, categoryId, categoryEdited: true }
+      if (row.merchantEdited && item.originalMerchant && item.originalMerchant === row.originalMerchant && !item.merchantTouched && !item.categoryEdited && item.merchantEditOrder === row.merchantEditOrder) {
+        return { ...item, categoryId }
+      }
+      return item
+    }) ?? null)
+  }
+  const validTime = (row: LineReviewRow) => {
+    const at = Date.parse(row.occurredAt)
+    if (!Number.isFinite(at)) return false
+    if (at <= Date.now()) return true
+    return !!row.roundedFrom && Date.parse(row.roundedFrom) <= Date.now()
+      && roundLineChatMinute(row.roundedFrom) === row.occurredAt && at - Date.now() <= 60_000
+  }
   const skip = (row: LineReviewRow, confirmFirst = false) => {
     if (confirmFirst && !skipWarningShown.current) {
       if (!window.confirm('取消勾選會永久略過這筆。送出後，下次匯入也不會再顯示。確定嗎？')) return
@@ -84,12 +114,16 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
       }
       const now = new Date()
       const since = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 120).toISOString()
-      const [transactions, methods, types, noticeMethods] = await Promise.all([
-        db.transactions.where('occurredAt').above(since).toArray(),
+      const [allTransactions, aliases, methods, types, noticeMethods] = await Promise.all([
+        db.transactions.toArray(),
+        getLineChatMerchantAliases(),
         db.paymentMethods.toArray(),
         getNoticeTypes(),
         getNoticeMethods(),
       ])
+      const merchantIndex = lineChatMerchantIndex(allTransactions)
+      setMerchantHistory(merchantIndex)
+      const transactions = allTransactions.filter((t) => t.occurredAt > since)
       const history = [...transactions].filter((t) => t.type === 'expense' && t.merchant)
         .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
         .map((t) => ({ merchant: t.merchant, categoryId: t.categoryId }))
@@ -106,7 +140,19 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
         now,
       })
       const visible = planned.filter((r) => r.status !== 'duplicate' && r.status !== 'not_spending').map((r) => {
-        const timed = r.capture.body && hasLineChatTransactionTime(r.capture.body) ? { ...r, timeSource: undefined } : r
+        const rounded = roundLineChatMinute(r.occurredAt)
+        const alias = findLineChatMerchantAlias(r.merchant, aliases)
+        const aliasCategory = alias ? lineChatMerchantCategory(alias.preferred, merchantIndex) ?? alias.categoryId : null
+        const categoryId = aliasCategory && categories.some((c) => c.id === aliasCategory) ? aliasCategory : r.categoryId
+        const timed = {
+          ...r,
+          originalMerchant: r.merchant,
+          merchant: alias?.preferred ?? r.merchant,
+          categoryId,
+          occurredAt: rounded,
+          ...(rounded !== r.occurredAt ? { roundedFrom: r.occurredAt } : {}),
+          ...(r.capture.body && hasLineChatTransactionTime(r.capture.body) ? { timeSource: undefined } : {}),
+        }
         return checked.ambiguousIds.includes(r.capture.captureId)
           ? { ...timed, status: 'suspect' as const, duplicate: true, duplicateReviewed: false, include: false,
             reason: '同分鐘有內容完全相同的已處理訊息，請確認是否為另一筆付款' }
@@ -150,7 +196,7 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
     if (busy || !rows || inspection?.kind !== 'ready' || !baseline || !read) return
     if (problems.length) return toast(`請先處理 ${problems.length} 筆待處理問題`, { kind: 'error' })
     if (selected.some((r) => !r.source)) return toast('請先為勾選的付款選擇卡片或帳戶', { kind: 'error' })
-    if (selected.some((r) => !r.merchant.trim() || !isValidAmount(r.amount) || !Number.isFinite(Date.parse(r.occurredAt)) || Date.parse(r.occurredAt) > Date.now())) {
+    if (selected.some((r) => !r.merchant.trim() || !isValidAmount(r.amount) || !validTime(r))) {
       return toast('請檢查商家、金額和時間', { kind: 'error' })
     }
     setBusy(true)
@@ -190,22 +236,28 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
   }
 
   const finishUnparsed = (r: LineReviewRow) => {
-    if (!r.merchant.trim() || !isValidAmount(r.amount) || !Number.isFinite(Date.parse(r.occurredAt)) || Date.parse(r.occurredAt) > Date.now()) {
+    if (!r.merchant.trim() || !isValidAmount(r.amount) || !validTime(r)) {
       return toast('請補齊正確的商家、金額和時間', { kind: 'error' })
     }
     if (!r.source) return toast('請先選擇付款來源', { kind: 'error' })
     replace(r, completeUnparsed(r))
   }
 
-  const rowFields = (r: LineReviewRow) => (
+  const rowFields = (r: LineReviewRow) => {
+    const suggestions = focusedMerchant === r.capture.captureId ? lineChatMerchantSuggestions(r.merchant, merchantHistory) : []
+    return (
     <div className="line-chat-fields">
-        <label>商家<input value={r.merchant} maxLength={40} onChange={(e) => patch(r, { merchant: e.target.value })} /></label>
+        <div className="line-chat-merchant"><label>商家<input value={r.merchant} maxLength={40} autoComplete="off" onFocus={() => setFocusedMerchant(r.capture.captureId)} onBlur={() => setFocusedMerchant(null)} onChange={(e) => changeMerchant(r, e.target.value)} /></label>
+          {suggestions.length > 0 && <div className="suggest line-chat-suggest" aria-label="既有支出商家">
+            {suggestions.map((item) => <button type="button" key={item.merchant} onPointerDown={(e) => e.preventDefault()} onClick={() => { changeMerchant(r, item.merchant, categories.some((c) => c.id === item.categoryId) ? item.categoryId : r.categoryId); setFocusedMerchant(null) }}>{item.merchant}</button>)}
+          </div>}
+        </div>
         <label>金額<input type="number" min="1" step="1" value={r.amount} onChange={(e) => patch(r, { amount: Number(e.target.value) })} /></label>
         <label>時間<input type="datetime-local" value={localInput(r.occurredAt)} onChange={(e) => {
           const [date, time] = e.target.value.split('T')
-          if (date && time && isValidHm(time)) patch(r, { occurredAt: localIso(date, time), timeSource: undefined })
+          if (date && time && isValidHm(time)) patch(r, { occurredAt: localIso(date, time), timeSource: undefined, roundedFrom: undefined })
         }} /></label>
-        <label>分類<select value={r.categoryId} onChange={(e) => patch(r, { categoryId: e.target.value })}>
+        <label>分類<select value={r.categoryId} onChange={(e) => changeCategory(r, e.target.value)}>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select></label>
         <label className="line-chat-wide">付款來源<select value={sourceKey(r.source)} onChange={(e) => selectSource(r, e.target.value)}>
@@ -213,7 +265,8 @@ export function LineChatImportPage({ onBack, backLabel }: { onBack: () => void; 
           {sources.map((p) => <option key={p.id} value={p.type === 'credit_card' || p.type === 'debit_card' ? `card:${p.id}` : `account:${p.id}`}>{p.name}</option>)}
         </select></label>
     </div>
-  )
+    )
+  }
 
   const rowView = (r: LineReviewRow, section: 'problem' | 'selected' | 'skipped') => {
     const issue = lineReviewIssue(r)

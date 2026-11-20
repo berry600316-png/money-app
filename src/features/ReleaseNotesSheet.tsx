@@ -3,12 +3,16 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.6',
-  previousVersion: '1.9.5',
+  version: '1.9.7',
+  previousVersion: '1.9.6',
   changes: [
     {
-      title: 'LINE 對話匯入可讀取新增片段',
-      detail: '從同一個入口選擇 LINE 錢包聊天文字檔，完整對話或只有新訊息的檔案都能匯入。程式會自動找出尚未處理的付款，之前記好的帳不會更動。',
+      title: 'LINE 對話匯入時間更整齊',
+      detail: '匯入付款時，單數分鐘會自動往後調整一分鐘；預覽中仍可自行改時間。',
+    },
+    {
+      title: '記住你慣用的商家名稱',
+      detail: '匯入時改過商家名稱，下次會自動帶入；輸入商家時，也能從之前記過的名稱中選擇。',
     },
   ],
 } as const
