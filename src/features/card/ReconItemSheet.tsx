@@ -1,18 +1,21 @@
 import { useState, type ReactNode } from 'react'
 import { suggestCategory } from '../../card/categorize'
-import { confirmBookOnly, deferToNext, explain, matchManually, reconfirmExplanation, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision, updateStatementEntry } from '../../card/cardRepo'
+import { confirmBookOnly, deferToNext, explainEntryWithReason, matchManually, reconfirmExplanation, reconfirmPair, recordFromEntry, recordTransferFromEntry, removeDecision, updateEntryExplanationReason, updateStatementEntry } from '../../card/cardRepo'
+import { LAST_RECON_REASON_KEY, readReconReasons, RECON_REASONS_KEY } from '../../card/reconReasons'
 import { txDate, type Item } from '../../card/reconcile'
 import { dayDiff } from '../../card/text'
 import { searchReconTransactions } from '../../card/reconSearch'
 import { MoneyError } from '../../db/repo'
+import { useSetting } from '../../db/hooks'
 import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../../db/types'
 import { fmt } from '../../lib/money'
 import { BottomSheet } from '../../ui/BottomSheet'
 import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 import { KIND_LABELS } from './StatementImportPage'
+import { ReconReasonPicker } from './ReconReasonPicker'
 
-type View = 'main' | 'record' | 'record-transfer' | 'find-tx' | 'find-entry' | 'explain' | 'edit-entry'
+type View = 'main' | 'record' | 'record-transfer' | 'find-tx' | 'find-entry' | 'explain' | 'edit-reason' | 'edit-entry'
 
 const md = (ymd: string | null) => (ymd ? `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8))}` : '—')
 const entryDate = (e: StatementEntry) => e.txDate ?? e.postDate ?? ''
@@ -37,10 +40,12 @@ export function ReconItemSheet({
 }) {
   const ref = useRefData()
   const toast = useToast()
+  const reasonOptions = readReconReasons(useSetting<unknown>(RECON_REASONS_KEY, []))
+  const lastReasonId = useSetting<string>(LAST_RECON_REASON_KEY, '')
   const [view, setView] = useState<View>('main')
   const [categoryId, setCategoryId] = useState('other')
   const [toAccountId, setToAccountId] = useState('')
-  const [reason, setReason] = useState('')
+  const [reasonId, setReasonId] = useState('')
   const [busy, setBusy] = useState(false)
   const [search, setSearch] = useState('')
   const [adjacentMonths, setAdjacentMonths] = useState(false)
@@ -54,7 +59,7 @@ export function ReconItemSheet({
     if (item) {
       setShown(item)
       setView('main')
-      setReason('')
+      setReasonId('')
       setBusy(false)
       setSearch('')
       setAdjacentMonths(false)
@@ -70,6 +75,15 @@ export function ReconItemSheet({
     }
   }
   const it = item ?? shown
+  const selectedReason = reasonOptions.find((r) => r.id === reasonId)
+  const openExplain = () => {
+    setReasonId(reasonOptions.some((r) => r.id === lastReasonId) ? lastReasonId : '')
+    setView('explain')
+  }
+  const openEditReason = (note: string) => {
+    setReasonId(reasonOptions.find((r) => r.label === note)?.id ?? '')
+    setView('edit-reason')
+  }
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     if (busy) return
@@ -187,13 +201,18 @@ export function ReconItemSheet({
       <button type="button" className="btn-primary" disabled={busy || !toAccountId} onClick={() => run(() => recordTransferFromEntry(statement.id, entry.id, toAccountId), '已補記互轉並核對')}>補記互轉並核對</button>
       <button type="button" className="btn-quiet" onClick={() => setView('main')}>返回</button>
     </>
-  } else if (it && view === 'explain') {
+  } else if (it && 'entry' in it && view === 'explain') {
     body = <>
-      <p className="sheet-msg">請寫下這筆金流已確認、但不與另一邊配對的原因。</p>
-      <label className="full">確認原因
-        <textarea value={reason} maxLength={80} onChange={(e) => setReason(e.target.value)} placeholder="例如：提款後以現金支付，原記帳不調整" />
-      </label>
-      <button type="button" className="btn-primary" disabled={busy || !reason.trim()} onClick={() => run(() => explain(statement.id, 'entry' in it ? { entryId: it.entry.id } : { transactionId: it.tx.id }, reason), '已人工確認')}>人工確認並打勾</button>
+      <p className="sheet-msg">選擇這筆金流已確認、但不另行記帳的原因。</p>
+      <ReconReasonPicker selectedId={reasonId} onSelect={setReasonId} />
+      <button type="button" className="btn-primary" disabled={busy || !selectedReason} onClick={() => run(() => explainEntryWithReason(statement.id, it.entry.id, reasonId), '已人工確認')}>人工確認並打勾</button>
+      <button type="button" className="btn-quiet" onClick={() => setView('main')}>返回</button>
+    </>
+  } else if (it && view === 'edit-reason' && it.kind === 'explained_entry') {
+    body = <>
+      <p className="sheet-msg">目前原因：{it.recon.note}</p>
+      <ReconReasonPicker selectedId={reasonId} onSelect={setReasonId} />
+      <button type="button" className="btn-primary" disabled={busy || !selectedReason} onClick={() => run(() => updateEntryExplanationReason(it.recon.id, reasonId), '原因已更新')}>儲存原因</button>
       <button type="button" className="btn-quiet" onClick={() => setView('main')}>返回</button>
     </>
   } else if (it && view === 'find-tx' && entry) {
@@ -250,7 +269,7 @@ export function ReconItemSheet({
             <button type="button" className="btn-secondary" onClick={() => setView('find-tx')}>
               尋找既有紀錄
             </button>
-            <button type="button" className="btn-quiet" onClick={() => setView('explain')}>
+            <button type="button" className="btn-quiet" onClick={openExplain}>
               人工確認，不補記
             </button>
             <button type="button" className="btn-quiet" onClick={onClose}>
@@ -337,7 +356,7 @@ export function ReconItemSheet({
             <button type="button" className="btn-secondary" onClick={() => setView('find-tx')}>
               和既有記帳配對
             </button>
-            <button type="button" className="btn-quiet" onClick={() => setView('explain')}>
+            <button type="button" className="btn-quiet" onClick={openExplain}>
               不需記帳，填寫原因
             </button>
           </>
@@ -418,6 +437,7 @@ export function ReconItemSheet({
           <>
             {hero}
             <p className="sheet-msg">{it.kind === 'explained_tx' ? '人工確認：這筆記帳是真的，目前沒有帳單配對。' : `不需記帳：${it.recon.note}`}</p>
+            {it.kind === 'explained_entry' && <button type="button" className="btn-secondary" onClick={() => openEditReason(it.recon.note)}>修改確認原因</button>}
             {it.kind === 'explained_tx' && <button type="button" className="btn-secondary" onClick={() => setView('find-entry')}>尋找帳單明細</button>}
             <button type="button" className="btn-quiet" onClick={() => run(() => removeDecision(it.recon.id), '已取消說明')}>
               取消說明

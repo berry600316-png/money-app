@@ -23,6 +23,7 @@ import {
 import type { DraftEntry } from './statementParser'
 import { debitCandidate, debitRelevant } from './debitReconcile'
 import { reconcileLedger } from './ledgerReconcile'
+import { readReconReasons, RECON_REASONS_KEY, rememberReconReason } from './reconReasons'
 import { txDate } from './reconcileCommon'
 import { LINE_CHAT_BASELINE_SETTING, validLineChatBaseline, type LineChatBaseline } from './lineChatBaseline'
 import { LINE_CHAT_MERCHANT_ALIASES_SETTING, readLineChatMerchantAliases, saveLineChatMerchantAlias } from './lineChatPreferences'
@@ -700,6 +701,28 @@ export async function explain(statementId: string, side: { entryId: string } | {
       status: 'explained', method: 'manual', snapshot: tx ? snapshotOf(tx) : null,
       note: note.trim().slice(0, 80), createdAt: now.toISOString(),
     })
+  })
+}
+
+/** Confirm a statement-only flow using one saved reason, atomically remembering the choice. */
+export async function explainEntryWithReason(statementId: string, entryId: string, reasonId: string, d: MoneyDB = db, now = new Date()): Promise<void> {
+  await d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.settings], async () => {
+    const reason = readReconReasons((await d.settings.get(RECON_REASONS_KEY))?.value).find((r) => r.id === reasonId)
+    if (!reason) throw new MoneyError('請先選擇確認原因')
+    await explain(statementId, { entryId }, reason.label, d, now)
+    await rememberReconReason(reasonId, d)
+  })
+}
+
+/** Change only the reason snapshot of a previously explained statement entry. */
+export async function updateEntryExplanationReason(reconId: string, reasonId: string, d: MoneyDB = db): Promise<void> {
+  await d.transaction('rw', [d.reconciliations, d.settings], async () => {
+    const reason = readReconReasons((await d.settings.get(RECON_REASONS_KEY))?.value).find((r) => r.id === reasonId)
+    if (!reason) throw new MoneyError('請先選擇確認原因')
+    const old = await d.reconciliations.get(reconId)
+    if (!old || old.status !== 'explained' || !old.entryId || old.transactionId) throw new MoneyError('找不到這筆人工確認')
+    await d.reconciliations.put({ ...old, note: reason.label })
+    await rememberReconReason(reasonId, d)
   })
 }
 

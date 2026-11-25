@@ -10,6 +10,7 @@ import {
   commitNotificationImport,
   DEFAULT_CARDS_SETTING,
   deferToNext,
+  explainEntryWithReason,
   getDefaultCards,
   deleteStatement,
   matchManually,
@@ -17,6 +18,7 @@ import {
   completeStatementReview,
   reopenStatementReview,
   updateStatementEntry,
+  updateEntryExplanationReason,
   reconfirmPair,
   recordFromEntry,
   saveAutoPairs,
@@ -29,6 +31,7 @@ import { planImport } from './importPlan'
 import { reconcile } from './reconcile'
 import { reconcileLedger } from './ledgerReconcile'
 import { parseStatementLines } from './statementParser'
+import { addReconReason, LAST_RECON_REASON_KEY, renameReconReason } from './reconReasons'
 
 let d: MoneyDB
 let n = 0
@@ -184,6 +187,18 @@ describe('reconciliation decisions (Phase 3)', () => {
     const r2 = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
     expect(r2.autoPairs).toEqual([])
     expect(r2.items.find((i) => i.kind === 'matched' && i.tx.id === netflix.id)).toBeTruthy()
+  })
+  it('can change an explained statement reason without clearing its check or changing old reason options', async () => {
+    const st = await saveStatement({ ...statementInput(), confirmed: true }, {}, d, now)
+    const entry = (await d.statementEntries.where('statementId').equals(st.id).toArray())[0]
+    const oldReason = await addReconReason('原原因', d)
+    await explainEntryWithReason(st.id, entry.id, oldReason.id, d, now)
+    const before = (await d.reconciliations.where('entryId').equals(entry.id).first())!
+    await renameReconReason(oldReason.id, '新原因', d)
+    expect((await d.reconciliations.get(before.id))?.note).toBe('原原因')
+    await updateEntryExplanationReason(before.id, oldReason.id, d)
+    expect(await d.reconciliations.get(before.id)).toMatchObject({ status: 'explained', note: '新原因', createdAt: before.createdAt })
+    expect((await d.settings.get(LAST_RECON_REASON_KEY))?.value).toBe(oldReason.id)
   })
   it('back-fill a bank-only entry: one step creates the expense AND the pair (§8.1)', async () => {
     const { st, entries } = await setup()

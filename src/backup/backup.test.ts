@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MoneyDB } from '../db/db'
 import { getLineChatBaseline, getLineChatMerchantAliases, saveLineChatBaseline } from '../card/cardRepo'
 import { LINE_CHAT_MERCHANT_ALIASES_SETTING } from '../card/lineChatPreferences'
+import { addReconReason, LAST_RECON_REASON_KEY, readReconReasons, RECON_REASONS_KEY, rememberReconReason } from '../card/reconReasons'
 import { addCategory, addTransaction, setSetting, type TxInput } from '../db/repo'
 import { BackupError, buildBackup, CSV_HEADER, parseBackup, toCsv } from './format'
 import { addedSince, getSnapshot, markBackedUp, readAllData, restoreBackup, shouldRemindBackup, undoRestore } from './store'
@@ -31,6 +32,18 @@ function stripDevice(data: Awaited<ReturnType<typeof readAllData>>) {
 }
 
 describe('backup round trip', () => {
+  it('carries reconciliation reason choices and last selection to another device', async () => {
+    const option = await addReconReason('提款後付現', d)
+    await rememberReconReason(option.id, d)
+    const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))
+    const other = new MoneyDB(`recon-reasons-target-${n++}`)
+    await other.open()
+    try {
+      await restoreBackup(backup, other, now)
+      expect(readReconReasons((await other.settings.get(RECON_REASONS_KEY))?.value)).toEqual([option])
+      expect((await other.settings.get(LAST_RECON_REASON_KEY))?.value).toBe(option.id)
+    } finally { other.close() }
+  })
   it('carries learned LINE merchant names in a complete backup', async () => {
     await d.settings.put({ key: LINE_CHAT_MERCHANT_ALIASES_SETTING, value: [{ original: '統一超商', preferred: '7-11', categoryId: 'daily', updatedAt: now.toISOString() }] })
     const backup = parseBackup(JSON.stringify(buildBackup(await readAllData(d), now)))

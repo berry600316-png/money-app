@@ -720,6 +720,23 @@ button.srow:disabled:active { background: transparent; }
 .btn-quiet { display: block; width: 100%; min-height: 44px; border: 0; background: none; color: var(--ink-2); font-size: 0.9375rem; }
 .btn-danger-quiet { display: block; width: 100%; min-height: 44px; border: 0; background: none; color: var(--danger); font-size: 0.9375rem; }
 .cand { max-height: 40vh; overflow-y: auto; border-radius: 16px; background: var(--card); }
+.recon-reasons { display: flex; flex-direction: column; gap: 10px; }
+.recon-reasons-head { display: flex; align-items: center; justify-content: space-between; color: var(--ink); font-size: 0.9rem; }
+.recon-reasons-head button, .recon-reason-manage button { border: 0; background: none; color: var(--brand); min-height: 40px; padding: 0 8px; font: inherit; }
+.recon-reasons-options { max-height: 32vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--card); }
+.recon-reason-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 48px; border: 0; border-bottom: 1px solid var(--line); padding: 10px 14px; background: none; color: var(--ink); font: inherit; text-align: left; }
+.recon-reason-option:last-child, .recon-reason-manage:last-child { border-bottom: 0; }
+.recon-reason-option[aria-pressed="true"] { color: var(--brand); font-weight: 600; }
+.recon-reason-check { width: 20px; flex: none; text-align: center; }
+.recon-reason-manage { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 2px; min-height: 88px; border-bottom: 1px solid var(--line); padding: 2px 4px; font-size: 0.8rem; }
+.recon-reason-manage > span { grid-column: 1 / -1; grid-row: 1; min-width: 0; padding-left: 44px; overflow-wrap: anywhere; font-size: 0.875rem; pointer-events: none; }
+.recon-reason-manage button { width: 100%; min-width: 44px; min-height: 44px; padding: 0 4px; font-size: 0.8rem; }
+.recon-reason-manage.dragging { background: var(--fill); }
+.recon-reason-manage button:disabled { opacity: .3; }
+.recon-reason-manage .recon-reason-handle { grid-column: 1; grid-row: 1; justify-self: start; font-size: 1.1rem; color: var(--ink-2); cursor: grab; }
+.recon-reason-editor { display: flex; align-items: center; gap: 6px; }
+.recon-reason-editor input { flex: 1; min-width: 0; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: var(--ink); padding: 0 10px; font-size: 16px; }
+.recon-reason-editor button { width: auto; min-width: 64px; padding: 0 10px; }
 .pw-row { display: flex; gap: 8px; margin-top: 14px; }
 .pw-row input { flex: 1; min-width: 0; }
 .pw-row button { flex: none; border: 0; border-radius: 12px; background: var(--brand); color: #fff; padding: 0 18px; font-weight: 600; font-size: 0.9375rem; }

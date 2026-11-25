@@ -3,16 +3,16 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.7',
-  previousVersion: '1.9.6',
+  version: '1.9.8',
+  previousVersion: '1.9.7',
   changes: [
     {
-      title: 'LINE 對話匯入時間更整齊',
-      detail: '匯入付款時，單數分鐘會自動往後調整一分鐘；預覽中仍可自行改時間。',
+      title: '帳單配對更容易找到正確記帳',
+      detail: '尋找既有紀錄時，先看每筆帳單交易當月的記帳；已配對和現金付款不會混進清單。需要時仍可展開前後月份。',
     },
     {
-      title: '記住你慣用的商家名稱',
-      detail: '匯入時改過商家名稱，下次會自動帶入；輸入商家時，也能從之前記過的名稱中選擇。',
+      title: '人工確認原因改用自訂選項',
+      detail: '你可以在核對畫面新增、整理常用原因；確認時直接選擇，之後也能修改原因。',
     },
   ],
 } as const
