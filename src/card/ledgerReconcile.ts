@@ -1,8 +1,9 @@
 /** A book-led review of one imported statement. This does not change any transaction. */
-import type { CardStatement, Reconciliation, StatementEntry, Transaction } from '../db/types'
+import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
 import { chargedTo } from '../lib/accounts'
 import { dayDiff, merchantSimilarity, SIMILAR_MERCHANT } from './text'
-import { debitCandidate, debitRelevant } from './debitReconcile'
+import { debitRelevant } from './debitReconcile'
+import { autoCandidateForEntry, entryDate, inEntryMonth } from './reconCandidates'
 import { pairStillValid, txDate } from './reconcileCommon'
 import type { Item, ReconcileInput, ReconcileResult } from './reconcile'
 
@@ -14,20 +15,15 @@ const related = (tx: Transaction, st: CardStatement) => st.statementType === 'de
   : (tx.type === 'expense' && chargedTo(tx) === st.paymentMethodId)
     || (tx.type === 'income' && tx.paymentMethodId === st.paymentMethodId)
 
-const candidate = (entry: StatementEntry, tx: Transaction, st: CardStatement) => st.statementType === 'debit_card'
-  ? debitCandidate(entry, tx, st.paymentMethodId, st.accountId ?? '')
-  : (entry.kind === 'purchase' && tx.type === 'expense' && chargedTo(tx) === st.paymentMethodId)
-    || (entry.kind === 'refund' && tx.type === 'income' && tx.paymentMethodId === st.paymentMethodId)
-
 const closeDate = (entry: StatementEntry, tx: Transaction): boolean => {
-  if (entry.txDate) return Math.abs(dayDiff(entry.txDate, txDate(tx))) <= 3
-  return !!entry.postDate && Math.abs(dayDiff(entry.postDate, txDate(tx))) <= 7
+  const date = entryDate(entry)
+  return !!date && inEntryMonth(entry, tx) && Math.abs(dayDiff(date, txDate(tx))) <= 3
 }
 
 const matchedOrExplained = (r: Reconciliation, tx: Transaction | undefined) =>
   (r.status === 'matched' || r.status === 'explained') && !pairStillValid(r, tx)
 
-export function reconcileLedger(input: ReconcileInput): LedgerResult {
+export function reconcileLedger(input: ReconcileInput & { paymentMethods: readonly PaymentMethod[] }): LedgerResult {
   const { statement: st, transactions, entries, recons } = input
   const mine = recons.filter((r) => r.statementId === st.id)
   const txById = new Map(transactions.map((t) => [t.id, t]))
@@ -48,16 +44,16 @@ export function reconcileLedger(input: ReconcileInput): LedgerResult {
     else pending.push(entry)
   }
 
-  // Only this statement's month is searched automatically. Adjacent months remain available in manual search.
-  const available = transactions.filter((tx) => txDate(tx).slice(0, 7) === st.statementMonth && !reserved.has(tx.id))
+  // Each entry searches its own transaction month. A statement may contain older purchases.
+  const available = transactions.filter((tx) => !reserved.has(tx.id))
+  const methods = new Map(input.paymentMethods.map((method) => [method.id, method]))
+  const byId = (id: string) => methods.get(id)
   const choices = pending.map((entry) => ({ entry, options: available.filter((tx) =>
-    candidate(entry, tx, st) && tx.amount === Math.abs(entry.amount) && closeDate(entry, tx)),
+    tx.amount === Math.abs(entry.amount) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId)),
   }))
   const claimed = new Map<string, number>()
-  for (const choice of choices) if (choice.options.length === 1) {
-    const id = choice.options[0].id
-    claimed.set(id, (claimed.get(id) ?? 0) + 1)
-  }
+  for (const choice of choices) for (const option of choice.options)
+    claimed.set(option.id, (claimed.get(option.id) ?? 0) + 1)
   const autoPairs: ReconcileResult['autoPairs'] = []
   const taken = new Set<string>()
   for (const { entry, options } of choices) if (options.length === 1 && claimed.get(options[0].id) === 1) {
@@ -73,7 +69,7 @@ export function reconcileLedger(input: ReconcileInput): LedgerResult {
       items.push({ kind: 'ambiguous', entry, candidates: open })
       continue
     }
-    const near = available.filter((tx) => !taken.has(tx.id) && candidate(entry, tx, st) && closeDate(entry, tx)
+    const near = available.filter((tx) => !taken.has(tx.id) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId)
       && merchantSimilarity(entry.merchant, tx.merchant) >= SIMILAR_MERCHANT
       && Math.abs(tx.amount - Math.abs(entry.amount)) <= Math.max(10, Math.abs(entry.amount) * 0.1))
     if (near.length === 1) items.push({ kind: 'amount_diff', entry, tx: near[0], diff: Math.abs(entry.amount) - near[0].amount })

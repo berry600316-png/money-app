@@ -84,12 +84,13 @@ export function ReconItemSheet({
     }
   }
 
-  // A paired record remains visible in manual search, but cannot be chosen again.
+  // Existing pairs reserve their records, including pairs awaiting renewed review.
   const pairedTx = new Set(recons.filter((r) => r.status === 'matched' && r.transactionId).map((r) => r.transactionId!))
   const pairedEntry = new Set(recons.filter((r) => r.status === 'matched' && r.entryId).map((r) => r.entryId!))
 
   const candidatesForEntry = (e: StatementEntry) =>
-    searchReconTransactions(transactions, { statementMonth: statement.statementMonth, entry: e, query: search, adjacentMonths })
+    searchReconTransactions(transactions, { entry: e, query: search,
+      adjacentMonths, paymentMethods: ref.payments, excludedIds: pairedTx })
   const candidatesForTx = (t: Transaction) =>
     entries
       .filter((e) => !pairedEntry.has(e.id))
@@ -101,13 +102,12 @@ export function ReconItemSheet({
   const amount = entry?.amount ?? tx?.amount ?? 0
 
   const txRow = (t: Transaction, onPick: () => void) => (
-    <button type="button" className="rrow compact" key={t.id} onClick={onPick} disabled={busy || pairedTx.has(t.id)}>
+    <button type="button" className="rrow compact" key={t.id} onClick={onPick} disabled={busy}>
       <span className="row-main">
         <span className="row-title">{t.merchant || (t.type === 'transfer' ? '互轉' : ref.category(t.categoryId).name)}</span>
         <span className="state">
           {md(txDate(t))} · {t.type === 'transfer' ? '互轉' : t.type === 'income' ? '收入' : ref.category(t.categoryId).name} · {ref.payment(t.paymentMethodId).name}
           {entry && t.amount !== Math.abs(entry.amount) ? ` · 差 ${fmt(Math.abs(Math.abs(entry.amount) - t.amount))}` : ''}
-          {pairedTx.has(t.id) ? ' · 已配對' : ''}
         </span>
       </span>
       <span className="row-amt num">{fmt(t.amount)}</span>
@@ -198,13 +198,14 @@ export function ReconItemSheet({
     </>
   } else if (it && view === 'find-tx' && entry) {
     const list = candidatesForEntry(entry)
+    const month = entryDate(entry)?.slice(0, 7)
     body = (
       <>
-        <p className="sheet-msg">{statement.statementMonth.replace('-', ' 年 ')} 月的記帳，共 {list.length} 筆</p>
+        <p className="sheet-msg">{month ? `${month.replace('-', ' 年 ')} 月${adjacentMonths ? '及前後各一個月' : ''}的記帳，共 ${list.length} 筆` : '這筆帳單明細沒有日期，請先修正日期。'}</p>
         <input type="search" value={search} placeholder="搜尋商家、金額或日期" aria-label="搜尋既有紀錄" onChange={(e) => { setSearch(e.target.value); setVisibleCount(40) }} />
-        <button type="button" className="btn-quiet" onClick={() => { setAdjacentMonths(!adjacentMonths); setVisibleCount(40) }}>
-          {adjacentMonths ? '只看帳單月份' : '搜尋前後各一個月'}
-        </button>
+        {month && <button type="button" className="btn-quiet" onClick={() => { setAdjacentMonths(!adjacentMonths); setVisibleCount(40) }}>
+          {adjacentMonths ? '只看交易月份' : '搜尋前後各一個月'}
+        </button>}
         {list.length ? <div className="cand">{list.slice(0, visibleCount).map((t) => txRow(t, () => void pairWith(entry, t)))}</div> : <p className="sheet-msg">沒有找到符合條件的記帳。</p>}
         {list.length > visibleCount && <button type="button" className="btn-secondary" onClick={() => setVisibleCount(visibleCount + 40)}>顯示更多（還有 {list.length - visibleCount} 筆）</button>}
         <button type="button" className="btn-quiet" onClick={() => setView('main')}>
@@ -315,7 +316,7 @@ export function ReconItemSheet({
           <>
             {hero}
             <p className="sheet-msg">有 {it.candidates.length} 筆記帳都可能是這筆，請選正確的那一筆。</p>
-            <div className="cand">{it.candidates.map((t) => txRow(t, () => void pairWith(it.entry, t)))}</div>
+            <div className="cand">{it.candidates.filter((t) => !pairedTx.has(t.id)).map((t) => txRow(t, () => void pairWith(it.entry, t)))}</div>
             <button type="button" className="btn-quiet" onClick={() => setView('record')}>
               都不是，補記一筆新的
             </button>

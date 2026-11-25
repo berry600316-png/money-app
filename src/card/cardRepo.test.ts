@@ -178,9 +178,10 @@ describe('reconciliation decisions (Phase 3)', () => {
   it('auto pairs are saved and then show as matched', async () => {
     const { st } = await setup()
     const netflix = await addTransaction({ type: 'expense', categoryId: 'fun', paymentMethodId: cardId, amount: 390, merchant: 'NETFLIX.COM', date: '2026-10-01', note: '' }, d, now)
-    const r = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: [] })
-    expect(await saveAutoPairs(st.id, r.autoPairs, d, now)).toBe(1)
-    const r2 = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+    const r = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: [], paymentMethods: await d.paymentMethods.toArray() })
+    // The September purchase in this October statement also has a unique September book record.
+    expect(await saveAutoPairs(st.id, r.autoPairs, d, now)).toBe(2)
+    const r2 = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
     expect(r2.autoPairs).toEqual([])
     expect(r2.items.find((i) => i.kind === 'matched' && i.tx.id === netflix.id)).toBeTruthy()
   })

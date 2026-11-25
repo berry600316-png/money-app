@@ -460,13 +460,13 @@ export async function completeStatementReview(statementId: string, d: MoneyDB = 
   const st = await d.cardStatements.get(statementId)
   if (!st || st.parseStatus === 'needs_reimport') throw new MoneyError('請重新匯入這份帳單')
   const preview = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
-    transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+    transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
   await saveAutoPairs(statementId, preview.autoPairs, d, now)
-  await d.transaction('rw', [d.cardStatements, d.statementEntries, d.transactions, d.reconciliations], async () => {
+  await d.transaction('rw', [d.cardStatements, d.statementEntries, d.transactions, d.reconciliations, d.paymentMethods], async () => {
     const current = await d.cardStatements.get(statementId)
     if (!current) throw new MoneyError('找不到這份帳單')
     const result = reconcileLedger({ statement: current, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
-      transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+      transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
     if (result.progress.bookDone !== result.progress.bookTotal || result.progress.statementDone !== result.progress.statementTotal
       || result.items.some((item) => item.kind === 'broken' || item.kind === 'broken_explanation')) throw new MoneyError('還有未處理項目，請先逐筆核對')
     await d.cardStatements.put({ ...current, parseStatus: 'confirmed', reviewCompleted: { at: now.toISOString(), ...result.progress }, updatedAt: now.toISOString() })
@@ -504,12 +504,12 @@ async function pair(statementId: string, entryId: string, tx: Transaction, metho
 /** Save engine-found pairs. Pairs that became unavailable meanwhile are skipped, never forced. */
 export async function saveAutoPairs(statementId: string, pairs: readonly { entryId: string; transactionId: string }[], d: MoneyDB = db, now = new Date()): Promise<number> {
   if (!pairs.length) return 0
-  return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements], async () => {
+  return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods], async () => {
     const st = await d.cardStatements.get(statementId)
     if (!st || st.parseStatus === 'needs_reimport' || st.reviewCompleted) return 0
     // The view may have computed candidates before a record was edited. Recheck every rule atomically.
     const fresh = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(statementId).toArray(),
-      transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray() })
+      transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
     const allowed = new Set(fresh.autoPairs.map((p) => `${p.entryId}\u0000${p.transactionId}`))
     let saved = 0
     for (const p of pairs) {
@@ -522,7 +522,7 @@ export async function saveAutoPairs(statementId: string, pairs: readonly { entry
       } catch {
         continue
       }
-      await pair(statementId, p.entryId, tx, 'auto', '', d, now)
+      await pair(statementId, p.entryId, tx, 'auto', await manualPairEvidence(entry, tx, st, d), d, now)
       saved++
     }
     return saved

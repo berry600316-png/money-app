@@ -68,7 +68,8 @@ export function ReconcilePage({
     return { entries, transactions, recons }
   }, [st?.id, st?.paymentMethodId])
 
-  const result = useMemo(() => (st && data ? reconcileLedger({ statement: st, entries: data.entries, transactions: data.transactions, recons: data.recons }) : null), [st, data])
+  const result = useMemo(() => (st && data ? reconcileLedger({ statement: st, entries: data.entries, transactions: data.transactions,
+    recons: data.recons, paymentMethods: ref.payments }) : null), [st, data, ref.payments])
 
   // Save newly found reliable pairs once; the live query then shows them as matched.
   const savedKey = useRef('')
