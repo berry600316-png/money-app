@@ -3,12 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.10',
-  previousVersion: '1.9.9',
+  version: '1.9.11',
+  previousVersion: '1.9.10',
   changes: [
     {
-      title: '已完成的核對加入鎖定保護',
-      detail: '已完成的帳單核對會鎖定。如需使用請洽開發者付費解鎖，謝謝。',
+      title: '跨月帳單可接續核對',
+      detail: '記帳尚未出現在本期帳單時，可選「等待下期帳單」。下期匯入後，符合條件的交易會自動對上；仍找不到的再請你處理。',
     },
   ],
 } as const

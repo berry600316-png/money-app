@@ -162,6 +162,44 @@ describe('reconciliation decisions (Phase 3)', () => {
     expect((await d.cardStatements.get(st.id))?.reviewCompleted).toBeUndefined()
   })
 
+  it('completes October with a deferred purchase and pairs it when November posts it', async () => {
+    const later = new Date(2026, 10, 20, 9, 0)
+    const input = statementInput()
+    const october = await saveStatement({ ...input, periodStart: '2026-10-01', periodEnd: '2026-10-31',
+      entries: [{ ...input.entries[0], txDate: '2026-10-05', postDate: '2026-10-05', amount: 85, kind: 'purchase' }] }, {}, d, later)
+    const paid = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 85, merchant: '已入帳', date: '2026-10-05', note: '' }, d, later)
+    const waiting = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 100, merchant: '跨月消費', date: '2026-10-25', note: '' }, d, later)
+    await matchManually(october.id, (await d.statementEntries.where('statementId').equals(october.id).first())!.id, paid.id, '', d, later)
+    await deferToNext(october.id, waiting.id, d, later)
+    await completeStatementReview(october.id, d, later)
+    const completed = (await d.cardStatements.get(october.id))!.reviewCompleted
+    expect(completed).toMatchObject({ bookDone: 1, bookTotal: 1, statementDone: 1, statementTotal: 1 })
+
+    const november = await saveStatement({ ...input, statementMonth: '2026-11', periodStart: '2026-11-01', periodEnd: '2026-11-30',
+      fileHash: 'november-hash', fileName: 'nov.pdf', entries: [{ ...input.entries[0], txDate: '2026-10-25', postDate: '2026-11-01', amount: 100, kind: 'purchase' }] }, {}, d, later)
+    const nextEntry = (await d.statementEntries.where('statementId').equals(november.id).first())!
+    expect(await saveAutoPairs(november.id, [{ entryId: nextEntry.id, transactionId: waiting.id }], d, later)).toBe(1)
+    expect((await d.reconciliations.where('transactionId').equals(waiting.id).first())).toMatchObject({ status: 'matched', statementId: november.id, entryId: nextEntry.id })
+    expect((await d.cardStatements.get(october.id))?.reviewCompleted).toEqual(completed)
+    expect((await d.transactions.get(waiting.id))?.occurredAt).toContain('2026-10-25')
+  })
+
+  it('requires a decision in November when a deferred October purchase is still missing', async () => {
+    const later = new Date(2026, 10, 20, 9, 0)
+    const input = statementInput()
+    const october = await saveStatement({ ...input, entries: [{ ...input.entries[0], txDate: '2026-10-05', postDate: '2026-10-05', amount: 85 }] }, {}, d, later)
+    const paid = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 85, merchant: '已入帳', date: '2026-10-05', note: '' }, d, later)
+    const waiting = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 100, merchant: '還沒入帳', date: '2026-10-25', note: '' }, d, later)
+    await matchManually(october.id, (await d.statementEntries.where('statementId').equals(october.id).first())!.id, paid.id, '', d, later)
+    await deferToNext(october.id, waiting.id, d, later)
+    await completeStatementReview(october.id, d, later)
+    const november = await saveStatement({ ...input, statementMonth: '2026-11', fileHash: 'november-hash',
+      entries: [{ ...input.entries[0], txDate: '2026-11-02', postDate: '2026-11-02', amount: 50 }] }, {}, d, later)
+    const current = await addTransaction({ type: 'expense', categoryId: 'food', paymentMethodId: cardId, amount: 50, merchant: '本月消費', date: '2026-11-02', note: '' }, d, later)
+    await matchManually(november.id, (await d.statementEntries.where('statementId').equals(november.id).first())!.id, current.id, '', d, later)
+    await expect(completeStatementReview(november.id, d, later)).rejects.toThrow('還有未處理項目')
+  })
+
   async function setup() {
     const st = await saveStatement({ ...statementInput(), confirmed: true }, {}, d, now)
     const entries = await d.statementEntries.where('statementId').equals(st.id).sortBy('order')
@@ -182,10 +220,10 @@ describe('reconciliation decisions (Phase 3)', () => {
   it('auto pairs are saved and then show as matched', async () => {
     const { st } = await setup()
     const netflix = await addTransaction({ type: 'expense', categoryId: 'fun', paymentMethodId: cardId, amount: 390, merchant: 'NETFLIX.COM', date: '2026-10-01', note: '' }, d, now)
-    const r = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: [], paymentMethods: await d.paymentMethods.toArray() })
+    const r = reconcileLedger({ statement: st, statements: [st], entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: [], paymentMethods: await d.paymentMethods.toArray() })
     // The September purchase in this October statement also has a unique September book record.
     expect(await saveAutoPairs(st.id, r.autoPairs, d, now)).toBe(2)
-    const r2 = reconcileLedger({ statement: st, entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
+    const r2 = reconcileLedger({ statement: st, statements: [st], entries: await d.statementEntries.where('statementId').equals(st.id).toArray(), transactions: await d.transactions.toArray(), recons: await d.reconciliations.toArray(), paymentMethods: await d.paymentMethods.toArray() })
     expect(r2.autoPairs).toEqual([])
     expect(r2.items.find((i) => i.kind === 'matched' && i.tx.id === netflix.id)).toBeTruthy()
   })

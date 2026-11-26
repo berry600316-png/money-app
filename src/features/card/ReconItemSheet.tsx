@@ -255,9 +255,9 @@ export function ReconItemSheet({
           <>
             {hero}
             <p className="sheet-msg">你記了這筆，但這期帳單找不到。可能是還沒請款，下期才會出現。</p>
-            {statement.statementType !== 'debit_card' && <button type="button" className="btn-primary" onClick={() => run(() => deferToNext(statement.id, it.tx.id), '已標為等待下期帳單')}>
+            <button type="button" className="btn-primary" onClick={() => run(() => deferToNext(statement.id, it.tx.id), '已標為等待下期帳單')}>
               等待下期帳單
-            </button>}
+            </button>
             <button type="button" className="btn-secondary" onClick={() => setView('find-entry')}>
               尋找對應帳單明細
             </button>

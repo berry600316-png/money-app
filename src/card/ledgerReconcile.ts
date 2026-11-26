@@ -15,9 +15,9 @@ const related = (tx: Transaction, st: CardStatement) => st.statementType === 'de
   : (tx.type === 'expense' && chargedTo(tx) === st.paymentMethodId)
     || (tx.type === 'income' && tx.paymentMethodId === st.paymentMethodId)
 
-const closeDate = (entry: StatementEntry, tx: Transaction): boolean => {
+const closeDate = (entry: StatementEntry, tx: Transaction, carried: ReadonlySet<string>): boolean => {
   const date = entryDate(entry)
-  return !!date && inEntryMonth(entry, tx) && Math.abs(dayDiff(date, txDate(tx))) <= 3
+  return !!date && (inEntryMonth(entry, tx) || carried.has(tx.id)) && Math.abs(dayDiff(date, txDate(tx))) <= 3
 }
 
 const clearlySameMerchant = (a: string, b: string): boolean => {
@@ -38,9 +38,16 @@ const preferredCandidates = (entry: StatementEntry, options: Transaction[]): Tra
 const matchedOrExplained = (r: Reconciliation, tx: Transaction | undefined) =>
   (r.status === 'matched' || r.status === 'explained') && !pairStillValid(r, tx)
 
-export function reconcileLedger(input: ReconcileInput & { paymentMethods: readonly PaymentMethod[] }): LedgerResult {
+export function reconcileLedger(input: ReconcileInput & { paymentMethods: readonly PaymentMethod[]; statements: readonly CardStatement[] }): LedgerResult {
   const { statement: st, transactions, entries, recons } = input
   const mine = recons.filter((r) => r.statementId === st.id)
+  const previous = input.statements.filter((s) => s.paymentMethodId === st.paymentMethodId
+    && (s.statementType ?? 'credit_card') === (st.statementType ?? 'credit_card')
+    && s.accountId === st.accountId && s.statementMonth < st.statementMonth)
+    .sort((a, b) => b.statementMonth.localeCompare(a.statementMonth))[0]
+  const carried = new Set(recons.filter((r) => r.status === 'deferred' && r.statementId === previous?.id && r.transactionId)
+    .map((r) => r.transactionId!))
+  const deferredHere = new Set(mine.filter((r) => r.status === 'deferred' && r.transactionId).map((r) => r.transactionId!))
   const txById = new Map(transactions.map((t) => [t.id, t]))
   const reserved = new Set(recons.filter((r) => r.status === 'matched' && r.transactionId).map((r) => r.transactionId!))
   const items: Item[] = []
@@ -64,7 +71,7 @@ export function reconcileLedger(input: ReconcileInput & { paymentMethods: readon
   const methods = new Map(input.paymentMethods.map((method) => [method.id, method]))
   const byId = (id: string) => methods.get(id)
   const choices = pending.map((entry) => ({ entry, options: preferredCandidates(entry, available.filter((tx) =>
-    tx.amount === Math.abs(entry.amount) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId))),
+    tx.amount === Math.abs(entry.amount) && closeDate(entry, tx, carried) && autoCandidateForEntry(entry, tx, byId))),
   }))
   const claimed = new Map<string, number>()
   for (const choice of choices) for (const option of choice.options)
@@ -84,7 +91,7 @@ export function reconcileLedger(input: ReconcileInput & { paymentMethods: readon
       items.push({ kind: 'ambiguous', entry, candidates: open })
       continue
     }
-    const near = available.filter((tx) => !taken.has(tx.id) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId)
+    const near = available.filter((tx) => !taken.has(tx.id) && closeDate(entry, tx, carried) && autoCandidateForEntry(entry, tx, byId)
       && merchantSimilarity(entry.merchant, tx.merchant) >= SIMILAR_MERCHANT
       && Math.abs(tx.amount - Math.abs(entry.amount)) <= Math.max(10, Math.abs(entry.amount) * 0.1))
     if (near.length === 1) items.push({ kind: 'amount_diff', entry, tx: near[0], diff: Math.abs(entry.amount) - near[0].amount })
@@ -94,8 +101,10 @@ export function reconcileLedger(input: ReconcileInput & { paymentMethods: readon
   }
 
   const book = transactions.filter((tx) => related(tx, st) && txDate(tx).slice(0, 7) === st.statementMonth)
-  const bookDone = book.filter((tx) => taken.has(tx.id) || recons.some((r) => r.transactionId === tx.id && matchedOrExplained(r, tx))).length
-  const bookRelevant = book.filter((tx) => !reserved.has(tx.id) && !taken.has(tx.id)
+  const reviewBooks = transactions.filter((tx) => related(tx, st) && (txDate(tx).slice(0, 7) === st.statementMonth || carried.has(tx.id) || deferredHere.has(tx.id)))
+  const activeBook = book.filter((tx) => !deferredHere.has(tx.id))
+  const bookDone = activeBook.filter((tx) => taken.has(tx.id) || recons.some((r) => r.transactionId === tx.id && matchedOrExplained(r, tx))).length
+  const bookRelevant = reviewBooks.filter((tx) => !reserved.has(tx.id) && !taken.has(tx.id)
     && !recons.some((r) => r.statementId !== st.id && r.transactionId === tx.id && r.status === 'explained' && !pairStillValid(r, tx)))
   const inDoubt = new Set<string>()
   for (const item of items) {
@@ -115,7 +124,7 @@ export function reconcileLedger(input: ReconcileInput & { paymentMethods: readon
   const statementDone = count('matched') + count('explained_entry')
   return {
     items, autoPairs, payments: [], periodKnown: true,
-    progress: { bookDone, bookTotal: book.length, statementDone, statementTotal: entries.length },
+    progress: { bookDone, bookTotal: activeBook.length, statementDone, statementTotal: entries.length },
     summary: { entries: entries.length, matched: statementDone, bankOnly: count('bank_only'), bookOnly: count('book_only'),
       needsReview: count('ambiguous') + count('amount_diff') + count('special') + count('broken') + count('broken_explanation'), pendingNext: count('pending_next') },
   }

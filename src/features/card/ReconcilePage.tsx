@@ -125,7 +125,7 @@ export function ReconcilePage({
   }, [st?.id, st?.paymentMethodId])
 
   const result = useMemo(() => (st && data ? reconcileLedger({ statement: st, entries: data.entries, transactions: data.transactions,
-    recons: data.recons, paymentMethods: ref.payments }) : null), [st, data, ref.payments])
+    recons: data.recons, paymentMethods: ref.payments, statements: statements ?? [st] }) : null), [st, data, ref.payments, statements])
 
   // Save newly found reliable pairs once; the live query then shows them as matched.
   const savedKey = useRef('')
@@ -179,9 +179,19 @@ export function ReconcilePage({
   </>
   if (!result || !data) return head
 
+  const hasLaterStatement = statements?.some((next) => next.paymentMethodId === st.paymentMethodId
+    && next.accountId === st.accountId && next.statementMonth > st.statementMonth)
   if (st.reviewCompleted) return <>
     {head}
     <CompletedReviewCard key={st.id} statement={st} completed={st.reviewCompleted} onReopen={() => setReviewConfirmed(false)} />
+    {!hasLaterStatement && result && result.items.some((item) => item.kind === 'pending_next') && <>
+      <div className="grp-title"><b>等待下期帳單</b><span>重新開啟核對後可取消等待</span></div>
+      <div className="card">{result.items.filter((item) => item.kind === 'pending_next').map((item) =>
+        item.kind === 'pending_next' && <div className="rrow compact" key={item.tx.id}>
+          <span className="row-main"><span className="row-title">{item.tx.merchant || '（未填名稱）'}</span><span className="state">{md(txDate(item.tx))} · 等待下期帳單</span></span>
+          <span className="row-amt num">{fmt(item.tx.amount)}</span>
+        </div>)}</div>
+    </>}
     {statements.length > 1 && <div className="card" style={{ marginTop: 20 }}>
       {statements.filter((x) => x.id !== st.id).map((x) => <button type="button" className="rrow compact" key={x.id} onClick={() => { setChosen(x.id); setReviewConfirmed(false) }}>
         <span className="row-main"><span className="row-title">{monthKeyLabel(x.statementMonth)}</span><span className="state">{ref.payment(x.paymentMethodId).name}</span></span>
@@ -197,7 +207,8 @@ export function ReconcilePage({
   const matched = [...of('matched'), ...of('explained_tx')]
   const noBook = of('explained_entry')
   const statementMissing = [...of('bank_only'), ...of('special')]
-  const bookMissing = [...of('book_only'), ...of('pending_next')]
+  const bookMissing = of('book_only')
+  const pendingNext = of('pending_next')
   const problems = statementMissing.length + bookMissing.length + review.length
   const card = ref.payment(st.paymentMethodId)
 
@@ -221,7 +232,7 @@ export function ReconcilePage({
             {'entry' in it && it.entry.kind !== 'purchase' && <span className="kind-tag">{KIND_LABELS[it.entry.kind]}</span>}
             {'entry' in it && st.statementType === 'debit_card' && <span className="kind-tag">{it.entry.evidence === 'both' ? '消費＋帳戶' : it.entry.evidence === 'card' ? '金融卡消費' : '帳戶流水'}</span>}
           </span>
-          <span className={'state' + (done ? '' : ' attn')}>
+          <span className={'state' + (done || it.kind === 'pending_next' ? '' : ' attn')}>
             {l.date}
             {!done && STATE_TEXT[it.kind] ? ` · ${STATE_TEXT[it.kind]}` : ''}
             {it.kind === 'amount_diff' && ` 差 ${fmt(Math.abs(it.diff))}`}
@@ -289,6 +300,7 @@ export function ReconcilePage({
       {group('帳單找不到記帳', `${statementMissing.length} 筆・可找既有記帳、補記或註明不需記帳`, statementMissing)}
       {group('記帳找不到帳單', `${bookMissing.length} 筆・可尋找帳單或人工確認`, bookMissing)}
       {group('配對有疑問', `${review.length} 筆・請逐筆確認`, review)}
+      {group('等待下期帳單', `${pendingNext.length} 筆・下期匯入後會再比對`, pendingNext)}
       {group('已對上', `${matched.length} 筆`, matched)}
       {group('不需記帳', `${noBook.length} 筆・已填寫原因`, noBook)}
       {problems === 0 && <div className="card" style={{ padding: 18, marginTop: 20 }}>
