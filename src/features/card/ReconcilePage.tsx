@@ -18,6 +18,7 @@ import { useRefData } from '../../ui/refData'
 import { useToast } from '../../ui/Toast'
 import { ReconItemSheet } from './ReconItemSheet'
 import { KIND_LABELS } from './StatementImportPage'
+import { advanceReopenGate, cancelReopenGate, initialReopenGate } from './reopenGate'
 
 const md = (ymd: string | null) => (ymd ? `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8))}` : '—')
 
@@ -30,6 +31,58 @@ const STATE_TEXT: Partial<Record<Item['kind'], string>> = {
   broken: '記帳已變更',
   broken_explanation: '人工確認需重對',
   pending_next: '等待下期帳單',
+}
+
+function CompletedReviewCard({ statement, completed, onReopen }: {
+  statement: CardStatement
+  completed: NonNullable<CardStatement['reviewCompleted']>
+  onReopen: () => void
+}) {
+  const toast = useToast()
+  const [gate, setGate] = useState(initialReopenGate)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (gate.phase !== 'unlocked' || gate.lastActivityAt === null) return
+    const remaining = Math.max(0, 10_000 - (Date.now() - gate.lastActivityAt))
+    const timer = window.setTimeout(() => setGate(initialReopenGate), remaining)
+    return () => window.clearTimeout(timer)
+  }, [gate])
+
+  const closeConfirmation = () => setGate((current) => cancelReopenGate(current, Date.now()))
+  const reopen = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await reopenStatementReview(statement.id)
+      onReopen()
+    } catch (error) {
+      toast(error instanceof MoneyError ? error.message : '無法重新開啟', { kind: 'error' })
+      setBusy(false)
+      closeConfirmation()
+    }
+  }
+
+  return <>
+    <div className="done-all" style={{ marginTop: 24 }}><Icon name="check" />這期上次已完成核對</div>
+    <div className="card" style={{ padding: 20, marginTop: 12 }}>
+      <p>記帳已核對 {completed.bookDone}／{completed.bookTotal} 筆</p>
+      <p>帳單已處理 {completed.statementDone}／{completed.statementTotal} 筆</p>
+      <p className="set-foot">完成於 {new Date(completed.at).toLocaleString('zh-TW')}。重新開啟後，才會依目前記帳重新計算。</p>
+      <button type="button" className={'btn-primary reopen-btn' + (gate.phase === 'locked' ? ' locked' : '')}
+        aria-label={gate.phase === 'locked' ? '重新開啟核對，已鎖定' : '重新開啟核對，已解鎖'}
+        onClick={() => setGate((current) => advanceReopenGate(current, Date.now()))}>
+        <Icon name={gate.phase === 'locked' ? 'lock' : 'lockOpen'} />重新開啟核對
+      </button>
+    </div>
+    <Overlay>
+      <ActionSheet open={gate.phase === 'confirming'} onClose={closeConfirmation}
+        title="重新開啟這期核對？"
+        message="重新開啟後會依目前記帳重新計算核對進度；原本的記帳不會刪除。"
+        actions={[{ label: '確認重新開啟', onClick: reopen, disabled: busy }]}
+      />
+    </Overlay>
+  </>
 }
 
 /** Spec §9.3: overview → problems → matched → statement info. */
@@ -128,13 +181,7 @@ export function ReconcilePage({
 
   if (st.reviewCompleted) return <>
     {head}
-    <div className="done-all" style={{ marginTop: 24 }}><Icon name="check" />這期上次已完成核對</div>
-    <div className="card" style={{ padding: 20, marginTop: 12 }}>
-      <p>記帳已核對 {st.reviewCompleted.bookDone}／{st.reviewCompleted.bookTotal} 筆</p>
-      <p>帳單已處理 {st.reviewCompleted.statementDone}／{st.reviewCompleted.statementTotal} 筆</p>
-      <p className="set-foot">完成於 {new Date(st.reviewCompleted.at).toLocaleString('zh-TW')}。重新開啟後，才會依目前記帳重新計算。</p>
-      <button type="button" className="btn-primary" onClick={() => reopenStatementReview(st.id).then(() => setReviewConfirmed(false), (e) => toast(e instanceof MoneyError ? e.message : '無法重新開啟', { kind: 'error' }))}>重新開啟核對</button>
-    </div>
+    <CompletedReviewCard key={st.id} statement={st} completed={st.reviewCompleted} onReopen={() => setReviewConfirmed(false)} />
     {statements.length > 1 && <div className="card" style={{ marginTop: 20 }}>
       {statements.filter((x) => x.id !== st.id).map((x) => <button type="button" className="rrow compact" key={x.id} onClick={() => { setChosen(x.id); setReviewConfirmed(false) }}>
         <span className="row-main"><span className="row-title">{monthKeyLabel(x.statementMonth)}</span><span className="state">{ref.payment(x.paymentMethodId).name}</span></span>

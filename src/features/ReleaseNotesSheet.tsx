@@ -3,20 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.9',
-  previousVersion: '1.9.8',
+  version: '1.9.10',
+  previousVersion: '1.9.9',
   changes: [
     {
-      title: '核對清單依日期排列',
-      detail: '帳單核對的每個區塊會由較早的紀錄排到較新的紀錄，同一天再依商家名稱排列。',
-    },
-    {
-      title: '帳單核對更容易完成',
-      detail: '同一天、同金額的消費更容易自動對上；補記時可以使用平常的記帳畫面，先修改商家、時間和付款方式再儲存。',
-    },
-    {
-      title: '確認原因更好整理',
-      detail: '選原因時畫面更簡潔；點「管理」可新增、改名、刪除或調整常用原因順序。',
+      title: '已完成的核對加入鎖定保護',
+      detail: '已完成的帳單核對會鎖定。如需使用請洽開發者付費解鎖，謝謝。',
     },
   ],
 } as const

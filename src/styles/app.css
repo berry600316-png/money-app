@@ -702,6 +702,10 @@ button.srow:disabled:active { background: transparent; }
 .rrow.compact .row-title { font-size: 0.9375rem; }
 .done-all { display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 14px 16px; border-radius: 16px; background: var(--brand-soft); color: var(--brand); font-size: 0.9375rem; font-weight: 500; }
 .done-all svg { width: 20px; height: 20px; }
+.reopen-btn { display: flex; align-items: center; justify-content: center; gap: 8px; touch-action: manipulation; }
+.reopen-btn svg { width: 18px; height: 18px; }
+.reopen-btn.locked { background: var(--brand-soft); color: var(--brand); }
+.reopen-btn.locked:active { background: var(--brand-soft); }
 .tx-ok { display: inline-block; width: 14px; height: 14px; margin-left: 4px; color: var(--brand); vertical-align: -1px; }
 .tx-ok svg { width: 14px; height: 14px; stroke-width: 2.4; }
 .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
