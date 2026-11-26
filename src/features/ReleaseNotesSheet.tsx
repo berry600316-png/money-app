@@ -3,16 +3,12 @@ import { Overlay } from '../ui/overlay'
 
 // Keep this copy about what people can do. Update it together with the app version before each release.
 const release = {
-  version: '1.9.8',
-  previousVersion: '1.9.7',
+  version: '1.9.9',
+  previousVersion: '1.9.8',
   changes: [
     {
-      title: '帳單配對更容易找到正確記帳',
-      detail: '尋找既有紀錄時，先看每筆帳單交易當月的記帳；已配對和現金付款不會混進清單。需要時仍可展開前後月份。',
-    },
-    {
-      title: '人工確認原因改用自訂選項',
-      detail: '你可以在核對畫面新增、整理常用原因；確認時直接選擇，之後也能修改原因。',
+      title: '核對清單依日期排列',
+      detail: '帳單核對的每個區塊會由較早的紀錄排到較新的紀錄，同一天再依商家名稱排列。',
     },
   ],
 } as const

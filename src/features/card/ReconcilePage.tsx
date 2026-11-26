@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { completeStatementReview, deleteStatement, reopenStatementReview, saveAutoPairs } from '../../card/cardRepo'
 import { reconcileLedger } from '../../card/ledgerReconcile'
 import { txDate, type Item } from '../../card/reconcile'
+import { sortReconItems } from '../../card/reconSort'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
 import type { PaymentMethod, StatementEntry } from '../../db/types'
@@ -192,8 +193,7 @@ export function ReconcilePage({
           <b>{title}</b>
           <span>{basis}</span>
         </div>
-        <div className="card">{[...list].sort((a, b) => 'entry' in a && 'entry' in b ? a.entry.order - b.entry.order
-          : 'tx' in a && 'tx' in b && a.tx && b.tx ? txDate(a.tx).localeCompare(txDate(b.tx)) : 0).map((it, i) => row(it, i))}</div>
+        <div className="card">{sortReconItems(list).map((it, i) => row(it, i))}</div>
       </>
     )
 
