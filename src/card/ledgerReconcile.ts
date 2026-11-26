@@ -1,7 +1,7 @@
 /** A book-led review of one imported statement. This does not change any transaction. */
 import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
 import { chargedTo } from '../lib/accounts'
-import { dayDiff, merchantSimilarity, SIMILAR_MERCHANT } from './text'
+import { dayDiff, merchantSimilarity, normalizeMerchant, SIMILAR_MERCHANT } from './text'
 import { debitRelevant } from './debitReconcile'
 import { autoCandidateForEntry, entryDate, inEntryMonth } from './reconCandidates'
 import { pairStillValid, txDate } from './reconcileCommon'
@@ -18,6 +18,21 @@ const related = (tx: Transaction, st: CardStatement) => st.statementType === 'de
 const closeDate = (entry: StatementEntry, tx: Transaction): boolean => {
   const date = entryDate(entry)
   return !!date && inEntryMonth(entry, tx) && Math.abs(dayDiff(date, txDate(tx))) <= 3
+}
+
+const clearlySameMerchant = (a: string, b: string): boolean => {
+  const left = normalizeMerchant(a)
+  const right = normalizeMerchant(b)
+  return !!left && !!right && (left === right || (left.length >= 2 && right.length >= 2 && (left.includes(right) || right.includes(left))))
+}
+
+const preferredCandidates = (entry: StatementEntry, options: Transaction[]): Transaction[] => {
+  const date = entryDate(entry)
+  const sameDay = options.filter((tx) => txDate(tx) === date)
+  if (!sameDay.length) return options
+  if (sameDay.length === 1) return sameDay
+  const named = sameDay.filter((tx) => clearlySameMerchant(entry.merchant, tx.merchant))
+  return named.length === 1 ? named : sameDay
 }
 
 const matchedOrExplained = (r: Reconciliation, tx: Transaction | undefined) =>
@@ -48,8 +63,8 @@ export function reconcileLedger(input: ReconcileInput & { paymentMethods: readon
   const available = transactions.filter((tx) => !reserved.has(tx.id))
   const methods = new Map(input.paymentMethods.map((method) => [method.id, method]))
   const byId = (id: string) => methods.get(id)
-  const choices = pending.map((entry) => ({ entry, options: available.filter((tx) =>
-    tx.amount === Math.abs(entry.amount) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId)),
+  const choices = pending.map((entry) => ({ entry, options: preferredCandidates(entry, available.filter((tx) =>
+    tx.amount === Math.abs(entry.amount) && closeDate(entry, tx) && autoCandidateForEntry(entry, tx, byId))),
   }))
   const claimed = new Map<string, number>()
   for (const choice of choices) for (const option of choice.options)

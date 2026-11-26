@@ -2,7 +2,7 @@
  * All writes of the credit card module (spec §10): one place, each in a single IndexedDB transaction.
  */
 import { db, type MoneyDB } from '../db/db'
-import { MoneyError, validateFundingState } from '../db/repo'
+import { addTransaction, MoneyError, validateFundingState, type TxInput } from '../db/repo'
 import type { CardStatement, PaymentMethod, Reconciliation, StatementEntry, Transaction } from '../db/types'
 import { chargedTo, isAsset, isCard } from '../lib/accounts'
 import { fromYmd, occurredAtFor, toYmd } from '../lib/dates'
@@ -610,6 +610,21 @@ export async function applyStatementAmount(statementId: string, entryId: string,
 }
 
 /** §8.1: record a missing purchase from the statement and pair it, in one step. */
+export async function recordFromEntryInput(statementId: string, entryId: string, input: TxInput, d: MoneyDB = db, now = new Date()): Promise<Transaction> {
+  return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.paymentMethods, d.categories, d.settings], async () => {
+    const [entry, statement] = await Promise.all([d.statementEntries.get(entryId), d.cardStatements.get(statementId)])
+    if (!entry || !statement || entry.statementId !== statementId) throw new MoneyError('找不到這筆帳單明細')
+    if (statement.reviewCompleted) throw new MoneyError('這期帳單已完成核對，請先重新開啟')
+    if ((await d.reconciliations.where('entryId').equals(entryId).toArray()).some((r) => r.status === 'matched'))
+      throw new MoneyError('這筆帳單明細已經有配對')
+    const tx = await addTransaction(input, d, now)
+    await assertFree(entryId, tx.id, d)
+    await pair(statementId, entryId, tx, 'created', await manualPairEvidence(entry, tx, statement, d), d, now)
+    return tx
+  })
+}
+
+/** Legacy date-only statement fill. The regular entry sheet uses recordFromEntryInput. */
 export async function recordFromEntry(statementId: string, entryId: string, categoryId: string, d: MoneyDB = db, now = new Date()): Promise<Transaction> {
   return d.transaction('rw', [d.reconciliations, d.transactions, d.statementEntries, d.cardStatements, d.categories, d.paymentMethods], async () => {
     const entry = await d.statementEntries.get(entryId)

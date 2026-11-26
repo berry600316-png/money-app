@@ -4,12 +4,24 @@ import { useSetting } from '../../db/hooks'
 import { MoneyError } from '../../db/repo'
 import { useToast } from '../../ui/Toast'
 
-export function ReconReasonPicker({ selectedId, onSelect }: { selectedId: string; onSelect: (id: string) => void }) {
+export function ReconReasonPicker({ selectedId, onSelect, onManage }: { selectedId: string; onSelect: (id: string) => void; onManage: () => void }) {
+  const reasons = readReconReasons(useSetting<unknown>(RECON_REASONS_KEY, []))
+  return <div className="recon-reasons">
+    <div className="recon-reasons-head"><strong>確認原因</strong><button type="button" onClick={onManage}>管理</button></div>
+    {reasons.length ? <div className="recon-reasons-options">
+      {reasons.map((r) => <button type="button" key={r.id} className="recon-reason-option" aria-pressed={selectedId === r.id} onClick={() => onSelect(r.id)}>
+        <span>{r.label}</span><span className="recon-reason-check" aria-hidden="true">{selectedId === r.id ? '✓' : ''}</span>
+      </button>)}
+    </div> : <p className="sheet-msg">尚無原因選項，請點「管理」新增。</p>}
+  </div>
+}
+
+export function ReconReasonManager({ onSelect }: { onSelect: (id: string) => void }) {
   const reasons = readReconReasons(useSetting<unknown>(RECON_REASONS_KEY, []))
   const toast = useToast()
-  const [manage, setManage] = useState(false)
   const [name, setName] = useState('')
-  const [editingId, setEditingId] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [menuId, setMenuId] = useState('')
   const [order, setOrder] = useState<string[]>([])
   const [draggingId, setDraggingId] = useState('')
   const [ordering, setOrdering] = useState(false)
@@ -22,10 +34,10 @@ export function ReconReasonPicker({ selectedId, onSelect }: { selectedId: string
   const error = (e: unknown) => toast(e instanceof MoneyError ? e.message : '沒有儲存成功，請再試一次', { kind: 'error' })
   const saveName = async () => {
     try {
-      if (editingId) await renameReconReason(editingId, name)
+      if (editingId && editingId !== 'new') await renameReconReason(editingId, name)
       else onSelect((await addReconReason(name)).id)
       setName('')
-      setEditingId('')
+      setEditingId(null)
     } catch (e) { error(e) }
   }
   const move = (id: string, targetId: string) => {
@@ -66,32 +78,33 @@ export function ReconReasonPicker({ selectedId, onSelect }: { selectedId: string
   const moveAndSave = (id: string, targetId: string) => {
     if (orderBusy.current) return
     move(id, targetId)
+    setMenuId('')
     void persistOrder()
   }
-  const sorted = order.map((id) => reasons.find((r) => r.id === id)).filter((r) => r !== undefined)
+  const sorted = (order.length === reasons.length ? order : reasons.map((r) => r.id))
+    .map((id) => reasons.find((r) => r.id === id)).filter((r) => r !== undefined)
 
-  return <div className="recon-reasons">
-    <div className="recon-reasons-head"><strong>確認原因</strong><button type="button" onClick={() => setManage(!manage)}>{manage ? '完成管理' : '管理選項'}</button></div>
-    {!manage ? reasons.length ? <div className="recon-reasons-options">
-      {reasons.map((r) => <button type="button" key={r.id} className="recon-reason-option" aria-pressed={selectedId === r.id} onClick={() => onSelect(r.id)}>
-        <span>{r.label}</span><span className="recon-reason-check" aria-hidden="true">{selectedId === r.id ? '✓' : ''}</span>
-      </button>)}
-    </div> : <p className="sheet-msg">尚無原因選項，請先新增。</p> : <>
-      <div className="recon-reasons-options">
-        {sorted.map((r, index) => <div className={'recon-reason-manage' + (draggingId === r.id ? ' dragging' : '')} key={r.id} data-recon-reason-id={r.id}>
-          <button type="button" className="recon-reason-handle" aria-label={`拖曳排序 ${r.label}`} style={{ touchAction: 'none' }}
-            disabled={ordering} onPointerDown={(e) => onDown(e, r.id)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { dragId.current = ''; setDraggingId(''); orderRef.current = reasons.map((x) => x.id); setOrder(orderRef.current) }}>☰</button>
-          <span>{r.label}</span>
-          <button type="button" aria-label={`${r.label}往上移`} disabled={ordering || index === 0} onClick={() => moveAndSave(r.id, sorted[index - 1].id)}>↑</button>
-          <button type="button" aria-label={`${r.label}往下移`} disabled={ordering || index === sorted.length - 1} onClick={() => moveAndSave(r.id, sorted[index + 1].id)}>↓</button>
-          <button type="button" aria-label={`改名 ${r.label}`} onClick={() => { setEditingId(r.id); setName(r.label) }}>改名</button>
-          <button type="button" aria-label={`刪除 ${r.label}`} onClick={() => void deleteReconReason(r.id).catch(error)}>刪除</button>
-        </div>)}
-      </div>
-      <div className="recon-reason-editor"><input aria-label="原因名稱" maxLength={80} value={name} placeholder={editingId ? '修改原因' : '新增原因'} onChange={(e) => setName(e.target.value)} />
-        <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => void saveName()}>{editingId ? '儲存名稱' : '新增'}</button>
-        {editingId && <button type="button" className="btn-quiet" onClick={() => { setEditingId(''); setName('') }}>取消</button>}
-      </div>
-    </>}
+  return <div className="recon-reason-manager">
+    <p className="sheet-msg">按住左側圖示可調整順序。</p>
+    <div className="recon-reasons-options">
+      {sorted.map((r, index) => <div className={'recon-reason-manage' + (draggingId === r.id ? ' dragging' : '')} key={r.id} data-recon-reason-id={r.id}>
+        <button type="button" className="recon-reason-handle" aria-label={`拖曳排序 ${r.label}`} style={{ touchAction: 'none' }} disabled={ordering}
+          onPointerDown={(e) => onDown(e, r.id)} onPointerMove={onMove} onPointerUp={onUp}
+          onPointerCancel={() => { dragId.current = ''; setDraggingId(''); orderRef.current = reasons.map((x) => x.id); setOrder(orderRef.current) }}>☰</button>
+        <span className="recon-reason-name">{r.label}</span>
+        <button type="button" className="recon-reason-more" aria-label={`${r.label}的操作`} aria-expanded={menuId === r.id} onClick={() => setMenuId(menuId === r.id ? '' : r.id)}>⋯</button>
+        {menuId === r.id && <div className="recon-reason-actions">
+          <button type="button" disabled={ordering || index === 0} onClick={() => moveAndSave(r.id, sorted[index - 1].id)}>上移</button>
+          <button type="button" disabled={ordering || index === sorted.length - 1} onClick={() => moveAndSave(r.id, sorted[index + 1].id)}>下移</button>
+          <button type="button" onClick={() => { setEditingId(r.id); setName(r.label); setMenuId('') }}>改名</button>
+          <button type="button" onClick={() => { setMenuId(''); void deleteReconReason(r.id).catch(error) }}>刪除</button>
+        </div>}
+      </div>)}
+    </div>
+    {editingId ? <div className="recon-reason-editor">
+      <input aria-label="原因名稱" maxLength={80} value={name} placeholder="原因名稱" onChange={(e) => setName(e.target.value)} />
+      <button type="button" className="btn-secondary" disabled={!name.trim()} onClick={() => void saveName()}>儲存</button>
+      <button type="button" className="btn-quiet" onClick={() => { setEditingId(null); setName('') }}>取消</button>
+    </div> : <button type="button" className="btn-secondary recon-reason-add" onClick={() => { setEditingId('new'); setName('') }}>＋ 新增原因</button>}
   </div>
 }

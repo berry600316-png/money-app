@@ -32,6 +32,8 @@ import { CardImportPage } from './features/card/CardImportPage'
 import { LineChatImportPage } from './features/card/LineChatImportPage'
 import { NoticeTypesPage } from './features/card/NoticeTypesPage'
 import { ReconcilePage } from './features/card/ReconcilePage'
+import { recordFromEntryInput } from './card/cardRepo'
+import type { CardStatement, StatementEntry, TxType } from './db/types'
 import { StatementImportPage } from './features/card/StatementImportPage'
 import { ReconProvider } from './ui/reconContext'
 import { OverlayContext } from './ui/overlay'
@@ -134,6 +136,7 @@ function Shell() {
   const [entryDay, setEntryDay] = useState<string | null>(null)
   // D-123: a transfer or card payment started from the accounts pages or reconciliation.
   const [moveEntry, setMoveEntry] = useState<EntryPrefill | null>(null)
+  const [reconEntry, setReconEntry] = useState<{ statementId: string; entryId: string; prefill: EntryPrefill } | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [manage, setManage] = useState<ManageKind | null>(null)
   const [manageShown, setManageShown] = useState<ManageKind>('category')
@@ -224,11 +227,13 @@ function Shell() {
     setPlanEntry(null)
     setEntryDay(null)
     setMoveEntry(null)
+    setReconEntry(null)
     setEntry({ open: true, id: null })
   }, [])
   const addTxOn = useCallback((ymd: string) => {
     setPlanEntry(null)
     setMoveEntry(null)
+    setReconEntry(null)
     setEntryDay(ymd)
     setEntry({ open: true, id: null })
   }, [])
@@ -236,6 +241,7 @@ function Shell() {
   const startMove = useCallback((p: EntryPrefill) => {
     setPlanEntry(null)
     setEntryDay(null)
+    setReconEntry(null)
     setMoveEntry({ type: 'transfer', ...p })
     setEntry({ open: true, id: null })
   }, [])
@@ -244,6 +250,25 @@ function Shell() {
     [startMove],
   )
   const closeEntry = useCallback(() => setEntry((e) => ({ ...e, open: false })), [])
+  const recordStatementEntry = (statement: CardStatement, source: StatementEntry, type: TxType, categoryId: string) => {
+    setPlanEntry(null)
+    setEntryDay(null)
+    setMoveEntry(null)
+    const accountId = statement.accountId ?? statement.paymentMethodId
+    const prefill: EntryPrefill = {
+      type,
+      amount: Math.abs(source.amount),
+      merchant: source.merchant,
+      date: source.txDate ?? source.postDate ?? undefined,
+      categoryId,
+      ...(type === 'transfer' ? {
+        ...(source.kind === 'deposit' ? { toAccountId: accountId } : { fromAccountId: accountId }),
+      } : { paymentMethodId: statement.statementType === 'debit_card' && source.kind !== 'purchase' ? accountId : statement.paymentMethodId,
+        ...(statement.statementType === 'debit_card' && source.kind === 'purchase' ? { sourceAccountId: accountId } : {}) }),
+    }
+    setReconEntry({ statementId: statement.id, entryId: source.id, prefill })
+    setEntry({ open: true, id: null })
+  }
   const setRouteMonth = (key: number, month: string) =>
     setRoutes((rs) => rs.map((r) => (r.key === key && r.route.kind === 'plan' ? { ...r, route: { kind: 'plan', month } } : r)))
 
@@ -413,6 +438,7 @@ function Shell() {
                   backLabel={back}
                   onBack={pop}
                   onRecord={(v) => {
+                    setReconEntry(null)
                     setEntryDay(null)
                     setMoveEntry(null)
                     setPlanEntry({
@@ -475,6 +501,7 @@ function Shell() {
                   onBack={pop}
                   onImportStatement={() => push({ kind: 'statementImport' })}
                   onEditTx={(id) => setEntry({ open: true, id })}
+                  onRecordEntry={recordStatementEntry}
                   onPayCard={payCard}
                 />
               )}
@@ -485,12 +512,14 @@ function Shell() {
         <EntrySheet
           open={entry.open}
           editId={entry.id}
-          prefill={entry.id ? null : planEntry ? planEntry.prefill : moveEntry ? moveEntry : entryDay ? { date: entryDay } : null}
-          banner={planEntry && !entry.id ? `儲存後會自動對應「${planEntry.name}」，不會多記一筆。` : null}
-          saveNew={planEntry && !entry.id ? (input: TxInput) => recordPlannedExpense(planEntry.itemId, input).then(() => undefined) : null}
-          onClose={closeEntry}
+          prefill={entry.id ? null : reconEntry ? reconEntry.prefill : planEntry ? planEntry.prefill : moveEntry ? moveEntry : entryDay ? { date: entryDay } : null}
+          banner={reconEntry && !entry.id ? '儲存後會與這筆帳單明細配對。' : planEntry && !entry.id ? `儲存後會自動對應「${planEntry.name}」，不會多記一筆。` : null}
+          saveNew={reconEntry && !entry.id ? (input: TxInput) => recordFromEntryInput(reconEntry.statementId, reconEntry.entryId, input).then(() => '已補記並核對')
+            : planEntry && !entry.id ? (input: TxInput) => recordPlannedExpense(planEntry.itemId, input).then(() => undefined) : null}
+          onClose={() => { closeEntry(); setReconEntry(null) }}
           onUsePayslip={() => {
             closeEntry()
+            setReconEntry(null)
             newPayslip()
           }}
         />

@@ -78,6 +78,32 @@ describe('book-led statement review', () => {
     expect(oneOfTwo.autoPairs).toEqual([])
   })
 
+  it('pairs same-day purchases before nearby purchases of the same amount', () => {
+    const entries = [
+      { ...entry('e0', '2026-10-06', 35), merchant: '連加*統一超商' },
+      { ...entry('e1', '2026-10-08', 35), merchant: '連加*統一超商' },
+      { ...entry('e2', '2026-10-18', 179), merchant: '刷卡消費' },
+      { ...entry('e3', '2026-10-19', 179), merchant: '連加*屈臣氏' },
+    ]
+    const books = [
+      { ...tx('a', '2026-10-06', 35), merchant: '7-11' },
+      { ...tx('b', '2026-10-08', 35), merchant: '7-11' },
+      { ...tx('c', '2026-10-18', 179), merchant: '蝦皮' },
+      { ...tx('d', '2026-10-19', 179), merchant: '屈臣氏' },
+    ]
+    expect(run(entries, books).autoPairs).toEqual([
+      { entryId: 'e0', transactionId: 'a' }, { entryId: 'e1', transactionId: 'b' },
+      { entryId: 'e2', transactionId: 'c' }, { entryId: 'e3', transactionId: 'd' },
+    ])
+  })
+
+  it('uses a single clear same-day merchant match but leaves shared matches for review', () => {
+    const named = { ...entry('e0', '2026-10-19', 179), merchant: '連加*屈臣氏' }
+    const books = [{ ...tx('a', '2026-10-19', 179), merchant: '屈臣氏' }, { ...tx('b', '2026-10-19', 179), merchant: '蝦皮' }]
+    expect(run([named], books).autoPairs).toEqual([{ entryId: 'e0', transactionId: 'a' }])
+    expect(run([named, { ...named, id: 'e1' }], books).autoPairs).toEqual([])
+  })
+
   it('uses posting date only if there is no transaction date, with a three-day limit', () => {
     const posted = { ...entry('e0', '2026-08-20'), txDate: null, postDate: '2026-08-23' }
     expect(run([posted], [tx('near', '2026-08-20', 100, 'other')]).autoPairs).toHaveLength(1)

@@ -21,6 +21,7 @@ import {
   updateEntryExplanationReason,
   reconfirmPair,
   recordFromEntry,
+  recordFromEntryInput,
   saveAutoPairs,
   saveStatement,
   applyStatementAmount,
@@ -208,6 +209,34 @@ describe('reconciliation decisions (Phase 3)', () => {
     expect(new Date(t.occurredAt).getDate()).toBe(1) // purchase date, not the posting date
     const r = await run(st.id)
     expect(r.items.find((i) => 'entry' in i && i.entry.id === netflix.id)?.kind).toBe('matched')
+  })
+  it('saves an edited ordinary entry and its statement pair together with the differences', async () => {
+    const { st, entries } = await setup()
+    const netflix = entries.find((e) => e.merchant.includes('NETFLIX'))!
+    const cash = (await d.paymentMethods.toArray()).find((p) => p.type === 'cash')!
+    const input = { type: 'expense' as const, amount: 400, merchant: '我習慣的店名', categoryId: 'fun',
+      paymentMethodId: cash.id, date: '2026-10-02', time: '08:30', note: '補記調整' }
+    const saved = await recordFromEntryInput(st.id, netflix.id, input, d, now)
+    expect(saved).toMatchObject({ amount: 400, merchant: '我習慣的店名', categoryId: 'fun', paymentMethodId: cash.id,
+      note: '補記調整', source: 'manual' })
+    const decision = (await d.reconciliations.where('entryId').equals(netflix.id).first())!
+    expect(decision).toMatchObject({ transactionId: saved.id, status: 'matched', method: 'created' })
+    expect(decision.note).toContain('金額不同')
+    expect(decision.note).toContain('付款方式不同')
+    expect(decision.note).toContain('日期不同')
+    expect(decision.note).toContain('名稱不同')
+    await expect(recordFromEntryInput(st.id, netflix.id, input, d, now)).rejects.toThrow('已經有配對')
+    expect((await d.transactions.toArray()).filter((tx) => tx.merchant === '我習慣的店名')).toHaveLength(1)
+  })
+  it('can pair a newly recorded income even when the statement line was a purchase', async () => {
+    const { st, entries } = await setup()
+    const netflix = entries.find((e) => e.merchant.includes('NETFLIX'))!
+    const cash = (await d.paymentMethods.toArray()).find((p) => p.type === 'cash')!
+    const saved = await recordFromEntryInput(st.id, netflix.id, { type: 'income', amount: 390,
+      merchant: '自行確認收入', categoryId: 'other_income', paymentMethodId: cash.id,
+      date: '2026-10-01', time: '09:00', note: '' }, d, now)
+    expect(saved.type).toBe('income')
+    expect((await d.reconciliations.where('entryId').equals(netflix.id).first())?.note).toContain('收支類型不同')
   })
   it('amount difference: the record is only changed when the user asks; its date never changes (§8.3)', async () => {
     const { st, entries, cpc } = await setup()

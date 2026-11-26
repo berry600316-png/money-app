@@ -6,7 +6,7 @@ import { txDate, type Item } from '../../card/reconcile'
 import { sortReconItems } from '../../card/reconSort'
 import { db } from '../../db/db'
 import { MoneyError } from '../../db/repo'
-import type { PaymentMethod, StatementEntry } from '../../db/types'
+import type { CardStatement, PaymentMethod, StatementEntry, TxType } from '../../db/types'
 import { useBalances } from '../../db/hooks'
 import { fromYmd } from '../../lib/dates'
 import { fmt } from '../../lib/money'
@@ -39,6 +39,7 @@ export function ReconcilePage({
   backLabel,
   onImportStatement,
   onEditTx,
+  onRecordEntry,
   onPayCard,
 }: {
   statementId: string | null
@@ -46,6 +47,7 @@ export function ReconcilePage({
   backLabel: string
   onImportStatement: () => void
   onEditTx: (id: string) => void
+  onRecordEntry: (statement: CardStatement, entry: StatementEntry, type: TxType, categoryId: string) => void
   /** D-119: pay this card's bill (a transfer from its paying account; never a new expense). */
   onPayCard: (card: PaymentMethod, pending: number) => void
 }) {
@@ -305,6 +307,10 @@ export function ReconcilePage({
           onEditTx={(id) => {
             setSelected(null)
             onEditTx(id)
+          }}
+          onRecordEntry={(entry, type, categoryId) => {
+            setSelected(null)
+            onRecordEntry(st, entry, type, categoryId)
           }}
         />
         <ActionSheet

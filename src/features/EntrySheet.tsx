@@ -85,6 +85,7 @@ export interface EntryPrefill {
   merchant?: string
   categoryId?: string
   paymentMethodId?: string
+  sourceAccountId?: string
   /** D-123: start as a transfer (互轉 / 繳卡費) between these accounts. */
   type?: TxType
   fromAccountId?: string
@@ -124,7 +125,7 @@ export function EntrySheet({
   /** One line shown above the amount (D-109). */
   banner?: string | null
   /** Replaces the plain "add" save for a new entry (D-109: add + link in one transaction). */
-  saveNew?: ((input: TxInput) => Promise<void>) | null
+  saveNew?: ((input: TxInput) => Promise<string | void>) | null
 }) {
   const ref = useRefData()
   const reconDetail = useLiveQuery(async () => {
@@ -259,14 +260,15 @@ export function EntrySheet({
     } else {
       const now = new Date()
       const type: TxType = prefill?.type ?? 'expense'
-      const from = pickFor('from', [prefill?.fromAccountId, lastFrom])
+      const from = pickFor('from', [prefill?.fromAccountId, lastFrom], type === 'transfer' ? prefill?.toAccountId : undefined)
       const to = pickFor('to', [prefill?.toAccountId, lastTo], from)
       start({
         type,
         amount: prefill?.amount ? String(prefill.amount) : '',
         categoryId: type === 'transfer' ? '' : activeCategory(type, prefill?.categoryId ?? DEFAULT_CATEGORY_ID[type]),
         ...payFields(prefill?.paymentMethodId ?? lastPay),
-        ...(type === 'transfer' ? { paymentMethodId: from } : type === 'income' ? { paymentMethodId: pickFor('into', [lastInto]) } : {}),
+        ...(type === 'expense' && prefill?.sourceAccountId ? { sourceAccountId: prefill.sourceAccountId } : {}),
+        ...(type === 'transfer' ? { paymentMethodId: from } : type === 'income' ? { paymentMethodId: pickFor('into', [prefill?.paymentMethodId, lastInto]) } : {}),
         toAccountId: to,
         fee: '',
         showFee: false,
@@ -439,8 +441,8 @@ export function EntrySheet({
         await updateTransaction(editId, input)
         toast('已更新')
       } else if (saveNew) {
-        await saveNew(input)
-        toast(`已記下 NT$ ${fmt(amount)}，並對應必要支出`)
+        const message = await saveNew(input)
+        toast(message || `已記下 NT$ ${fmt(amount)}，並對應必要支出`)
       } else {
         await addTransaction(input)
         toast(
